@@ -104,11 +104,11 @@ def _write_record(tmp_path: Path) -> Path:
 
 
 def test_export_md_contains_the_brief_the_answer_and_the_metrics(
-    job_store: JobStore, tmp_path: Path
+    job_store: JobStore, tmp_path: Path, authed_app
 ):
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         response = client.get(f"/asks/{job_id}/export", params={"format": "md"})
 
@@ -125,10 +125,12 @@ def test_export_md_contains_the_brief_the_answer_and_the_metrics(
     assert "0.13" in body
 
 
-def test_export_defaults_to_markdown_when_no_format_is_given(job_store: JobStore, tmp_path: Path):
+def test_export_defaults_to_markdown_when_no_format_is_given(
+    job_store: JobStore, tmp_path: Path, authed_app
+):
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         response = client.get(f"/asks/{job_id}/export")
 
@@ -136,10 +138,10 @@ def test_export_defaults_to_markdown_when_no_format_is_given(job_store: JobStore
     assert response.headers["content-type"].startswith("text/markdown")
 
 
-def test_export_docx_is_a_real_docx_file(job_store: JobStore, tmp_path: Path):
+def test_export_docx_is_a_real_docx_file(job_store: JobStore, tmp_path: Path, authed_app):
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         response = client.get(f"/asks/{job_id}/export", params={"format": "docx"})
 
@@ -153,10 +155,10 @@ def test_export_docx_is_a_real_docx_file(job_store: JobStore, tmp_path: Path):
     assert response.content[:4] == b"PK\x03\x04"
 
 
-def test_export_odt_is_a_real_odt_file(job_store: JobStore, tmp_path: Path):
+def test_export_odt_is_a_real_odt_file(job_store: JobStore, tmp_path: Path, authed_app):
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         response = client.get(f"/asks/{job_id}/export", params={"format": "odt"})
 
@@ -165,18 +167,18 @@ def test_export_odt_is_a_real_odt_file(job_store: JobStore, tmp_path: Path):
     assert response.content[:4] == b"PK\x03\x04"
 
 
-def test_export_rejects_an_unknown_format(job_store: JobStore, tmp_path: Path):
+def test_export_rejects_an_unknown_format(job_store: JobStore, tmp_path: Path, authed_app):
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         response = client.get(f"/asks/{job_id}/export", params={"format": "pdf"})
 
     assert response.status_code == 422
 
 
-def test_export_is_409_while_the_ask_is_not_finished(job_store: JobStore):
-    with TestClient(create_app(job_store)) as client:
+def test_export_is_409_while_the_ask_is_not_finished(job_store: JobStore, authed_app):
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = client.post("/asks", json={"case": "Syria", "request": "Q"}).json()["id"]
         response = client.get(f"/asks/{job_id}/export")
 
@@ -202,7 +204,7 @@ def test_export_is_404_for_another_principals_ask(job_store: JobStore, tmp_path:
 
 
 def test_export_never_touches_cost_or_quota_accounting(
-    job_store: JobStore, quota_store: QuotaStore, tmp_path: Path
+    job_store: JobStore, quota_store: QuotaStore, tmp_path: Path, authed_app
 ):
     """Exporting is free (the issue's own line): calling it repeatedly must
     never move the job's own `cost_usd`/`cached` fields or the quota
@@ -210,7 +212,7 @@ def test_export_never_touches_cost_or_quota_accounting(
     `GET /asks/{id}/export` never writes to."""
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store, quota_store)) as client:
+    with TestClient(authed_app(create_app(job_store, quota_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path, cost_usd=0.13)
         before = job_store.get(job_id)
         before_charged = job_store.count_since(_PRINCIPAL, kind="ask", since=before["created_at"])
@@ -227,14 +229,14 @@ def test_export_never_touches_cost_or_quota_accounting(
 
 
 def test_locator_mode_export_carries_no_book_text_verified_against_the_file(
-    job_store: JobStore, tmp_path: Path
+    job_store: JobStore, tmp_path: Path, authed_app
 ):
     """The issue's own line: verified against the generated file's bytes,
     not the JSON and not a UI."""
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         md = client.get(f"/asks/{job_id}/export", params={"format": "md"}).content
         docx_bytes = client.get(f"/asks/{job_id}/export", params={"format": "docx"}).content
@@ -245,7 +247,9 @@ def test_locator_mode_export_carries_no_book_text_verified_against_the_file(
     assert PASSAGE_TEXT.encode("utf-8") not in odt_bytes
 
 
-def test_passage_mode_export_carries_the_quoted_passage(job_store: JobStore, tmp_path: Path):
+def test_passage_mode_export_carries_the_quoted_passage(
+    job_store: JobStore, tmp_path: Path, authed_app
+):
     """Issue #732: `render_markdown` (§7.10) now surfaces a resolved
     ground's `citation.quote`, so a `passage` deployment's export carries
     the book text behind a cited chunk -- verified against the file bytes
@@ -256,7 +260,9 @@ def test_passage_mode_export_carries_the_quoted_passage(job_store: JobStore, tmp
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path)
 
-    with TestClient(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir)) as client:
+    with TestClient(
+        authed_app(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir))
+    ) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         md = client.get(f"/asks/{job_id}/export", params={"format": "md"}).content
         docx_bytes = client.get(f"/asks/{job_id}/export", params={"format": "docx"}).content

@@ -22,12 +22,22 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
+import jwt
 import psycopg
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import FastAPI
+from jwt.algorithms import RSAAlgorithm
 
+from axial.context import DEFAULT_PRINCIPAL
+from axial.service.api import current_principal
+from axial.service.auth import JWKS_URL_ENV_VAR
 from axial.service.cache import PaperCache
 from axial.service.jobs import JobStore
+from axial.service.profiles import ProfileStore
 from axial.service.quotas import QuotaStore
 
 _IMAGE = "postgres:16-alpine"
@@ -134,6 +144,24 @@ def quota_store(postgres_dsn: str) -> QuotaStore:
 
 
 @pytest.fixture
+def authed_app():
+    """A callable that overrides `current_principal` (issue #763's own
+    identity seam) with a fixed principal -- `app.dependency_overrides`,
+    the FastAPI-native mechanism the issue itself names, so verifying a
+    real token stays this one dependency's job and every other test in
+    this package keeps the pre-#763 single-local-analyst behaviour it was
+    written against, with no dev-principal environment variable added to
+    production code. Returns `app` itself so a call site can wrap
+    `create_app(...)` inline: `authed_app(create_app(store))`."""
+
+    def _authed(app: FastAPI, principal: str = DEFAULT_PRINCIPAL) -> FastAPI:
+        app.dependency_overrides[current_principal] = lambda: principal
+        return app
+
+    return _authed
+
+
+@pytest.fixture
 def paper_cache(postgres_dsn: str) -> PaperCache:
     """A `PaperCache` (issue #686) over a fresh, empty `paper_cache` table
     -- same shape as `job_store` above."""
@@ -142,3 +170,73 @@ def paper_cache(postgres_dsn: str) -> PaperCache:
     with psycopg.connect(postgres_dsn) as conn:
         conn.execute("TRUNCATE paper_cache")
     return cache
+
+
+@pytest.fixture(autouse=True)
+def profile_store(postgres_dsn: str) -> ProfileStore:
+    """A `ProfileStore` (issue #763) over a fresh, empty `profiles` table --
+    same shape as `job_store` above, `autouse` for the same reason
+    `quota_store` is (its own docstring): `create_app` builds its own
+    `ProfileStore` over `store.dsn` whenever a test's own `client` fixture
+    doesn't pass one, so a `PUT /me/profile` write in one test would
+    otherwise silently outlive it and leak into a later test reading the
+    same default principal's theme."""
+    store = ProfileStore(postgres_dsn)
+    store.create_schema()
+    with psycopg.connect(postgres_dsn) as conn:
+        conn.execute("TRUNCATE profiles")
+    return store
+
+
+@pytest.fixture
+def supabase_jwt(monkeypatch: pytest.MonkeyPatch):
+    """A locally-minted Supabase-shaped JWT, for the four "done when"s
+    issue #763 says to prove without a live project: a real RSA keypair
+    generated here, its public half published as a JWKS dict, and
+    `jwt.PyJWKClient.fetch_data` monkeypatched to return it -- so
+    `axial.service.auth` fetches this test's own key set exactly the way
+    it would fetch a real project's, with no network call underneath.
+
+    The JWKS URL is unique per call (a fresh UUID) so `axial.service.auth.
+    _jwks_client`'s `lru_cache(maxsize=1)` never hands one test's cached
+    client, keyed on the URL, to another. `AXIAL_SUPABASE_JWKS_URL` is set
+    via `monkeypatch.setenv`, so it reverts automatically at teardown.
+
+    Returns an object with `.mint(sub=..., **claim_overrides)` (a signed
+    token, `exp` one hour out and `iss`/`aud` correct by default -- a
+    caller overrides only the claim its own test is about) and `.kid`, for
+    a test that wants to mint a "wrong key" token under the SAME `kid` a
+    legitimate signer would use."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    kid = f"test-{uuid.uuid4().hex[:8]}"
+    jwk = RSAAlgorithm.to_jwk(private_key.public_key(), as_dict=True)
+    jwk["kid"] = kid
+    jwk["alg"] = "RS256"
+    jwk["use"] = "sig"
+    jwks = {"keys": [jwk]}
+
+    jwks_url = f"https://{uuid.uuid4().hex}.supabase.co/auth/v1/.well-known/jwks.json"
+    issuer = jwks_url.removesuffix("/.well-known/jwks.json")
+
+    monkeypatch.setenv(JWKS_URL_ENV_VAR, jwks_url)
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", lambda self: jwks)
+
+    def _mint(
+        *,
+        sub: str = "11111111-1111-4111-8111-111111111111",
+        signing_key: rsa.RSAPrivateKey = private_key,
+        headers: dict | None = None,
+        **claim_overrides: object,
+    ) -> str:
+        now = datetime.now(timezone.utc)
+        claims = {
+            "sub": sub,
+            "aud": "authenticated",
+            "iss": issuer,
+            "iat": now,
+            "exp": now + timedelta(hours=1),
+            **claim_overrides,
+        }
+        return jwt.encode(claims, signing_key, algorithm="RS256", headers=headers or {"kid": kid})
+
+    return SimpleNamespace(mint=_mint, kid=kid, jwks_url=jwks_url, issuer=issuer)

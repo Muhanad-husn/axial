@@ -455,6 +455,61 @@ it to `render_export_markdown`, so fixing `render_markdown` alone made
 the export carry the quote for free — proving the "one rendering path"
 line was already true in practice, not just in the docstring.
 
+### Amendment, 2026-08-12: what shipped in #763 (a token becomes a principal, and a profile)
+
+**`current_principal` now verifies a real Supabase-issued JWT** -- JWKS
+only, one setting (`AXIAL_SUPABASE_JWKS_URL`), no legacy HS256
+shared-secret path, since no Supabase project exists yet that would need
+one. `jwt.PyJWKClient` (`pyjwt[crypto]`, new in the `service` dependency
+group) fetches and caches the key set; `axial.service.auth.
+verify_bearer_token` checks the signature, `exp`, `iss` and `aud`, and
+returns the token's own `sub`. Unset `AXIAL_SUPABASE_JWKS_URL` means every
+request is `401` -- the opposite default direction from #690's citation
+mode, deliberately: the safe unconfigured state here is "nobody gets in."
+
+**The principal's shape is constrained once, at this same edge, and
+nowhere else** -- the three design calls the founder took at #763's own
+kickoff, all recorded there. A Supabase `sub` is a UUID, so the check is an
+allowlist (`uuid.UUID(subject)` round-tripped back to its own canonical
+string) rather than a blocklist of dangerous characters: anything that
+parses and re-serializes to itself can never be `..`, carry a path
+separator, or collide with a Windows-reserved name. `axial.paths.
+scoped_for_principal` is untouched, on purpose -- #685's own 2026-08-10
+comment asked for exactly one deliberate place, and this is it.
+
+**Invitation-only stays Supabase's own switch.** The service carries no
+parallel email allowlist; a deployment that leaves public sign-up on is an
+open door, and that is a deployment-time decision #691 documents, not one
+this slice can see or close from inside the service.
+
+**A `profiles` table, one column that matters.** `axial.service.profiles.
+ProfileStore`, `jobs`/`quotas`'s own `CREATE TABLE IF NOT EXISTS` idiom,
+keyed by principal, with `theme` constrained to `light`/`dark`/`system` by
+a `CHECK` constraint on the column itself (default `system`) rather than a
+second hand-written guard that would have to agree with it. `GET
+/me/profile` reads that default for a principal with no row yet -- no
+`404` before a first write, the issue's own line. `PUT /me/profile` writes
+only the caller's own row; `theme` is validated twice, deliberately, once
+by a Pydantic `Literal` at the HTTP boundary and once by the `CHECK`
+constraint, since a bad value from either seam should never reach the
+other silently.
+
+**Test-suite fixture churn was real and mechanical, as flagged going in.**
+Every `tests/service` test that builds its own `TestClient(create_app(...))`
+without already overriding `current_principal` needed one line added --
+`authed_app(create_app(...))`, a new shared conftest fixture wrapping
+`app.dependency_overrides[current_principal]`, the FastAPI-native seam the
+issue itself named. `test_api_auth.py` is the one file that deliberately
+does NOT use it, since it exercises the real dependency end to end against
+locally-minted tokens (`supabase_jwt` fixture: a fresh RSA keypair per
+test, `jwt.PyJWKClient.fetch_data` monkeypatched to hand back its JWKS with
+no network call).
+
+**No live Supabase project exists yet** (founder, at #688's kickoff) --
+this slice is built and CI-greened entirely against locally-minted JWTs.
+The live Google sign-in run is owed after #764 (the web slice) merges, the
+same way #687's live validation ran after its own web slice.
+
 ## Explicitly deferred (do NOT build early)
 
 Building these before a real need is the over-engineering tripwire the handbook

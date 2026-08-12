@@ -73,6 +73,11 @@ service = [
     # the same way; together they keep every export format's conversion
     # off a pandoc binary #691's image would otherwise have to carry.
     "odfpy>=1.4.1",
+    # `current_principal` (issue #763): verifies a Supabase-issued JWT
+    # against its JWKS. `PyJWKClient` handles the JWKS fetch, `kid` lookup
+    # and caching; `jwt.decode` checks the signature, `exp`, `iss` and
+    # `aud` -- no hand-rolled JOSE parsing.
+    "pyjwt[crypto]>=2.9",
 ]
 # The local operator console (issue #689): Streamlit, and nothing else. It is
 # a face on the `axial` CLI for one operator on one machine -- no pipeline pass

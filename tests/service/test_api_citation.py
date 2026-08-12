@@ -104,11 +104,13 @@ def _submit_and_complete(client: TestClient, job_store: JobStore, record_path: P
     return job_id
 
 
-def test_default_mode_is_locator_and_carries_no_book_text(job_store: JobStore, tmp_path: Path):
+def test_default_mode_is_locator_and_carries_no_book_text(
+    job_store: JobStore, tmp_path: Path, authed_app
+):
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
 
-    with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         paper = client.get(f"/asks/{job_id}/paper").json()
     record = paper["record"]
@@ -126,12 +128,14 @@ def test_default_mode_is_locator_and_carries_no_book_text(job_store: JobStore, t
 
 
 def test_passage_mode_adds_the_quoted_text_on_claims_and_counter_position(
-    job_store: JobStore, tmp_path: Path
+    job_store: JobStore, tmp_path: Path, authed_app
 ):
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
 
-    with TestClient(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir)) as client:
+    with TestClient(
+        authed_app(create_app(job_store, citation_mode=PASSAGE, vault_dir=vault_dir))
+    ) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         record = client.get(f"/asks/{job_id}/paper").json()["record"]
 
@@ -140,13 +144,13 @@ def test_passage_mode_adds_the_quoted_text_on_claims_and_counter_position(
 
 
 def test_flipping_to_passage_is_one_env_var_no_code_change(
-    job_store: JobStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    job_store: JobStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authed_app
 ):
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
     monkeypatch.setenv(CITATION_MODE_ENV_VAR, "passage")
 
-    with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         record = client.get(f"/asks/{job_id}/paper").json()["record"]
 
@@ -165,14 +169,16 @@ def test_unrecognised_citation_mode_is_a_startup_error_naming_both_modes(
     assert "passage" in str(excinfo.value)
 
 
-def test_a_client_cannot_override_the_mode_on_the_request(job_store: JobStore, tmp_path: Path):
+def test_a_client_cannot_override_the_mode_on_the_request(
+    job_store: JobStore, tmp_path: Path, authed_app
+):
     """Applied at the API boundary (the issue's own line): a request that
     tries to ask for `passage` from a `locator` deployment has no field to
     put it in -- `AskRequest` carries no citation-mode key at all."""
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
 
-    with TestClient(create_app(job_store, vault_dir=vault_dir)) as client:
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
         response = client.post(
             "/asks",
             json={"case": "Syria", "request": "Q", "citation_mode": "passage"},
@@ -185,7 +191,9 @@ def test_a_client_cannot_override_the_mode_on_the_request(job_store: JobStore, t
     assert "quote" not in record["claims"][0]["grounds"][0]["citation"]
 
 
-def test_a_record_with_no_grounds_is_served_unchanged(job_store: JobStore, tmp_path: Path):
+def test_a_record_with_no_grounds_is_served_unchanged(
+    job_store: JobStore, tmp_path: Path, authed_app
+):
     """The pre-#690 shape (mirrors `test_api.py`'s own
     `test_get_paper_serves_the_persisted_record_as_json`): a record whose
     claims carry no `grounds` key at all has nothing to resolve, and comes
@@ -193,6 +201,6 @@ def test_a_record_with_no_grounds_is_served_unchanged(job_store: JobStore, tmp_p
     record = {"brief_id": "b1", "corpus_pin": "p", "claims": [{"text": "A claim"}]}
     record_path = _write_record(tmp_path, record)
 
-    with TestClient(create_app(job_store)) as client:
+    with TestClient(authed_app(create_app(job_store))) as client:
         job_id = _submit_and_complete(client, job_store, record_path)
         assert client.get(f"/asks/{job_id}/paper").json()["record"] == record

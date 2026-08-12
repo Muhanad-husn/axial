@@ -1,0 +1,28 @@
+postgres up on 59072
+jwks served at http://127.0.0.1:59082/auth/v1/.well-known/jwks.json
+
+[unconfigured deployment: AXIAL_SUPABASE_JWKS_URL unset]
+  401  a validly-signed token, but no JWKS configured       {"detail":"invalid or missing bearer token"}
+
+[configured deployment]
+  401  no Authorization header at all                       {"detail":"missing bearer token"}
+  401  garbage in the header                                {"detail":"invalid or missing bearer token"}
+  401  signed by the wrong key, right kid                   {"detail":"invalid or missing bearer token"}
+  401  expired an hour ago                                  {"detail":"invalid or missing bearer token"}
+  401  issued by a different project                        {"detail":"invalid or missing bearer token"}
+  401  wrong audience                                       {"detail":"invalid or missing bearer token"}
+  401  sub is '..'                                          {"detail":"invalid or missing bearer token"}
+  401  sub is '../../etc'                                   {"detail":"invalid or missing bearer token"}
+  401  sub is 'CON' (Windows-reserved)                      {"detail":"invalid or missing bearer token"}
+  401  sub is 'nul.'                                        {"detail":"invalid or missing bearer token"}
+  401  sub is a non-canonical UUID spelling                 {"detail":"invalid or missing bearer token"}
+
+[a real analyst, signed in]
+  200  analyst A lists their asks                           []
+  200  analyst A reads their theme                          {"theme":"system"}
+  200  analyst A sets it to dark                            {"theme":"dark"}
+  200  analyst A reads it back                              {"theme":"dark"}
+  200  analyst B reads their own theme                      {"theme":"system"}
+  422  analyst B tries to set 'neon'                        {"detail":[{"type":"literal_error","loc":["body","theme"],"msg":"Input should be 'light', ...
+  200  analyst A's theme, still dark                        {"theme":"dark"}
+  200  analyst A's usage                                    {"principal":"3f1a5c22-0d84-4a1e-9f0b-2c7d5e8a9b01","session":null,"month_to_date":{"cost_...
