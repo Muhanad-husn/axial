@@ -37,7 +37,11 @@ export function UsageMeter({
 }) {
   return (
     <details data-testid={testId} className="relative">
-      <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-rule px-2 py-1 font-mono text-[10px] text-ink2">
+      <summary
+        className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-rule px-2 py-1 font-mono text-[10px] text-ink2"
+        title={label}
+        aria-label={label}
+      >
         <span aria-hidden="true">{icon}</span>
         <span>{window ? formatCostUsd(window.cost_usd) : "—"}</span>
       </summary>

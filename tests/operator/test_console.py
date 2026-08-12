@@ -21,6 +21,33 @@ def _open() -> AppTest:
     return AppTest.from_file(str(APP_PATH), default_timeout=30).run()
 
 
+def test_the_sidebar_carries_the_axial_mark(finished_run: Path) -> None:
+    """Issue #770: the operator console's sidebar and the analyst UI's own
+    inline `<svg>` (`web/src/components/TopBar.tsx`) are the two readers of
+    one canonical file (`axial_logo.svg`), not a copy each. `st.html()`
+    sanitises `<svg>` out of the DOM entirely (verified against this
+    Streamlit version) -- `st.markdown(..., unsafe_allow_html=True)` is the
+    one of the two that actually renders it, which is what this pins."""
+    at = _open()
+
+    assert not at.exception
+    rendered = at.sidebar.markdown[0].value
+    assert "<svg" in rendered
+    assert "axial-title" in rendered  # the canonical file's own <title id=…>
+    assert "currentColor" in rendered  # ink follows the console's own palette
+
+
+def test_the_sidebar_mark_falls_back_to_text_if_the_asset_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_module, "_LOGO_SVG_PATH", Path("does-not-exist.svg"))
+
+    rendered = app_module._axial_mark_html()
+
+    assert "AXIAL" in rendered
+    assert "<svg" not in rendered
+
+
 def test_a_stalled_run_reads_as_check_this(stalled_run: Path) -> None:
     at = _open()
 
