@@ -1,7 +1,8 @@
 # Eval 1 — answer quality (output axis)
 
-**Status:** settled. The instrument is specified in
-[`specs/PHASE-B.md` §9.4](../../specs/PHASE-B.md); building it is issue #385.
+**Status:** settled and built. The instrument is specified in
+[`specs/PHASE-B.md` §9.4](../../specs/PHASE-B.md); built in #385
+(2026-07-25).
 **Depends on:** the rebuilt corpus and a resolved pin. **No academic input** —
 #250 and #295 were closed *not planned* on 2026-07-24, and none is coming.
 
@@ -53,8 +54,9 @@ restated here; the four that most change how a number may be read are:
 - **A positive control before any number is trusted.** The panel must first
   catch planted defects: a mis-grounded claim, a strawmanned counter-position,
   and an overconfident band. LLM judges are systematically generous and are
-  moved by confident prose. No live positive control exists anywhere in this
-  repo today (#323); this is the first.
+  moved by confident prose. Built in #388 (2026-07-25,
+  `src/axial/panel/control.py`) — the first live positive control in this
+  repo.
 
 `expected_answer` in `evals/cases/sim/` is **retired as the primary referee**
 and is **never placed in a reviewer packet** — showing a reviewer a pre-written

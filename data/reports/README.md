@@ -7,8 +7,8 @@ the scripts that assemble them.
 
 | | |
 |---|---|
-| `axial-report.md` / `.docx` | **The report.** What Axial is, how it works, how it was tested, what it cannot do, two papers in full and the rest indexed — structured as a research paper with an executive summary. Version 2.2. |
-| `axial-technical-report.md` / `.docx` | **The engineering companion.** Architecture, measurement discipline, caching, evaluation machinery, and the one-operator agentic process. Hand-written, not generated. Version 1.1. Its `.docx` is built by `build_docx_with_diagrams.py`, not `md_to_docx.py` — the plain converter drops the ten mermaid figures. |
+| `axial-report.md` / `.docx` | **The report.** What Axial is, how it works, how it was tested, what it cannot do, two papers in full and the rest indexed — structured as a research paper with an executive summary. Version 2.3. |
+| `axial-technical-report.md` / `.docx` | **The engineering companion.** Architecture, measurement discipline, caching, evaluation machinery, and the one-operator agentic process. Hand-written, not generated. Version 1.2. Its `.docx` is built by `build_docx_with_diagrams.py`, not `md_to_docx.py` — the plain converter drops the ten mermaid figures. |
 | `axial-coverage-v2.md` | **The library, measured.** What the thirty-five books actually cover, page by page, and where the shelf is thin. Counted mechanically; no model judged anything. |
 | `axial-coverage-v1-to-v2-diff.md` | What the four books added on 2026-08-05 changed. |
 | `axial-logo.png` | Used by both reports. |

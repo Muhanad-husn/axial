@@ -1,5 +1,12 @@
 # Plan: Multiuser Analyst Service
 
+**Archived 2026-08-12.** Shipped: the analyst service (#681–#686, #690,
+#691, #724, #732, #763), the analyst web client (#687, #688, #744–#746,
+#750, #756, #759, #760, #764), and the operator console (#689). The whole
+stack stands up from one `docker compose up` (#691, 2026-08-12), and the
+shipping image carries the ask path and nothing else (#772, 592 MB). Nothing
+from this plan is left open.
+
 **Status:** Started 2026-08-05. Issues #681–#690. See the 2026-08-05 amendment
 below, which supersedes parts of the original draft.
 **Prerequisite:** met — Phases A, B and C are built.

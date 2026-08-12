@@ -20,6 +20,7 @@ directory and nothing in the repo reads it. Git holds the history.
 | `request-gold-labels.md` | A request for labels from an annotator who will never exist. |
 | `about-axial.md` | The companion to the outreach letter: how Axial differs from RAG, hybrid RAG, a ChatGPT upload, and web "deep research". Retired 2026-08-06 with the rest of that path. It also describes the v0 product, down to "coded every passage by the kind of claim it makes", so it is wrong twice over. Its argument against retrieval survives in `README.md`. |
 | `gold-coder.md` | The gold-labelling dispatch method (DEC-30). The gold set and its scoring harness were deleted with #710; there is nothing left to label. |
+| `sim-academic-gold-labelling.md` | The gold-labelling measurement record: inter-annotator agreement on the retired v0 tag axes. Retired 2026-08-06 with the gold set (#710). The live half of that folder stays at `docs/sim-academic/`. |
 | `phase-a-rerun-2026-07-24.md` | A run report. `data/logs/<date>-<run>/` owns those now. |
 
 `docs/academic/` is gone as a folder. It existed to brief outside academics, and

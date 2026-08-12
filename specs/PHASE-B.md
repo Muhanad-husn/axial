@@ -1,6 +1,6 @@
 # PRD — Axial: Phase B Analysis Engine (Syria v1)
 
-**Project:** Axial · **Version:** 2.0 (Phase B v1) · **Status:** Ready to build · **Date:** 2026-07-29 · **Owner:** Operator (single-operator system)
+**Project:** Axial · **Version:** 2.0 (Phase B v1) · **Status:** Built and closed (DEC-59) · **Date:** 2026-07-29 · **Owner:** Operator (single-operator system)
 
 **Inherits.** This PRD is the Phase-B phase spec under [`specs/CHARTER.md`](CHARTER.md), the product-wide behavioural constitution; its P0 criteria are the analysis-layer instance of the charter's five principles. Its substrate is Phase A, specified in [`specs/PRODUCT.md`](PRODUCT.md); Phase A is consumed here, never modified here. This spec does not restate or override the charter (charter §4).
 

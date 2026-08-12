@@ -4,9 +4,9 @@
 
 **What it is, how it works, how it was tested, and what the tests showed**
 
-Version 2.2 · 7 August 2026 · Muhanad Abulhusn
+Version 2.3 · 7 August 2026 · Muhanad Abulhusn
 
-*Version 2.2 adds Appendix F, an index of the six further papers drafted since — five of them deliberately off the Syrian case the library is built around — and records what that exercise exposed about the shelf. Nothing in the system or its evaluation has changed; the panel figures in section 7.4 still cover the two papers in Appendices D and E and nothing else. Version 2.1 (6 August 2026) restructured the dossier as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
+*Version 2.3 corrects §7.6's two reproducibility figures against the run logs behind them: Gather's byte-identical self-disagreement is 19.3% per name, not the 53% flip rate that belongs to a changed packet, and name merging moves 0.43% of the material. Version 2.2 adds Appendix F, an index of the six further papers drafted since — five of them deliberately off the Syrian case the library is built around — and records what that exercise exposed about the shelf. Nothing in the system or its evaluation has changed; the panel figures in section 7.4 still cover the two papers in Appendices D and E and nothing else. Version 2.1 (6 August 2026) restructured the dossier as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
 
 ---
 
@@ -507,9 +507,9 @@ Three limits bound this comparison and none of them is soft. The test questions 
 
 These are reported because they change how the rest of the report should be read, and because a report that only carries its good numbers is not evidence of anything.
 
-**Gather does not fully reproduce.** Asked twice about the same name, on byte-identical input, the pass agrees with itself 53% of the time, and **36.1% of the disagreements it records come back null on the second reading**. This was investigated and accepted as model variance. Its consequence is enforced in the design rather than hoped away: **a Gather finding is a retrieval hint and never a citation.** No gate scores an answer against one, and no answer is credited for repeating one.
+**Gather does not fully reproduce.** Asked twice about the same name, on byte-identical input, the pass returns a different answer **19.3% of the time**, and — the figure that matters more — **36.1% of the disagreements it records come back null on the second reading**. That second number is the honest confidence interval on a name page's central claim: it is the share of asserted disagreements the pass would not re-assert ten hours later. This was investigated and accepted as model variance. Its consequence is enforced in the design rather than hoped away: **a Gather finding is a retrieval hint and never a citation.** No gate scores an answer against one, and no answer is credited for repeating one.
 
-**Name merging disagrees with itself 13.3% of the time** on names with three or more variants. Investigating it showed the disagreements are almost entirely singular/plural and article variants, and that they move **0.4% of the underlying material**. A surface changing group is not its evidence moving, and conflating the two overstated the problem by a factor of thirty.
+**Name merging disagrees with itself 13.3% of the time** on names with three or more variants. Investigating it showed the disagreements are almost entirely singular/plural and article variants, and that they move **0.43% of the underlying material**. A surface changing group is not its evidence moving, and conflating the two overstated the problem by a factor of thirty.
 
 **Retrieval misses one demand persistently.** Question B's identity-production leg has gone unreached five times, across three versions of the code and two model wirings. The retrieval rewrite was the change most likely to close it. It did not. It is recorded as an open finding rather than explained away.
 

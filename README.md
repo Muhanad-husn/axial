@@ -14,6 +14,8 @@ they share, and states what follows from many sources read together. The claim n
 source made is the product, and it is also the risk, so that seam is labeled everywhere it
 appears.
 
+**v1.0.0, released 2026-08-12** — the first tagged release.
+
 The corpus is comparative-historical political sociology, weighted toward Syria and the
 surrounding literature: Mann, Kalyvas, Brubaker, Hinnebusch, Migdal, Skocpol, Tilly,
 Wedeen, Malešević. The mechanism is domain-general, and no country-specific logic lives in
@@ -37,7 +39,7 @@ All three are built, run end to end, and measured.
 | **C. Paper authorship** | Brief intake, arc planning, section-by-section drafting, citation indexing, apparatus | analysis records → a paper record and rendered paper |
 
 Specs: [`specs/PRODUCT.md`](specs/PRODUCT.md) (A) · [`specs/PHASE-B.md`](specs/PHASE-B.md) ·
-[`specs/PHASE-C.md`](specs/PHASE-C.md). The 65-row decision log is
+[`specs/PHASE-C.md`](specs/PHASE-C.md). The 69-row decision log is
 [`docs/DECISIONS.md`](docs/DECISIONS.md). GitHub issues and PRs are the system of record.
 
 **Reports:** [muhanad-husn.github.io/axial](https://muhanad-husn.github.io/axial/) is a
@@ -171,7 +173,7 @@ it does.
 
 ```bash
 uv sync                 # Python 3.13+, uv
-uv run pytest           # 3,498 tests
+uv run pytest           # 3,515 tests
 uv run axial --help
 ```
 
@@ -214,6 +216,21 @@ backend, a local folder or Google Drive, and skips what is already done.
 
 `uv run axial <command> --help` for the rest.
 
+### Running it as a service
+
+`docker compose up` stands up the service from one file: Postgres, the API, and the worker
+that runs the ask, against a published corpus snapshot mounted read-only. Copy
+`.env.example` to `.env` first; every setting either container reads is in there, and
+[`docs/service-deployment.md`](docs/service-deployment.md) says what each one does. The
+analyst web client is a separate deploy from [`web/`](web/README.md): Next.js, an ask
+composer, the streaming walk, paper render and export, Supabase sign-in. For local operator
+use without any of it, `axial console` opens a Streamlit console over the CLI, one user,
+one machine, no auth.
+
+![The ask composer: case, question, and source weighting, dark theme](docs/ui/analyst-ask-dark.png)
+
+![A live ask: the walk showing what it read, light theme](docs/ui/analyst-walk-light.png)
+
 ---
 
 ## Repository layout
@@ -230,10 +247,19 @@ src/axial/                 one module per stage, unit tests co-located
   query/ retrieve/ analyze/ brief/ answer/ ask/          Phase B
   paper/ distill/ panel/                                 Phase C
   gates/ validators/ eval/                               the gate harnesses
+  operator/                                              the Streamlit console
+web/                       the analyst web client: Next.js, TypeScript, Tailwind
 tests/                     acceptance contracts, grouped by the stage they pin
+evals/                     eval cases, corpus pins, and reports for the gate harnesses
+experiments/               one-off measurement scripts, not part of the pipeline
+plans/_archive/            the slice plans work was built from, kept as a record
 specs/                     CHARTER.md, PRODUCT.md, PHASE-B.md, PHASE-C.md
-docs/                      ARCHITECTURE.md, diagrams/, DECISIONS.md, eval/, _archive/
+docs/                      ARCHITECTURE.md, diagrams/, DECISIONS.md, eval/, _archive/,
+                            service-deployment.md
 data/                      gitignored: sources and every derived artifact
+Dockerfile                 the analyst service image
+docker-compose.yml         Postgres, the API and the worker, over a mounted snapshot
+.env.example               the env shape docker compose expects
 ```
 
 `data/` is gitignored in full and stays that way. The sources are in-copyright books and
@@ -243,11 +269,15 @@ every derived artifact carries verbatim passages of them (DEC-23).
 
 ## Tests and gates
 
-3,498 tests across 241 files. Cost is proportional to blast radius:
+3,515 tests across 238 Python files (`tests/` acceptance contracts plus co-located `src/`
+unit tests). The `web/` client has its own suite: vitest unit tests plus Playwright
+end-to-end specs against a mock service. Cost is proportional to blast radius:
 
 - **Pre-commit.** The `src/` unit tier plus ruff, about six seconds. A red commit cannot
   land, and code cannot land directly on `main`.
-- **CI.** The full tree on every PR, as the required check.
+- **CI.** The full pytest tree on every PR, sharded across three acceptance jobs plus a
+  unit+lint job, as the required check. A separate `web` job runs lint, typecheck, unit
+  tests, build, and Playwright.
 - **Real-corpus validation.** Any corpus-facing heuristic is measured against
   `data/sources/` before promotion. This is a norm rather than a hook because a green suite
   has twice failed to catch a defect the corpus caught immediately.
@@ -259,19 +289,23 @@ Acceptance contracts live in `tests/`; inner unit tests sit beside the code they
 
 ## What's next
 
-Eleven open issues in two subprojects, plus two future milestones.
+No open issues, and two future milestones.
 
-**Analyst service** (#681 to #688, #690, #691) is the engine behind a real web application:
-a job store, FastAPI over it, progress streaming as events rather than a spinner, a
-published corpus as a read-only SQLite snapshot pinned to its build, sign-in and per-analyst
-history, quotas and a content-keyed paper cache, and the whole stack standing up from one
-compose file. **Built, not deployed** (DEC-65): the deliverable is a stack someone else can
+The analyst service, the analyst web client and the operator console are built and
+measured. The service (#681 to #686, #691) is a job store, FastAPI over it, progress
+streaming as events rather than a spinner, a published corpus as a read-only SQLite
+snapshot pinned to its build, identity on the request path, and quotas with a content-keyed
+paper cache. The web client in `web/` (#687, #688, #690) is the application over it: an ask
+composer, the streaming walk, paper render and export, per-analyst history and spend
+meters, Supabase sign-in including Google, invitation-only. The operator console (#689) is
+a local Streamlit console over the `axial` CLI, tailing the run log, one user, one machine,
+no API and no auth. The whole stack stands up from one `docker compose up` (#691), and the
+shipping image carries the ask path and nothing else: 592 MB, 72 packages, no GPU runtime
+(#772).
+
+**Built, not deployed** (DEC-65) still holds: the deliverable is a stack someone else can
 stand up, with no founder path in the running service. Cost, copyright and quota are the
 deployer's decisions, and at roughly $0.13 a paper they are real ones.
-
-**Operator console** (#689) is a local Streamlit console over the `axial` CLI, tailing the
-run log. One user, one machine, no API and no auth. The two clients are deliberately
-different stacks because they have different user counts.
 
 **[Phase D, format adaptation](https://github.com/Muhanad-husn/axial/milestone/1)** covers
 venue conventions, house style, length targets, and citation style. Phases B and C push
@@ -294,7 +328,7 @@ change when behavior moves. Deterministic hooks hold the line. Subagents are blo
 merging entirely, red commits are blocked, and code cannot reach `main` without a PR. The
 human merges, and only the human.
 
-964 commits, 364 merged PRs, 328 closed issues to date. Development is AI-assisted with
+1,024 commits, 408 merged PRs, 362 closed issues to date. Development is AI-assisted with
 [Claude Code](https://claude.com/claude-code); architecture and approval authority are
 human.
 

@@ -1,5 +1,10 @@
 # Feature: Phase B v1 — retrieval over the graph, not over the bins
 
+**Archived 2026-08-12.** Closed 2026-08-01 under issues #485–#493 (see
+Closure below); all eight slices shipped. `650-relational-retrieval.md`
+(#650, DEC-62) shipped after this plan's own closure, as the next-layer
+retrieval rewrite over the relational store from #648.
+
 Phase A v1 replaced a filing system with a graph. Phase B still retrieves by
 filtering bins that no longer exist. Measured against the live vault on
 2026-07-29, four of its eight query tools return zero results and the four that

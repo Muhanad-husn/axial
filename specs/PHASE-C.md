@@ -1,6 +1,6 @@
 # PRD — Axial: Phase C Paper Authorship
 
-**Project:** Axial · **Version:** 1.0 · **Status:** Ratified · **Owner:** Operator (single-operator system)
+**Project:** Axial · **Version:** 1.0 · **Status:** Ratified, built and closed (issue #605) · **Owner:** Operator (single-operator system)
 
 **Inherits.** This PRD is the Phase-C phase spec under [`specs/CHARTER.md`](CHARTER.md), the product-wide behavioural constitution; its P0 criteria are the authorship-layer instance of the charter's five principles. Its substrate is Phase B, specified in [`specs/PHASE-B.md`](PHASE-B.md); Phase B is consumed here, never modified here, and never triggered from here. Phase A ([`specs/PRODUCT.md`](PRODUCT.md)) is consumed read-only beneath both. This spec does not restate or override the charter (charter §4).
 
