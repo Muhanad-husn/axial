@@ -26,21 +26,46 @@ dict `cost_usd` already comes from -- never a second read of the record,
 and never a re-derivation from anything `GET /me/usage` reads later. Same
 rule as `cost_usd`: `0` on a cache hit (this job made no model call), and
 `None` when the record carried no `cost` block to sum at all.
+
+**`main()` is the worker container's own entry point** (issue #691,
+`python -m axial.service.worker`, this module's own `if __name__` guard):
+bind the process to the published snapshot mounted at `AXIAL_SNAPSHOT_DIR`
+(`Snapshot.bind`), create the `jobs`/`job_events`/`paper_cache` schema
+(idempotent, so it races safely with `axial.service.api.create_app` doing
+the same for `jobs`), build the real `LLMClient`, and run
+`AXIAL_WORKER_COUNT` claim/run loops concurrently over the same queue --
+`ThreadPoolExecutor`, the same bounded-concurrency idiom every other
+`--workers` pass in this codebase already uses (`axial.interrogate`,
+`axial.gather`, ...), safe here for the identical reason it is safe there:
+`JobStore.claim`'s `SELECT ... FOR UPDATE SKIP LOCKED` is exactly what
+makes two loops racing the same table never claim the same row
+(`axial.service.jobs` module docstring). A slot that finds the queue
+empty sleeps `AXIAL_WORKER_POLL_SECONDS` before asking again. A second
+background thread calls `JobStore.reclaim_stale` every
+`AXIAL_WORKER_RECLAIM_AFTER_SECONDS` -- issue #681 built that method for
+exactly this ("a worker killed mid-job leaves its row reclaimable") but
+shipped with no production caller; this is the first one. SIGTERM/SIGINT
+(`docker compose down`/`stop`) set a shared stop event so every slot
+finishes its current job and exits cleanly rather than being SIGKILLed
+mid-run once the container's grace period expires.
 """
 
 from __future__ import annotations
 
+import os
+import signal
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
 from axial.brief.intake import BriefContent, compute_brief_id
-from axial.llm import LLMClient
+from axial.llm import LLMClient, get_client
 from axial.paths import scoped_for_principal
 from axial.service.cache import PaperCache
-from axial.service.jobs import JobStore
+from axial.service.jobs import DEFAULT_STALE_AFTER_SECONDS, JobStore
 from axial.service.snapshot import Snapshot, SnapshotPinMismatchError
 
 # How often a claimed job's heartbeat is refreshed while `run_job` is still
@@ -242,3 +267,113 @@ class Worker:
     def _heartbeat_loop(self, job_id: str, stop: threading.Event) -> None:
         while not stop.wait(self.heartbeat_interval):
             self.store.heartbeat(job_id)
+
+
+# --------------------------------------------------------------------------
+# Container entry point (issue #691)
+# --------------------------------------------------------------------------
+
+# Where the compose file mounts the published snapshot, in both the worker
+# and the API container -- an in-container path, never a founder path, and
+# the same default `axial.service.api`'s own cwd convention (module
+# docstring there) resolves against when the API's `working_dir` is set to
+# it too.
+SNAPSHOT_DIR_ENV_VAR = "AXIAL_SNAPSHOT_DIR"
+DEFAULT_SNAPSHOT_DIR = "/snapshot"
+
+# Where a generated record's cache copy, and an analyst's `analyses`/`runs`
+# output, are written -- writable, and deliberately NOT the read-only
+# snapshot mount (`run_ask_job`'s own docstring; the review comment on issue
+# #691 that named this gap).
+WORK_DIR_ENV_VAR = "AXIAL_WORK_DIR"
+DEFAULT_WORK_DIR = "/work"
+
+# How many claim/run loops run concurrently in this one process (module
+# docstring). One knob, matching the `--workers` convention every other
+# bounded-concurrency pass in this codebase already exposes as a flag;
+# here it is an env var because nothing else about a container's startup
+# is a CLI flag.
+WORKER_COUNT_ENV_VAR = "AXIAL_WORKER_COUNT"
+DEFAULT_WORKER_COUNT = 1
+
+# How long an empty queue is slept before the next claim attempt.
+POLL_SECONDS_ENV_VAR = "AXIAL_WORKER_POLL_SECONDS"
+DEFAULT_POLL_SECONDS = 2.0
+
+# How long a claimed job may go without a heartbeat before
+# `JobStore.reclaim_stale` returns it to the queue -- the same bound
+# `DEFAULT_STALE_AFTER_SECONDS` already names, exposed here because #691 is
+# what gives `reclaim_stale` its first production caller.
+RECLAIM_AFTER_SECONDS_ENV_VAR = "AXIAL_WORKER_RECLAIM_AFTER_SECONDS"
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    return float(raw) if raw else default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw else default
+
+
+def _poll_loop(worker: Worker, *, poll_interval: float, stop: threading.Event) -> None:
+    """One concurrency slot's own claim/run/sleep loop, until `stop` is
+    set. `Worker.run_once` (this module's own docstring) claims and runs
+    exactly one job and returns `False` when the queue was empty -- this
+    is the first caller that runs it in a loop rather than once."""
+    while not stop.is_set():
+        claimed = worker.run_once()
+        if not claimed:
+            stop.wait(poll_interval)
+
+
+def main() -> None:
+    """The worker container's entry point (module docstring). Reads every
+    setting from the environment, with the documented defaults above;
+    `DATABASE_URL` and `OPENROUTER_API_KEY`/`AXIAL_SECRETS_PATH` (read by
+    `axial.llm.get_client`, unchanged by this issue) are the only ones with
+    no in-code default, since a worker with no database or no model access
+    cannot do anything a default could paper over."""
+    dsn = os.environ["DATABASE_URL"]
+    snapshot_dir = os.environ.get(SNAPSHOT_DIR_ENV_VAR, DEFAULT_SNAPSHOT_DIR)
+    work_dir = Path(os.environ.get(WORK_DIR_ENV_VAR, DEFAULT_WORK_DIR))
+    worker_count = max(1, _env_int(WORKER_COUNT_ENV_VAR, DEFAULT_WORKER_COUNT))
+    poll_interval = _env_float(POLL_SECONDS_ENV_VAR, DEFAULT_POLL_SECONDS)
+    reclaim_after = _env_float(RECLAIM_AFTER_SECONDS_ENV_VAR, DEFAULT_STALE_AFTER_SECONDS)
+
+    snapshot = Snapshot.open(snapshot_dir).bind()
+    store = JobStore(dsn)
+    store.create_schema()
+    cache = PaperCache(dsn)
+    cache.create_schema()
+    client = get_client()
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_job(job: dict[str, Any]) -> tuple[str, str, bool, float | None, int | None]:
+        return run_ask_job(
+            job, client=client, store=store, snapshot=snapshot, work_dir=work_dir, cache=cache
+        )
+
+    worker = Worker(store, run_job)
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_args: stop.set())
+    signal.signal(signal.SIGINT, lambda *_args: stop.set())
+
+    def reclaim_loop() -> None:
+        while not stop.wait(reclaim_after):
+            store.reclaim_stale(stale_after_seconds=reclaim_after)
+
+    threading.Thread(target=reclaim_loop, daemon=True).start()
+
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = [
+            pool.submit(_poll_loop, worker, poll_interval=poll_interval, stop=stop)
+            for _ in range(worker_count)
+        ]
+        for future in futures:
+            future.result()
+
+
+if __name__ == "__main__":
+    main()

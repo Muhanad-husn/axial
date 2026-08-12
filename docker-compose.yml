@@ -1,0 +1,82 @@
+# Axial analyst service (issue #691): one `docker compose up` brings up
+# Postgres, the API, and a worker on a machine that has never run Axial.
+# Every setting below is an environment variable read from `.env`
+# (`cp .env.example .env`, then fill in `OPENROUTER_API_KEY` and point the
+# two `_HOST_PATH` variables at a real snapshot/secrets file) -- nothing
+# here is a founder path, and every default is documented in
+# `.env.example`. See `docs/service-deployment.md` for what each piece
+# costs to run and what to decide before opening this to readers.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-axial}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-axial}
+      POSTGRES_DB: ${POSTGRES_DB:-axial}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axial}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    # The published snapshot is mounted at the API's own working directory,
+    # the same way the worker binds to one (`axial.service.snapshot.
+    # Snapshot.bind`) -- issue #691's second half. Without this, every
+    # cwd-relative read `axial.paths.default_vault_dir()` makes (and, with
+    # it, `AXIAL_CITATION_MODE=passage`) resolves nothing, which is safe
+    # but makes `passage` a silent no-op -- see `docs/service-deployment.md`.
+    working_dir: ${AXIAL_SNAPSHOT_DIR:-/snapshot}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://axial:axial@postgres:5432/axial}
+      AXIAL_CITATION_MODE: ${AXIAL_CITATION_MODE:-locator}
+      AXIAL_SUPABASE_JWKS_URL: ${AXIAL_SUPABASE_JWKS_URL:-}
+      AXIAL_QUOTA_ASKS_PER_DAY: ${AXIAL_QUOTA_ASKS_PER_DAY:-20}
+      AXIAL_QUOTA_ASKS_PER_MONTH: ${AXIAL_QUOTA_ASKS_PER_MONTH:-300}
+    volumes:
+      - ${AXIAL_SNAPSHOT_HOST_PATH:-./data/snapshots/current}:${AXIAL_SNAPSHOT_DIR:-/snapshot}:ro
+      # `GET /asks/{id}/paper` and its export/usage siblings read a
+      # finished job's own `result_ref`, a path the worker wrote under its
+      # `AXIAL_WORK_DIR` (`axial.service.jobs`' `result_ref` column) --
+      # discovered live (issue #691's own docker compose run): with no
+      # shared volume here, the API 500s with a `FileNotFoundError` on
+      # every finished ask, since the two containers do not otherwise
+      # share a filesystem. Read-only: the API never writes an analysis.
+      - work:${AXIAL_WORK_DIR:-/work}:ro
+    ports:
+      - "${AXIAL_API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "-m", "axial.service.worker"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://axial:axial@postgres:5432/axial}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      AXIAL_SECRETS_PATH: ${AXIAL_SECRETS_PATH:-/secrets/secrets.toml}
+      AXIAL_SNAPSHOT_DIR: ${AXIAL_SNAPSHOT_DIR:-/snapshot}
+      AXIAL_WORK_DIR: ${AXIAL_WORK_DIR:-/work}
+      AXIAL_WORKER_COUNT: ${AXIAL_WORKER_COUNT:-1}
+      AXIAL_WORKER_POLL_SECONDS: ${AXIAL_WORKER_POLL_SECONDS:-2}
+      AXIAL_WORKER_RECLAIM_AFTER_SECONDS: ${AXIAL_WORKER_RECLAIM_AFTER_SECONDS:-120}
+    volumes:
+      - ${AXIAL_SNAPSHOT_HOST_PATH:-./data/snapshots/current}:${AXIAL_SNAPSHOT_DIR:-/snapshot}:ro
+      - work:${AXIAL_WORK_DIR:-/work}
+      # A missing host file mounts as an empty directory -- axial.llm's own
+      # `_load_openrouter_secrets` treats a non-regular-file path as "no
+      # secrets file" and falls back to OPENROUTER_API_KEY alone on the
+      # free `building` tier, so an operator who never sets
+      # AXIAL_SECRETS_HOST_PATH still gets a working, if lower-tier, worker.
+      - ${AXIAL_SECRETS_HOST_PATH:-./secrets/secrets.toml}:${AXIAL_SECRETS_PATH:-/secrets/secrets.toml}:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  work:

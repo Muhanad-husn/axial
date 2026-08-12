@@ -141,9 +141,11 @@ operator = [
 ]
 service = [
     { name = "fastapi" },
+    { name = "lancedb" },
     { name = "odfpy" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "sentence-transformers" },
     { name = "uvicorn" },
 ]
 
@@ -183,9 +185,11 @@ experiment = [
 operator = [{ name = "streamlit", specifier = ">=1.45" }]
 service = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "lancedb", specifier = ">=0.15" },
     { name = "odfpy", specifier = ">=1.4.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
+    { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
 

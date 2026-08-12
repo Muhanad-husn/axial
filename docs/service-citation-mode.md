@@ -44,3 +44,15 @@ from a `locator` deployment, and an unrecognised value refuses to start rather
 than falling back silently. It says nothing about the raw source files
 themselves — those are never copied into a published snapshot in the first
 place (see `axial.service.snapshot`'s own docstring).
+
+## The compose deployment needs one more thing: the mount
+
+`passage` mode resolves a citation out of the published snapshot's vault
+(`GET /asks/{id}/paper`'s citation resolution reads it relative to the API
+process's own cwd, same as everywhere else in this codebase). The `docker
+compose` stack (issue #691, `docs/service-deployment.md`) has to mount that
+snapshot at the API container's working directory the same way the worker
+already binds to one — without that mount, flipping `AXIAL_CITATION_MODE=
+passage` is a silent no-op, not an error. See
+`docs/service-deployment.md`'s own section on the mount for the full
+explanation.

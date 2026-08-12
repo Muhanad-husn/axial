@@ -78,6 +78,19 @@ service = [
     # and caching; `jwt.decode` checks the signature, `exp`, `iss` and
     # `aud` -- no hand-rolled JOSE parsing.
     "pyjwt[crypto]>=2.9",
+    # `axial.query.names.find_names`' tier-4 semantic fallback (§7.4): reads
+    # the persisted name-embedding table (`lancedb`) and encodes the query
+    # surface against it (`sentence-transformers`) -- a real ask-path read,
+    # reached whenever a retrieval loop's exact/fuzzy tiers miss, not a
+    # distillation-only step. Discovered missing (issue #691's own live
+    # `docker compose up` run: an ask failed `No module named 'lancedb'`
+    # mid-retrieval). Pinned to the same versions `distill` already
+    # declares below for the SAME two packages, since both groups need the
+    # identical read/encode behaviour to agree; `distill`'s `hdbscan`/
+    # `scikit-learn` stay out of this image -- those build the embeddings
+    # offline and are never reached by a served ask.
+    "lancedb>=0.15",
+    "sentence-transformers>=3.0",
 ]
 # The local operator console (issue #689): Streamlit, and nothing else. It is
 # a face on the `axial` CLI for one operator on one machine -- no pipeline pass
