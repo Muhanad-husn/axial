@@ -121,6 +121,19 @@ comes from. The citation mode applies here too, for the same reason it
 applies to `GET /asks/{id}/paper`: the record this route renders is the
 SAME already-mode-rendered record that route serves, so a `locator`
 deployment's export carries no book text either.
+
+**`GET /health` names the corpus pin the workers are serving** (issue
+#691): unauthenticated, so an orchestrator or a deployer's own monitoring
+can poll it without a token. It reads `manifest.json` at THIS process's
+own cwd (`axial.service.snapshot.Snapshot.open`) -- the exact convention
+`vault_dir`/citation resolution above already commits to (module
+docstring, issue #690): #691's compose file mounts the same published
+snapshot at both the API's and the worker's working directory, so what
+this route reads off its own mount is the pin every worker bound to that
+snapshot is serving, with no second path to configure and no call across
+processes. Nothing mounted at cwd (the `locator`-only default, #691's own
+"done when") reports `corpus_pin: null` rather than failing -- a deployer
+running the default configuration still gets a `200`.
 """
 
 from __future__ import annotations
@@ -161,6 +174,7 @@ from axial.service.quotas import (
     start_of_day_utc,
     start_of_month_utc,
 )
+from axial.service.snapshot import Snapshot, SnapshotNotFoundError
 
 ASK_KIND = "ask"
 
@@ -501,8 +515,18 @@ def create_app(
     `profiles` (issue #763) defaults to a `ProfileStore` over `store`'s own
     DSN, the same "a caller that only ever passed a `JobStore` still gets
     it for free" rule `quotas` above already follows; its schema is created
-    here, unconditionally, for the same reason `quotas`'s is."""
+    here, unconditionally, for the same reason `quotas`'s is.
+
+    `store.create_schema()` also runs here, unconditionally (issue #691):
+    `jobs`/`job_events` were left to a test fixture or an ops migration
+    before this issue (this function's own history), which is exactly the
+    gap a fresh compose deployment has no fixture and no migration step to
+    fill. Idempotent `CREATE TABLE IF NOT EXISTS`, like every other store's,
+    so whichever of the API or the worker container starts first creates
+    the schema and the other is a no-op against it -- no ordering
+    dependency between the two containers, no separate migration service."""
     citation_mode = resolve_citation_mode(citation_mode)
+    store.create_schema()
     if quotas is None:
         quotas = QuotaStore(store.dsn)
     quotas.create_schema()
@@ -511,6 +535,17 @@ def create_app(
     profiles.create_schema()
 
     app = FastAPI(title="Axial analyst service")
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        """The corpus pin the workers are serving, or `null` when nothing
+        is mounted at this process's own cwd (module docstring)."""
+        corpus_pin: str | None = None
+        try:
+            corpus_pin = Snapshot.open(Path.cwd()).corpus_pin
+        except SnapshotNotFoundError:
+            pass
+        return {"status": "ok", "corpus_pin": corpus_pin}
 
     @app.post("/asks", status_code=202, response_model=AskAccepted)
     def submit_ask(ask: AskRequest, principal: Principal) -> AskAccepted:
