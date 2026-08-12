@@ -2,18 +2,29 @@
  *
  * It speaks the routes the app uses -- `POST /asks`, `GET /asks`, `GET
  * /asks/{id}`, `GET /asks/{id}/events`, `GET /asks/{id}/paper`, `GET
- * /asks/{id}/export`, `GET /me/usage` -- with the same shapes and the same
- * SSE framing (`id:` line, `{"message", "detail"}` payload, stream closes
- * at a terminal state). Four things it does deliberately: it drops the
- * first event connection halfway, so a resume through `Last-Event-ID` is
- * exercised for real; `POST /__kill` makes it stop answering, which is
- * what "the API died mid-ask" looks like from a browser; `POST /__revive`
- * brings it back WITHOUT clearing any job -- an API restart loses no job
- * state because the worker that runs the ask is a separate process (issue
- * #760), and this is the mock's stand-in for that; and the case `quiet`
- * holds the stream open and silent mid-ask, which is what a real
- * fourteen-minute ask looks like and the only way a buffering hop between
- * the browser and the service is visible at all.
+ * /asks/{id}/export`, `GET`/`PUT /me/profile`, `GET /me/usage` -- with the
+ * same shapes and the same SSE framing (`id:` line, `{"message", "detail"}`
+ * payload, stream closes at a terminal state). Four things it does
+ * deliberately: it drops the first event connection halfway, so a resume
+ * through `Last-Event-ID` is exercised for real; `POST /__kill` makes it
+ * stop answering, which is what "the API died mid-ask" looks like from a
+ * browser; `POST /__revive` brings it back WITHOUT clearing any job -- an
+ * API restart loses no job state because the worker that runs the ask is a
+ * separate process (issue #760), and this is the mock's stand-in for that;
+ * and the case `quiet` holds the stream open and silent mid-ask, which is
+ * what a real fourteen-minute ask looks like and the only way a buffering
+ * hop between the browser and the service is visible at all.
+ *
+ * **The auth surface (issue #764):** every route below except `/__reset`,
+ * `/__revive`, `/__health` and `/__kill` requires `Authorization: Bearer
+ * <token>` and `401`s without one. The token's own `sub` claim is read
+ * without a signature check -- verifying JWKS/RSA is `src/axial/service/
+ * auth.py`'s job and is already proven there against a real key set (issue
+ * #763); this mock only needs to know WHICH principal is asking, so it can
+ * scope jobs and profiles the way the real service's `current_principal` +
+ * `can_access` do. A job or profile another principal owns is invisible --
+ * `GET /asks` filters to it, and a single-job route 404s exactly as
+ * `_require_own_job` does, never leaking a name from an existence check.
  *
  * `/paper` renders one of two fixed §7.3 records, picked by the ask's own
  * `case` (`paperFor`) -- the default is shaped like `locator` citation mode
@@ -50,12 +61,44 @@ const MESSAGES = [
  * they are on screen can only pass while the stream is still open and silent. */
 const QUIET_MS = 10_000;
 
+/** The signed-in principal `web/e2e/fixtures.ts` seeds by default for every
+ * spec that doesn't ask for a different one -- must match its own
+ * `DEFAULT_USER_ID`. The seeded history rows (`seedHistory` below) belong to
+ * this principal, so the pre-existing specs (`ask.spec.ts`,
+ * `history-usage.spec.ts`, `paper.spec.ts`) see exactly what they did before
+ * this issue made every route require a token. */
+const DEFAULT_USER_ID = "a0000000-0000-4000-8000-000000000001";
+
 const jobs = new Map();
+const profiles = new Map();
 let nextId = 1;
 let dead = false;
+// Set by `POST /__expire` -- every bearer token is refused from that point
+// on, regardless of whose `sub` it carries, standing in for a real token
+// that expired mid-walk (issue #764's fourth "done when" bullet: the app
+// must show a sign-in prompt, not a stuck screen).
+let forceUnauthorized = false;
 const openSockets = new Set();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The caller's own principal, read off the bearer token's `sub` claim with
+ * no signature check (module docstring) -- `null` for a missing header or a
+ * token this mock cannot even parse, both of which the real service also
+ * refuses at its edge. */
+function principalFor(req) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length);
+  const [, payloadPart] = token.split(".");
+  if (!payloadPart) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
+    return typeof payload.sub === "string" && payload.sub.length > 0 ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
 
 function json(res, status, body) {
   const payload = JSON.stringify(body);
@@ -252,6 +295,7 @@ function seedHistory() {
     request: "Did Mandate recruitment shape later rule?",
     created_at: "2026-08-01T09:00:00.000Z",
     finished_at: "2026-08-01T09:03:12.000Z",
+    principal: DEFAULT_USER_ID,
   });
   jobs.set("hist-cached", {
     id: "hist-cached",
@@ -263,6 +307,7 @@ function seedHistory() {
     request: "The same question, asked a second time",
     created_at: "2026-08-02T10:00:00.000Z",
     finished_at: "2026-08-02T10:00:01.000Z",
+    principal: DEFAULT_USER_ID,
   });
   jobs.set("hist-failed", {
     id: "hist-failed",
@@ -275,6 +320,7 @@ function seedHistory() {
     created_at: "2026-08-03T11:00:00.000Z",
     finished_at: "2026-08-03T11:01:00.000Z",
     error: "The corpus snapshot could not be bound.",
+    principal: DEFAULT_USER_ID,
   });
 }
 
@@ -289,7 +335,9 @@ const server = createServer(async (req, res) => {
   // (issue #760).
   if (path === "/__reset") {
     dead = false;
+    forceUnauthorized = false;
     jobs.clear();
+    profiles.clear();
     seedHistory();
     return json(res, 200, { dead });
   }
@@ -308,9 +356,37 @@ const server = createServer(async (req, res) => {
     for (const socket of openSockets) socket.destroy();
     return;
   }
+  if (path === "/__expire") {
+    forceUnauthorized = true;
+    return json(res, 200, { forceUnauthorized });
+  }
+
+  // Everything past here is the auth surface (module docstring): no bearer
+  // token, one this mock cannot parse a `sub` out of, or a token forced
+  // stale by `POST /__expire`, is `401` -- before any route below runs,
+  // matching `current_principal`'s own place in the real service.
+  const principal = forceUnauthorized ? null : principalFor(req);
+  if (!principal) return json(res, 401, { detail: "invalid or missing bearer token" });
 
   if (req.method === "GET" && path === "/asks") {
-    return json(res, 200, [...jobs.values()].map(askStatusFor));
+    return json(
+      res,
+      200,
+      [...jobs.values()].filter((job) => job.principal === principal).map(askStatusFor),
+    );
+  }
+
+  if (req.method === "GET" && path === "/me/profile") {
+    return json(res, 200, { theme: profiles.get(principal) ?? "system" });
+  }
+
+  if (req.method === "PUT" && path === "/me/profile") {
+    const body = await readBody(req);
+    if (!["light", "dark", "system"].includes(body.theme)) {
+      return json(res, 422, { detail: `theme must be one of ('light', 'dark', 'system')` });
+    }
+    profiles.set(principal, body.theme);
+    return json(res, 200, { theme: body.theme });
   }
 
   if (req.method === "GET" && path === "/me/usage") {
@@ -322,7 +398,7 @@ const server = createServer(async (req, res) => {
     // short of `asks_made`, the cache-hit exclusion the issue names.
     const sessionId = url.searchParams.get("session_id");
     return json(res, 200, {
-      principal: "local-analyst",
+      principal,
       session: sessionId
         ? { cost_usd: null, tokens: null, asks_made: 2, asks_charged: 1 }
         : null,
@@ -354,13 +430,17 @@ const server = createServer(async (req, res) => {
       quiet: ask.case === "quiet",
       case: ask.case,
       request: ask.request,
+      principal,
     });
     return json(res, 202, { id, state: "queued" });
   }
 
   const match = /^\/asks\/([^/]+)(\/events|\/paper|\/export)?$/.exec(path);
   const job = match ? jobs.get(match[1]) : undefined;
-  if (!job) return json(res, 404, { detail: `no ask with id ${path}` });
+  // A job owned by someone else is refused exactly as if it did not exist
+  // (`_require_own_job`'s own rule, `src/axial/service/api.py`) -- guessing
+  // another analyst's ask id correctly proves nothing.
+  if (!job || job.principal !== principal) return json(res, 404, { detail: `no ask with id ${path}` });
 
   if (match[2] === "/events") return streamEvents(req, res, job);
 

@@ -510,7 +510,86 @@ this slice is built and CI-greened entirely against locally-minted JWTs.
 The live Google sign-in run is owed after #764 (the web slice) merges, the
 same way #687's live validation ran after its own web slice.
 
-## Explicitly deferred (do NOT build early)
+### Amendment, 2026-08-12: what shipped in #764 (sign-in, session, and the theme move)
+
+**The whole app now sits behind one gate.** `web/src/app/page.tsx`'s default
+export is `useSession()` (`web/src/lib/useSession.ts`) deciding between four
+states -- `unconfigured`, `loading`, `signedOut`, `signedIn` -- and only
+`signedIn` mounts the app #744/#745/#746/#762 already shipped, now keyed by
+`session.userId` so a sign-in/sign-out cycle is a full React remount, not a
+state reset some hook could forget. Nothing under the gate changed behaviour;
+`web/e2e/ask.spec.ts`, `history-usage.spec.ts` and `paper.spec.ts` needed no
+edits at all -- only the shared `context` fixture in `web/e2e/fixtures.ts`
+changed, to sign every spec in by default.
+
+**The seam the issue asked for turned out to be `@supabase/ssr`'s own cookie
+storage, driven at a fixed name.** `web/src/lib/auth.ts` builds the one real
+`createBrowserClient`, told to use `cookieOptions: { name: "axial-auth" }`
+instead of a project-ref-derived default. `web/e2e/auth.ts` writes a session
+into that exact cookie, encoded exactly as the library's own storage adapter
+would have written it (`base64-` + base64url of the JSON-stringified
+`Session`), before the first navigation. This is not a second, test-only auth
+path: it is the same client reading the same cookie a real sign-in would have
+written, proven by running the whole existing suite through it unchanged.
+No live Supabase project exists yet (unchanged from #763's own note), so
+`playwright.config.ts`'s app server is handed a syntactically valid but
+never-contacted project (`http://127.0.0.1:9`, a fast-refusing local port)
+purely so the client can construct -- every spec seeds its own session rather
+than driving a real sign-in against it. **The live Google sign-in run is
+still owed**, the same way #687's was after its own web slice.
+
+**`web/e2e/mock-service.mjs` gained an auth surface that trusts a token's
+`sub` claim with no signature check.** Verifying JWKS/RSA is
+`src/axial/service/auth.py`'s job and is already proven there against a real
+key set (#763); the mock only needed to know which principal was asking, so
+it could scope jobs and profiles the way `current_principal` + `can_access`
+do -- a job or profile another principal owns 404s, never 403s, matching
+`_require_own_job`'s own "refused exactly as if it did not exist" rule.
+
+**`web/src/lib/api.ts` grew one `authorizedFetch`, not a second fetch path.**
+Every exported call -- including the event stream and, new here, `GET`/`PUT
+/me/profile` -- goes through it; it attaches the bearer token
+(`auth.ts`'s `getAccessToken`) and, on any `401`, calls `notifyUnauthorized`,
+which `useSession` is the one subscriber to. That single signal is what turns
+an expired token mid-walk into the sign-in screen rather than a stuck one --
+proven in `web/e2e/auth.spec.ts` by expiring the mock's tokens mid-ask and
+timing how fast the screen changes, not by asserting a component's internal
+state.
+
+**Export could no longer be a plain `<a download>`.** Every route requiring a
+bearer token means a browser-navigated anchor can never authenticate; the
+issue did not anticipate this, since #724 built export before auth existed.
+`ExportControl.tsx` keeps the same `<a href>` (for a copied link) but its
+click now runs `downloadExport` (`api.ts`): fetch with the header, blob URL,
+a programmatic anchor click. `paper.spec.ts`'s own download test needed no
+change -- the browser still emits a `download` event either way.
+
+**The theme move required `theme.ts`'s two write/read functions to become
+async, and `ThemeControl` to become a prop-driven, hook-fed component**
+(`useTheme.ts`), same pattern `TopBar` already uses for the spend meters.
+`loadThemeChoice`/`saveThemeChoice` try `GET`/`PUT /me/profile` first and
+fall back to `localStorage` only on failure -- signed out, unconfigured, or a
+network blip -- so two analysts in turn on one browser never see a trace of
+each other's choice in it, per the issue's own line. **Zero-flash for a
+signed-in analyst is bought by holding the whole signed-in app off screen
+until `useTheme`'s fetch resolves**, reusing the same gate `useSession`
+already needed rather than adding a second one; the pre-auth loading screen
+still uses `layout.tsx`'s existing inline boot-script guess, which is the one
+place a guess is unavoidable without a session cookie the server could read
+before first paint -- out of scope here, since this app has no server-side
+auth-gated rendering to begin with.
+
+**One premise the issue carried turned out to need a decision, not just
+code: "the Next.js SSR helper" (`@supabase/ssr`) is used, but with no
+middleware and no server components reading the session.** This app has
+always been a single client-rendered route with no server-side data fetching
+gated on identity, so there is nothing for a `middleware.ts` to protect that
+the client-side gate in `page.tsx` does not already cover; adding one would
+be new infrastructure this issue's "done when" bullets do not ask for.
+`@supabase/ssr` is still the right dependency -- same client API, and the one
+knob (`cookieOptions.name`) that makes the whole test seam possible.
+
+### Amendment, 2026-08-12: what shipped in #763 (a token becomes a principal, and a profile)
 
 Building these before a real need is the over-engineering tripwire the handbook
 warns about. Add each only when something concrete demands it:

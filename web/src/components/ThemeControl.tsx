@@ -1,46 +1,17 @@
-"use client";
+import { THEME_CHOICES, type ThemeChoice } from "@/lib/theme";
 
-import { useEffect, useSyncExternalStore } from "react";
-
-import {
-  DARK_MEDIA_QUERY,
-  loadThemeChoice,
-  resolveTheme,
-  saveThemeChoice,
-  subscribeThemeChoice,
-  THEME_CHOICES,
-  type ThemeChoice,
-} from "@/lib/theme";
-
-function useSystemPrefersDark(): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const media = window.matchMedia(DARK_MEDIA_QUERY);
-      media.addEventListener("change", onChange);
-      return () => media.removeEventListener("change", onChange);
-    },
-    () => window.matchMedia(DARK_MEDIA_QUERY).matches,
-    () => false,
-  );
-}
-
-function useThemeChoice(): ThemeChoice {
-  return useSyncExternalStore(subscribeThemeChoice, loadThemeChoice, () => "system" as ThemeChoice);
-}
-
-/** The segmented control in the top bar. It writes the resolved mode onto the
- * root; `globals.css` does the rest. The inline boot script in the layout has
- * already resolved the same value before first paint, so this never repaints
- * the page on load -- it only takes over when the analyst chooses. */
-export function ThemeControl() {
-  const choice = useThemeChoice();
-  const systemPrefersDark = useSystemPrefersDark();
-  const resolved = resolveTheme(choice, systemPrefersDark);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = resolved;
-  }, [resolved]);
-
+/** The segmented control in the top bar. Driven entirely by props now
+ * (issue #764) -- `useTheme` (`@/lib/useTheme`) owns the fetch, the profile
+ * write, and applying the resolved mode to the root; this component only
+ * ever renders whatever it is given, the same pattern `TopBar` already uses
+ * for the spend meters. */
+export function ThemeControl({
+  choice,
+  onChange,
+}: {
+  choice: ThemeChoice;
+  onChange: (choice: ThemeChoice) => void;
+}) {
   return (
     <div
       className="flex overflow-hidden rounded-md border border-rule"
@@ -52,7 +23,7 @@ export function ThemeControl() {
           key={option}
           type="button"
           aria-pressed={choice === option}
-          onClick={() => saveThemeChoice(option)}
+          onClick={() => onChange(option)}
           className={`cursor-pointer border-r border-rule px-[9px] py-[5px] font-mono text-[9px] font-semibold tracking-[0.09em] uppercase last:border-r-0 ${
             choice === option ? "bg-ink text-panel" : "text-ink3"
           }`}

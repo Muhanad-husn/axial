@@ -1,5 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 
+import { DEFAULT_USER_ID, seedSession } from "./auth";
+
 // On this Windows box, the worker-scoped `browser` fixture's own teardown
 // (browser.close()) can hang forever: Chromium's temp profile directory gets
 // an ACL that makes one subfolder permanently EPERM, and Node's fs.rm()
@@ -23,6 +25,16 @@ export const test = base.extend({
       new Promise((resolve) => setTimeout(resolve, 5_000)),
     ]);
     process.exit(0);
+  },
+  // Every pre-existing spec exercises the signed-in app (issue #764 put every
+  // route behind a token), so the default context arrives already signed in
+  // as `DEFAULT_USER_ID` -- none of them had to change to keep doing that. A
+  // spec that cares about the signed-out or multi-analyst path overrides or
+  // clears this itself (`e2e/auth.spec.ts`).
+  context: async ({ context }, use) => {
+    await seedSession(context, DEFAULT_USER_ID);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright's fixture API, not a React hook.
+    await use(context);
   },
 });
 

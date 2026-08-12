@@ -1,0 +1,169 @@
+=== npm --prefix web test (vitest) ===
+
+> web@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.10 D:/axial/.claude/worktrees/764-web-signin/web
+
+
+ Test Files  5 passed (5)
+      Tests  38 passed (38)
+   Start at  05:16:27
+   Duration  2.62s (transform 844ms, setup 0ms, import 1.60s, tests 205ms, environment 1ms)
+
+vitest exit: 0
+
+=== npm --prefix web run test:e2e (Playwright, chromium) ===
+
+> web@0.1.0 test:e2e
+> playwright test
+
+
+Running 23 tests using 1 worker
+
+[1/23] [chromium] › e2e\ask.spec.ts:17:5 › an ask runs to completion and the walk is visible the whole time
+[2/23] [chromium] › e2e\ask.spec.ts:39:5 › the walk shows what has happened while the stream is still open and quiet
+[3/23] [chromium] › e2e\ask.spec.ts:53:5 › killing the API mid-ask shows an error, not a permanent spinner
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-3/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-3/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-3/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-3/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/me/usage?session_id=3982e482-574c-43dc-9f3c-460a4efab6bc Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[4/23] [chromium] › e2e\ask.spec.ts:72:5 › the service dying and coming back doesn't strand a running ask -- reload picks the walk back up
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-4/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-4/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-4/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks/ask-4/events Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/asks Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Failed to proxy http://127.0.0.1:8099/me/usage?session_id=cdf6368c-da3f-47a4-a687-354a551d32cb Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[WebServer] Error: socket hang up
+[WebServer]     at ignore-listed frames {
+[WebServer]   code: 'ECONNRESET'
+[WebServer] }
+
+[5/23] [chromium] › e2e\ask.spec.ts:102:5 › a running row in history opens back into the walk, not a paper fetch that would 409
+[6/23] [chromium] › e2e\ask.spec.ts:125:5 › a refusal is shown in the service's own words
+[7/23] [chromium] › e2e\ask.spec.ts:135:7 › on a machine set to dark › system follows the machine and an explicit choice overrides it both ways
+[8/23] [chromium] › e2e\auth.spec.ts:23:5 › a signed-in analyst asks, watches the walk, reads the paper -- and can sign out back to the gate
+[9/23] [chromium] › e2e\auth.spec.ts:46:7 › signed out › a signed-out visitor lands on sign-in, not an app that silently 401s
+[10/23] [chromium] › e2e\auth.spec.ts:58:7 › signed out › a stale live-ask id left in this browser is never reattached to while signed out
+[11/23] [chromium] › e2e\auth.spec.ts:72:5 › two analysts in turn on the same browser see two different histories and two different themes
+[12/23] [chromium] › e2e\auth.spec.ts:114:5 › a token that expires mid-walk produces a sign-in prompt, not a stuck screen
+[13/23] [chromium] › e2e\history-usage.spec.ts:16:5 › the analyst's own past asks render, and a cached one is marked as costing nothing
+[14/23] [chromium] › e2e\history-usage.spec.ts:34:5 › each row shows the case and question that produced it, not just its state and timestamp (#759)
+[15/23] [chromium] › e2e\history-usage.spec.ts:53:5 › reopening a finished ask shows its paper, not a fresh walk
+[16/23] [chromium] › e2e\history-usage.spec.ts:61:5 › reopening a cached ask reads its cost as zero, not unknown and not a repeat charge
+[17/23] [chromium] › e2e\history-usage.spec.ts:74:5 › the session meter reads an unknown cost as a dash, never $0.00
+[18/23] [chromium] › e2e\history-usage.spec.ts:83:5 › the month meter says estimate and labels the two different ask counts
+[19/23] [chromium] › e2e\history-usage.spec.ts:95:5 › the meters and the theme control still fit on a phone-width viewport
+[20/23] [chromium] › e2e\paper.spec.ts:23:5 › every claim carries its evidence marker, in locator mode
+[21/23] [chromium] › e2e\paper.spec.ts:48:5 › the same paper carries quoted passages in passage mode
+[22/23] [chromium] › e2e\paper.spec.ts:59:5 › the metrics panel is shut until opened and sits outside the paper
+[23/23] [chromium] › e2e\paper.spec.ts:73:5 › all three export formats download
+  23 passed (1.4m)
+e2e exit: 0
