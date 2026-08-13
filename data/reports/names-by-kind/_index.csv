@@ -1,0 +1,23 @@
+﻿kind,file,pages,member_notes,pages_single_note,pages_multi_source,pages_in_usable_band,pages_with_aliases,pages_with_disagreement,biggest_page,biggest_page_members
+person,person.csv,12770,35396,7589,2483,64,2789,191,Michael Mann,372
+institution/group,institution-group.csv,9904,24450,6897,1729,56,1578,91,Ba'th Party,288
+concept,concept.csv,7953,15311,5930,1120,18,987,100,nationalism,160
+work,work.csv,6809,10094,5461,398,4,582,18,The Sources of Social Power,92
+country/state/place,country-state-place.csv,4666,35488,2742,1287,129,758,135,Syria,1298
+event,event.csv,2915,7626,2094,478,20,603,32,World War I,522
+movement/religion,movement-religion.csv,1231,5462,776,323,28,283,44,Islam,247
+period,period.csv,1219,3302,857,266,10,188,23,Cold War,162
+figure,figure.csv,48,62,44,0,0,0,0,Model 4,7
+table,table.csv,22,26,18,0,0,0,0,Model 10,2
+movement,movement.csv,16,24,12,0,0,4,0,Alliance for Change,5
+group,group.csv,13,14,12,0,0,1,0,segregationists,2
+institution,institution.csv,4,5,3,1,0,0,0,religious orders,2
+place,place.csv,4,5,3,1,0,0,0,seventeenth-century Europe,2
+animal group,animal-group.csv,3,3,3,0,0,0,0,highland ponies,1
+(unspecified),unspecified.csv,1,1,1,0,0,0,0,Annual Political Science Association Meeting,1
+concept/movement,concept-movement.csv,1,1,1,0,0,0,0,Marxian world system theory,1
+concept/religious text,concept-religious-text.csv,1,1,1,0,0,0,0,Sermon on the Mount,1
+event/legislation,event-legislation.csv,1,1,1,0,0,0,0,Revenue Act of 1935,1
+figure/table,figure-table.csv,1,1,1,0,0,0,0,"Model 1, Table 3.2",1
+project,project.csv,1,2,0,0,0,0,0,Cairo2050,2
+section,section.csv,1,1,1,0,0,0,0,Analyses,1

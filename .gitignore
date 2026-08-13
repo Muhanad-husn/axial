@@ -103,3 +103,14 @@ web/next-env.d.ts
 # Editor settings are personal, not project config.
 .vscode/
 .idea/
+
+# The per-page census tables under data/reports/names-by-kind/ are row-level
+# derived data -- one row per name page, 13 MB over the live corpus, rewritten
+# whenever the corpus changes, and a new one appears whenever the corpus mints a
+# new name kind. Only the summary tables are tracked; every row-level file
+# regenerates from data already on disk in under a minute (build/names_by_kind.py,
+# build/answers_census.py).
+data/reports/names-by-kind/*
+!data/reports/names-by-kind/_index.csv
+!data/reports/names-by-kind/questions.csv
+!data/reports/names-by-kind/questions-by-source.csv
