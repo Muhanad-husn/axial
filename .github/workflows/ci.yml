@@ -135,8 +135,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --group distill --group service --group operator
 
+      # `-n 0` turns off the xdist default that pyproject.toml sets for the
+      # pre-commit suite. It is required here, not cosmetic: these contracts
+      # share filesystem state and clobber each other under parallel workers.
       - name: Run acceptance tests (serial within the shard)
-        run: uv run pytest ${{ matrix.paths }} -q -m "not slow" --durations=15
+        run: uv run pytest ${{ matrix.paths }} -q -m "not slow" -n 0 --durations=15
 
   # The `web/` client (issue #744). The two jobs above never look at it -- they
   # run pytest and ruff, both of which are blind to TypeScript -- so without
