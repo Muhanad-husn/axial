@@ -156,8 +156,20 @@ operator = [
 
 # tests/ holds only outer acceptance contracts (test-author, locked once red);
 # inner unit tests are co-located under src/ (implementer's domain) - DEC-20.
+#
+# A bare `pytest` is the pre-commit suite, and only that: the src/ units, in
+# parallel, without the real-docling tests. It used to mean the whole tree run
+# serially, which takes ~55 minutes and is nobody's pre-commit check. CI still
+# runs tests/ -- it names its paths explicitly, so testpaths never applies
+# there -- and remains the only place the acceptance contracts run.
+#
+# The xdist default is why the acceptance job passes `-n 0`: those contracts
+# drive the CLI through subprocesses that share the real data/envelopes and
+# data/vault scratch dirs, so parallel workers on one filesystem clobber each
+# other. See the note above the `acceptance` job in .github/workflows/ci.yml.
 [tool.pytest.ini_options]
-testpaths = ["tests", "src"]
+testpaths = ["src"]
+addopts = "-q -m 'not slow' -n auto"
 markers = [
     "slow: exercises the real docling conversion pipeline (model load, no network once cached)",
 ]
