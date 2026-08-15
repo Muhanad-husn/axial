@@ -1,0 +1,14 @@
+# origin: authored against the built vault, 2026-08-15
+# case anchor: deliberately narrow. `nation-state` (101 notes / 13 sources)
+# and `nationalism` (160 / 21) are the substrate, but the case string opens
+# on the de facto states, which resolve to modest pages -- `quasi-states`
+# (51 / 5), `negative sovereignty` (47 / 3), `Abkhazia` (47 / 3),
+# `Somaliland` (52 / 1) -- so coverage describes the question and not a hub.
+# turns on: Jackson vs Caspersen vs Zaum on what sovereignty is grounded in
+# (the `quasi-states` and `sovereignty` pages both record that fault line),
+# crossed with Mann's infrastructural/despotic distinction and Malesevic's
+# claim that the nation-state is an organizational-ideological form rather
+# than a legal title.
+case: "De facto states and the recognition regime, 1945-2020"
+request: "Two anomalies stand on opposite sides of the same line. Recognized states have survived for decades with almost no capacity to govern the territory their sovereignty names, and unrecognized states — Somaliland, Abkhazia, Transnistria, Northern Cyprus, Kosovo before 2008 — have taxed, conscripted, policed and schooled populations for as long without ever obtaining the title. Decide what a nation-state is such that both facts follow: a status conferred from outside, an organizational capacity built from inside, or an ideological project that needs neither. State the strongest version of the account you reject. Then test your choice on survival: explain why quasi-states are not eliminated by their stronger neighbours and why de facto states are not absorbed, and say which observation would have told against you."
+lens: "sovereignty as status versus sovereignty as capacity"
