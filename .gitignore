@@ -5,6 +5,11 @@
 secrets/*
 !secrets/secrets.example.toml
 .env
+# The web client's own env files (`web/.env.local` carries the Supabase
+# project URL and publishable key). Same deny-by-default reasoning as
+# secrets/ above: a `.env` rule alone does not match `.env.local`.
+.env.local
+.env*.local
 __pycache__/
 *.pyc
 .pytest_cache/
