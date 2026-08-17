@@ -6,7 +6,7 @@ llm_cost_unpriced model='stub/shape': no PRICE_TABLE_USD_PER_1K entry, cost for 
 POST /asks
 ========================================================================
 $ POST /asks  {"case": "Syria, 1920-2024", "request": "Did the mandate build the institutions the Baath later inherited?"}
-< 202  {"id":"bb2dbd441efc445982323dfcd99ea5bd","state":"queued"}
+< 202  {"id":"600d4f4fd8384f5ea03db8bedde93d37","state":"queued"}
 
 ========================================================================
 the worker claims it and runs the ask, then drafts the essay
@@ -19,7 +19,7 @@ cost_usd    : 0.020560000000000002   answer + the three Phase-C passes
 model calls : ['paper_plan', 'paper_draft', 'paper_draft', 'paper_draft', 'paper_draft', 'paper_shape']
 
 ========================================================================
-GET /asks/bb2dbd441efc445982323dfcd99ea5bd/paper
+GET /asks/600d4f4fd8384f5ea03db8bedde93d37/paper
 ========================================================================
 top-level keys: ['essay', 'metrics', 'paper', 'record']
 claims still served: ['c1', 'c2', 'c3']
@@ -27,8 +27,6 @@ paper sections    : ['What the question asks', "The mandate's bureaucracy", 'The
 
 --- payload['essay'] ---
 # The institutions that decided who held power were built under the mandate.
-
-The institutions that decided who held power were built under the mandate.
 
 ## What the question asks
 
@@ -52,11 +50,9 @@ The inheritance runs through the notables [pc-002].
 
 
 ========================================================================
-GET /asks/bb2dbd441efc445982323dfcd99ea5bd/export?format=md  (the export follows the screen)
+GET /asks/600d4f4fd8384f5ea03db8bedde93d37/export?format=md  (the export follows the screen)
 ========================================================================
 # The institutions that decided who held power were built under the mandate.
-
-The institutions that decided who held power were built under the mandate.
 
 ## What the question asks
 
@@ -86,5 +82,6 @@ The inheritance runs through the notables [pc-002].
 
 ## Answer
 
-- **[stated]** The mandat
-... [1064 chars total; the claim list follows the essay]
+- **[stated]** The mandate built a centralised bureaucracy. (chunk:src-1999_1_intro_c1)
+- **[stated]*
+... [988 chars total; the claim list follows the essay]

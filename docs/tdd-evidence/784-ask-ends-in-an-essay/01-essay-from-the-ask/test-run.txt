@@ -1,17 +1,21 @@
 ============================= test session starts =============================
-collecting ... collected 12 items
+collecting ... collected 16 items
 
-tests/service/test_ask_ends_in_an_essay.py::test_the_job_row_names_the_paper_it_drafted PASSED [  8%]
-tests/service/test_ask_ends_in_an_essay.py::test_a_finished_ask_serves_an_argued_essay PASSED [ 16%]
-tests/service/test_ask_ends_in_an_essay.py::test_the_asks_reported_cost_includes_the_drafting_passes PASSED [ 25%]
-tests/service/test_ask_ends_in_an_essay.py::test_a_cache_hit_still_serves_its_essay PASSED [ 33%]
-tests/service/test_ask_ends_in_an_essay.py::test_a_failed_draft_leaves_the_answer_standing PASSED [ 41%]
-tests/service/test_ask_ends_in_an_essay.py::test_a_refused_ask_serves_no_essay_and_no_paper PASSED [ 50%]
-tests/service/test_ask_ends_in_an_essay.py::test_the_export_carries_the_essay_the_analyst_read PASSED [ 58%]
-tests/service/test_ask_ends_in_an_essay.py::test_an_export_with_no_essay_is_what_it_always_was PASSED [ 66%]
-src/axial/ask/test_paper.py::test_the_thesis_is_the_question_and_the_one_record_is_the_source PASSED [ 75%]
-src/axial/ask/test_paper.py::test_a_refusal_is_skipped_without_a_single_model_call PASSED [ 83%]
-src/axial/ask/test_paper.py::test_the_paper_lands_where_the_caller_said_not_in_the_repo PASSED [ 91%]
+tests/service/test_ask_ends_in_an_essay.py::test_the_job_row_names_the_paper_it_drafted PASSED [  6%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_finished_ask_serves_an_argued_essay PASSED [ 12%]
+tests/service/test_ask_ends_in_an_essay.py::test_the_asks_reported_cost_includes_the_drafting_passes PASSED [ 18%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_cache_hit_still_serves_its_essay PASSED [ 25%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_failed_draft_leaves_the_answer_standing PASSED [ 31%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_refused_ask_serves_no_essay_and_no_paper PASSED [ 37%]
+tests/service/test_ask_ends_in_an_essay.py::test_the_export_carries_the_essay_the_analyst_read PASSED [ 43%]
+tests/service/test_ask_ends_in_an_essay.py::test_an_export_with_no_essay_is_what_it_always_was PASSED [ 50%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_locator_deployment_serves_no_book_text_under_either_new_key PASSED [ 56%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_passage_deployment_resolves_the_paper_the_same_way_it_resolves_the_record PASSED [ 62%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_hit_whose_entry_has_no_essay_drafts_one_and_repairs_the_entry PASSED [ 68%]
+tests/service/test_ask_ends_in_an_essay.py::test_a_cached_refusal_stays_a_refusal_and_costs_nothing_to_repeat PASSED [ 75%]
+src/axial/ask/test_paper.py::test_the_thesis_is_the_question_and_the_one_record_is_the_source PASSED [ 81%]
+src/axial/ask/test_paper.py::test_a_refusal_is_skipped_without_a_single_model_call PASSED [ 87%]
+src/axial/ask/test_paper.py::test_the_paper_lands_where_the_caller_said_not_in_the_repo PASSED [ 93%]
 src/axial/ask/test_paper.py::test_the_same_question_over_the_same_record_is_the_same_paper PASSED [100%]
 
 ============================== warnings summary ===============================
@@ -20,4 +24,4 @@ src/axial/ask/test_paper.py::test_the_same_question_over_the_same_record_is_the_
     from starlette.testclient import TestClient as TestClient  # noqa
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 12 passed, 1 warning in 18.71s ========================
+======================= 16 passed, 1 warning in 16.52s ========================
