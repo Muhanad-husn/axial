@@ -4,15 +4,20 @@ records: 19
 quotes resolved, locator mode: 0
 quotes resolved, passage mode: 729
 reader words, locator: 26585
-reader words, passage: 585711  (+559126, x22.03)
-rendered_word_count (audit, raw record): 31579
+reader words, passage: 589837  (+563252, x22.19)
+rendered_word_count, before either resolution: 31579
+rendered_word_count, after both resolutions:   31579
+records whose raw object gained a citation key: 0 []
 records resolving no quote at all in passage mode: 0 []
+placement skeleton written: data\logs\2026-08-17-785-citation-default-flip\placement-skeleton.txt
 
-No book text is reproduced here or in the committed run log -- counts only (DEC-23).
+Counts only -- no book text is reproduced here or in the committed run log (DEC-23).
+Placement is shown separately in placement-skeleton.txt, quotes replaced by their word counts.
 
 === the mode itself, at the edge ===
 AXIAL_CITATION_MODE=<unset>              -> passage
-AXIAL_CITATION_MODE=''  (set but blank)  -> passage
+AXIAL_CITATION_MODE='' (empty)           -> passage
+AXIAL_CITATION_MODE='   ' (whitespace)   -> passage
 AXIAL_CITATION_MODE=locator              -> locator
 AXIAL_CITATION_MODE=passage              -> passage
 AXIAL_CITATION_MODE=verbatim             -> startup error: AXIAL_CITATION_MODE='verbatim' is not a valid citation mode -- use one of 'locator' or 'passage'

@@ -99,7 +99,13 @@ def resolve_citation_mode(
     (defaulting to `os.environ`), defaulting to `passage` when that is unset
     or blank (issue #785) -- an install that has made no decision quotes the
     books it argues from, because an answer that cannot quote its sources is
-    not an answer. A deployer choosing `locator` sets the variable."""
+    not an answer. A deployer choosing `locator` sets the variable.
+
+    "Blank" now covers a whitespace-only value as well as an empty one. The
+    empty string already fell through to the default (falsy, so it never
+    reached the membership check); `AXIAL_CITATION_MODE="  "` used to raise a
+    startup error instead, which the old docstring's own "unset or blank"
+    promise said it would not."""
     source = env if env is not None else os.environ
     raw = explicit if explicit is not None else source.get(CITATION_MODE_ENV_VAR)
     value = (raw or "").strip().lower() or PASSAGE

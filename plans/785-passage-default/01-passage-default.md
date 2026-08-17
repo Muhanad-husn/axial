@@ -108,7 +108,22 @@ claim. Same app with `AXIAL_CITATION_MODE=locator` asserts no quote.
   records. No packet/judge parameter added; a regression test pins it.
 - Acceptance test watched red through `GET /asks/{id}/export` with the
   default flip stashed, then green with it restored.
-- `AXIAL_CITATION_MODE=` (blank) used to raise at startup despite the
-  docstring promising it behaved as unset. Now it resolves to the default.
-- The reader-facing answer grows ×22 (26,585 → 585,711 words over 19
+- `AXIAL_CITATION_MODE="  "` (whitespace only) used to raise at startup
+  despite the docstring promising blank behaved as unset. Now it resolves to
+  the default. An empty value already did, being falsy.
+- The reader-facing answer grows ×22 (26,585 → 589,837 words over 19
   records). That is correct per this issue and is the case for #784.
+- **Reviewer and verifier both returned DONE_WITH_CONCERNS; five findings
+  actioned.** The `rendered_word_count` row was one number printed in two
+  columns — `measure.py` now takes it before and after both resolutions and
+  checks no raw record gains a `citation` key. The blank-value story was
+  factually wrong (the empty string never raised; only whitespace did) and is
+  corrected everywhere, with both cases now covered by tests. The deployer
+  docs gained the ×22 magnitude, and the silent-no-op condition was restated
+  as "nothing resolvable at the API's cwd" rather than "no mount", naming
+  `GET /health` as the check. DEC-65 now carries an in-place superseded
+  marker.
+- **A real defect surfaced while proving placement:** the reader render
+  marked only the first line of a passage `>`, so every paragraph after it
+  rendered as body text — book text indistinguishable from the tool's own
+  prose. Invisible while the default resolved no quotes. Fixed, with a test.

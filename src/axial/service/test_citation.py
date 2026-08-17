@@ -24,7 +24,19 @@ def test_an_unconfigured_install_resolves_to_passage():
     assert resolve_citation_mode(env={}) == PASSAGE
 
 
-def test_a_blank_value_resolves_to_passage():
+def test_an_empty_value_resolves_to_passage():
+    """`AXIAL_CITATION_MODE=` in a `.env` file. This already resolved to the
+    old default before #785 -- an empty string is falsy, so it never reached
+    the membership check."""
+    assert resolve_citation_mode(env={CITATION_MODE_ENV_VAR: ""}) == PASSAGE
+
+
+def test_a_whitespace_only_value_resolves_to_passage():
+    """`AXIAL_CITATION_MODE=" "`. This one used to raise
+    `InvalidCitationModeError` at startup: the value survived the `or`,
+    stripped to `""`, and failed the membership check -- despite the
+    docstring claiming blank was treated as unset. #785 makes the promise
+    true."""
     assert resolve_citation_mode(env={CITATION_MODE_ENV_VAR: "   "}) == PASSAGE
 
 

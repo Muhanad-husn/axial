@@ -82,13 +82,20 @@ to `AXIAL_SNAPSHOT_DIR` and mounting the same `AXIAL_SNAPSHOT_HOST_PATH`
 there read-only — the same variables, the same host path, the worker
 already uses.
 
-**Until that mount exists, `passage` mode is a silent no-op** — and since
-#785 that is the default, so this is the mount every deployment needs, not
-one only an opted-in deployer does. With nothing mounted at the API's cwd,
-`render_record_for_serving` finds no vault to resolve a chunk against and
-leaves every citation exactly as `locator` mode would have — no error, no
-warning, just no passage text. Answers come back citing books they never
-quote, and the mount is the fix.
+**With no readable snapshot at the API's cwd, `passage` mode is a silent
+no-op** — and since #785 that is the default, so this affects every
+deployment, not only an opted-in one. `render_record_for_serving` finds no
+vault to resolve a chunk against and leaves every citation exactly as
+`locator` mode would have: no error, no warning, just no passage text, and
+answers citing books they never quote.
+
+The condition is *nothing resolvable there*, not *no mount*. A mount pointing
+at an empty or unpublished `AXIAL_SNAPSHOT_HOST_PATH` — the stack brought up
+before `axial publish` ever ran — fails identically while every setting looks
+correct. **Check `GET /health`:** it reads the snapshot manifest from the same
+cwd the citation resolution does, so `"corpus_pin": null` means the API
+container has no snapshot and passage mode is doing nothing. A non-null pin
+means the vault is there.
 
 The failure direction here never inverts: a `locator` deployment cannot
 accidentally start serving book text, because the untouched record carries

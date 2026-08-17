@@ -75,7 +75,17 @@ def _quote_lines(grounds: Any) -> list[str]:
     """Every quoted passage the grounds carry, as a blockquote under the
     claim it supports (issue #732, kept through the #783 split). A record
     resolved in `locator` mode carries none, so this renders nothing there
-    -- by construction, not by a branch on the mode."""
+    -- by construction, not by a branch on the mode.
+
+    **Every line of the passage carries the `>`**, not just the first (issue
+    #785). A resolved passage is a whole chunk and runs to several
+    paragraphs -- 767 words on average, measured over `data/analyses/` -- and
+    marking only the opening line left the remainder rendering as body text,
+    indistinguishable from the tool's own prose. That is the precise
+    confusion the evidence markers above exist to prevent, so it is a
+    correctness bug rather than a formatting one. A blank line inside the
+    passage becomes a bare `>`, which is how markdown separates paragraphs
+    within one blockquote rather than ending it."""
     if not isinstance(grounds, list):
         return []
     lines: list[str] = []
@@ -87,7 +97,8 @@ def _quote_lines(grounds: Any) -> list[str]:
         if not isinstance(quote, str) or not quote:
             continue
         lines.append("")
-        lines.append(f"  > {quote}")
+        for quote_line in quote.splitlines():
+            lines.append(f"  > {quote_line}".rstrip())
     return lines
 
 

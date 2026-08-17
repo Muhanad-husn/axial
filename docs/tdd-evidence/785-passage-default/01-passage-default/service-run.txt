@@ -19,4 +19,4 @@ tests/service/test_api_export.py::test_export_never_touches_cost_or_quota_accoun
 tests/service/test_api_export.py::test_an_unconfigured_install_exports_the_quote_under_the_claim_it_grounds PASSED [ 89%]
 tests/service/test_api_export.py::test_locator_mode_export_carries_no_book_text_verified_against_the_file PASSED [ 94%]
 tests/service/test_api_export.py::test_passage_mode_export_carries_the_quoted_passage PASSED [100%]
-======================= 19 passed, 1 warning in 25.47s ========================
+======================= 19 passed, 1 warning in 20.38s ========================

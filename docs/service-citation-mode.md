@@ -17,6 +17,14 @@ This is what an install resolves to with nothing configured (DEC-72). An
 answer that cannot quote the book it argues from is not an answer, and that
 cost is not one a default should impose on a deployer who has not been asked.
 
+**Know the size before you decide.** A passage is a whole chunk, not a
+sentence. Measured over the 19 answers in this repository's own corpus: 38
+quotes per answer, averaging 767 words each, so an answer grows from about
+1,400 words to about **31,000** — roughly ×22, and about 95% of what a reader
+receives is quoted book text. That number matters to both halves of the
+decision below: it is the real exposure you are weighing, and it is also the
+size of every markdown, docx and odt file the export route hands out.
+
 ## `locator` — one environment variable, no code change
 
 Set `AXIAL_CITATION_MODE=locator`. Every claim then points at the book, the
@@ -55,14 +63,22 @@ cited chunk itself and always has (§9.4 property 1, DEC-40). That packet is
 assembled in memory, is never written to disk, and never leaves the process
 that built it.
 
-## The compose deployment needs one more thing: the mount
+## Check that `passage` mode is actually live
 
 `passage` mode resolves a citation out of the published snapshot's vault
 (`GET /asks/{id}/paper`'s citation resolution reads it relative to the API
-process's own cwd, same as everywhere else in this codebase). The `docker
-compose` stack (issue #691, `docs/service-deployment.md`) has to mount that
-snapshot at the API container's working directory the same way the worker
-already binds to one — without that mount, `passage` mode is a silent no-op,
-not an error, and answers come back with locators only. See
-`docs/service-deployment.md`'s own section on the mount for the full
-explanation.
+process's own cwd, same as everywhere else in this codebase). **If there is
+no readable snapshot there, `passage` mode is a silent no-op** — no error, no
+warning, answers simply come back with locators only.
+
+The shipped `docker-compose.yml` already mounts the snapshot at the API
+container's working directory, so the usual cause is not a missing mount but
+an empty or unpublished one: bringing the stack up before running `axial
+publish` leaves `AXIAL_SNAPSHOT_HOST_PATH` pointing at a directory with
+nothing in it, and every setting still looks correct.
+
+`GET /health` is the check. It reads the snapshot manifest from the same cwd
+the citation resolution does, so a `corpus_pin` of `null` means the API
+container has no snapshot and `passage` mode is doing nothing. A non-null pin
+means the vault is there. See `docs/service-deployment.md` for the mount
+itself.
