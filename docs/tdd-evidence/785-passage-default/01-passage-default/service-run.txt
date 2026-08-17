@@ -1,0 +1,22 @@
+=== acceptance tier: the citation-mode boundary, against a real Postgres container ===
+$ DATABASE_URL= uv run pytest tests/service/test_api_citation.py tests/service/test_api_export.py -o addopts= -v
+tests/service/test_api_citation.py::test_the_unconfigured_default_is_passage PASSED [  5%]
+tests/service/test_api_citation.py::test_locator_mode_carries_no_book_text PASSED [ 10%]
+tests/service/test_api_citation.py::test_passage_mode_adds_the_quoted_text_on_claims_and_counter_position PASSED [ 15%]
+tests/service/test_api_citation.py::test_flipping_to_passage_is_one_env_var_no_code_change PASSED [ 21%]
+tests/service/test_api_citation.py::test_unrecognised_citation_mode_is_a_startup_error_naming_both_modes PASSED [ 26%]
+tests/service/test_api_citation.py::test_a_client_cannot_override_the_mode_on_the_request PASSED [ 31%]
+tests/service/test_api_citation.py::test_a_record_with_no_grounds_is_served_unchanged PASSED [ 36%]
+tests/service/test_api_export.py::test_export_md_contains_the_question_and_the_answer PASSED [ 42%]
+tests/service/test_api_export.py::test_export_md_carries_no_telemetry PASSED [ 47%]
+tests/service/test_api_export.py::test_export_defaults_to_markdown_when_no_format_is_given PASSED [ 52%]
+tests/service/test_api_export.py::test_export_docx_is_a_real_docx_file PASSED [ 57%]
+tests/service/test_api_export.py::test_export_odt_is_a_real_odt_file PASSED [ 63%]
+tests/service/test_api_export.py::test_export_rejects_an_unknown_format PASSED [ 68%]
+tests/service/test_api_export.py::test_export_is_409_while_the_ask_is_not_finished PASSED [ 73%]
+tests/service/test_api_export.py::test_export_is_404_for_another_principals_ask PASSED [ 78%]
+tests/service/test_api_export.py::test_export_never_touches_cost_or_quota_accounting PASSED [ 84%]
+tests/service/test_api_export.py::test_an_unconfigured_install_exports_the_quote_under_the_claim_it_grounds PASSED [ 89%]
+tests/service/test_api_export.py::test_locator_mode_export_carries_no_book_text_verified_against_the_file PASSED [ 94%]
+tests/service/test_api_export.py::test_passage_mode_export_carries_the_quoted_passage PASSED [100%]
+======================= 19 passed, 1 warning in 20.38s ========================

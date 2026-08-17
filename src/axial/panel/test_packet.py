@@ -76,6 +76,29 @@ def test_packet_carries_the_analysis_and_its_cited_evidence(stub_vault):
     assert "hollowed out its bureaucracy" in packet.prompt_body
 
 
+def test_the_packet_does_not_move_with_the_deployment_citation_mode(stub_vault, monkeypatch):
+    """Issue #785 flipped the unconfigured citation mode to `passage`, and
+    asked whether that silently changes the sealed reviewer packet. It does
+    not, and this pins why: `build_packet` resolves the evidence itself
+    (`get_chunk(...).chunk_text`), and its `analysis_markdown` renders the
+    RAW record -- the record nothing ever resolves citations into, because
+    all three resolution call sites work on a copy. `AXIAL_CITATION_MODE` is
+    not an input to this function at any remove."""
+    bodies = []
+    for mode in ("locator", "passage"):
+        monkeypatch.setenv("AXIAL_CITATION_MODE", mode)
+        bodies.append(build_packet(_record(), corpus_pin="pin-1").prompt_body)
+    monkeypatch.delenv("AXIAL_CITATION_MODE", raising=False)
+    unconfigured = build_packet(_record(), corpus_pin="pin-1")
+
+    assert bodies[0] == bodies[1] == unconfigured.prompt_body
+    # The evidence was always there -- `locator` mode never starved it
+    # (DEC-40: "the analysis plus resolved chunk text for every cited claim").
+    assert unconfigured.evidence["src_1_intro_001"] == (
+        "Tax receipts fell while militia payrolls grew."
+    )
+
+
 def test_packet_is_byte_for_byte_deterministic(stub_vault):
     first = build_packet(_record(), corpus_pin="pin-1")
     second = build_packet(_record(), corpus_pin="pin-1")

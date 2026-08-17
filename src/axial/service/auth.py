@@ -14,10 +14,10 @@ happens at most once per deployment, not once per worker thread.
 
 **Unset means closed, not open.** With no `AXIAL_SUPABASE_JWKS_URL`, every
 request is `401` -- a deployer who forgot the setting gets a locked door,
-never a shared local account. This is the opposite default direction from
-`AXIAL_CITATION_MODE` (`axial.service.citation`'s own module docstring),
-which is deliberately safe when unset; here the safe unconfigured state is
-"nobody gets in."
+never a shared local account. Unlike `AXIAL_CITATION_MODE`
+(`axial.service.citation`'s own module docstring), whose unconfigured value
+is a product decision the deployer may reverse, this one has no useful
+unconfigured value at all: the safe state here is "nobody gets in."
 
 **The subject's shape is checked here, once** -- carried over from #685/
 #688: a Supabase `sub` is a UUID, and `axial.paths.scoped_for_principal`

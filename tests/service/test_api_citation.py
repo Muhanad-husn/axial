@@ -1,7 +1,7 @@
-"""The citation rendering mode (issue #690): `locator` (book + chapter/
-section, no book text) is the served default, and `passage` (the quoted
-passage, additive on top of the locator) is one `AXIAL_CITATION_MODE`
-environment value away -- no client-supplied parameter can choose it, and
+"""The citation rendering mode (issue #690): `passage` (the quoted passage,
+additive on top of the locator) is the served default since issue #785, and
+`locator` (book + chapter/section, no book text) is one `AXIAL_CITATION_MODE`
+environment value away -- no client-supplied parameter can choose either, and
 no code changes between the two.
 
 **Two premise corrections drive this file's shape.** First, there is no
@@ -104,9 +104,27 @@ def _submit_and_complete(client: TestClient, job_store: JobStore, record_path: P
     return job_id
 
 
-def test_default_mode_is_locator_and_carries_no_book_text(
-    job_store: JobStore, tmp_path: Path, authed_app
+def test_the_unconfigured_default_is_passage(
+    job_store: JobStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authed_app
 ):
+    """Issue #785: an install that has configured nothing quotes the books
+    it argues from. `locator` did not go away -- it stopped being the mode a
+    deployer gets without deciding."""
+    monkeypatch.delenv(CITATION_MODE_ENV_VAR, raising=False)
+    vault_dir = _build_vault(tmp_path)
+    record_path = _write_record(tmp_path, _record_with_grounds())
+
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
+        job_id = _submit_and_complete(client, job_store, record_path)
+        record = client.get(f"/asks/{job_id}/paper").json()["record"]
+
+    assert record["claims"][0]["grounds"][0]["citation"]["quote"] == PASSAGE_TEXT
+
+
+def test_locator_mode_carries_no_book_text(
+    job_store: JobStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authed_app
+):
+    monkeypatch.setenv(CITATION_MODE_ENV_VAR, "locator")
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
 
@@ -170,11 +188,12 @@ def test_unrecognised_citation_mode_is_a_startup_error_naming_both_modes(
 
 
 def test_a_client_cannot_override_the_mode_on_the_request(
-    job_store: JobStore, tmp_path: Path, authed_app
+    job_store: JobStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authed_app
 ):
     """Applied at the API boundary (the issue's own line): a request that
     tries to ask for `passage` from a `locator` deployment has no field to
     put it in -- `AskRequest` carries no citation-mode key at all."""
+    monkeypatch.setenv(CITATION_MODE_ENV_VAR, "locator")
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path, _record_with_grounds())
 

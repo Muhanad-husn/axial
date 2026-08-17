@@ -33,7 +33,7 @@ from odf.text import P
 
 from axial.query import store as note_store
 from axial.service.api import create_app
-from axial.service.citation import PASSAGE
+from axial.service.citation import CITATION_MODE_ENV_VAR, PASSAGE
 from axial.service.jobs import JobStore
 from axial.service.quotas import QuotaStore
 
@@ -252,11 +252,45 @@ def test_export_never_touches_cost_or_quota_accounting(
     assert after_charged == before_charged == 1
 
 
+def test_an_unconfigured_install_exports_the_quote_under_the_claim_it_grounds(
+    job_store: JobStore, tmp_path: Path, monkeypatch, authed_app
+):
+    """Acceptance test for issue #785. GIVEN no `AXIAL_CITATION_MODE` in the
+    environment at all, WHEN a finished ask is exported, THEN the document
+    quotes the passage behind each claim, as a blockquote under that claim --
+    not in an appendix, and not absent because a fresh install defaults to
+    pointing at books rather than quoting them.
+
+    Verified against the served file's own bytes, the same probe the
+    `locator` bar below uses."""
+    monkeypatch.delenv(CITATION_MODE_ENV_VAR, raising=False)
+    vault_dir = _build_vault(tmp_path)
+    record_path = _write_record(tmp_path)
+
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
+        job_id = _submit_and_complete(client, job_store, record_path)
+        body = client.get(f"/asks/{job_id}/export", params={"format": "md"}).text
+
+    assert PASSAGE_TEXT in body
+    lines = body.splitlines()
+    claim_index = next(
+        i for i, line in enumerate(lines) if "The regime's coercive apparatus expanded." in line
+    )
+    quote_index = next(i for i, line in enumerate(lines) if PASSAGE_TEXT in line)
+    assert quote_index > claim_index
+    assert lines[quote_index].lstrip().startswith(">")
+    # Under the claim, not collected at the end: nothing but blank lines
+    # separates the two.
+    assert all(not line.strip() for line in lines[claim_index + 1 : quote_index])
+
+
 def test_locator_mode_export_carries_no_book_text_verified_against_the_file(
-    job_store: JobStore, tmp_path: Path, authed_app
+    job_store: JobStore, tmp_path: Path, monkeypatch, authed_app
 ):
     """The issue's own line: verified against the generated file's bytes,
-    not the JSON and not a UI."""
+    not the JSON and not a UI. Since #785 `locator` is a deployer's explicit
+    choice rather than the unconfigured default, so this states it."""
+    monkeypatch.setenv(CITATION_MODE_ENV_VAR, "locator")
     vault_dir = _build_vault(tmp_path)
     record_path = _write_record(tmp_path)
 

@@ -128,6 +128,23 @@ def test_a_passage_mode_quote_renders_under_the_claim_it_grounds():
     assert "> Control is prior." in markdown
 
 
+def test_every_line_of_a_multi_paragraph_quote_stays_inside_the_blockquote():
+    """A real corpus passage runs to several paragraphs (measured over
+    `data/analyses/`: the mean resolved passage is 767 words). Marking only
+    its first line `>` renders the rest as body text -- indistinguishable
+    from the tool's own prose, which is the exact confusion the evidence
+    markers exist to prevent. Every line carries the marker."""
+    record = _record()
+    quote = "First paragraph.\n\nSecond paragraph.\nThird line."
+    record["claims"][0]["grounds"][0]["citation"] = dict(_CITATION, quote=quote)
+
+    markdown = render_reader_answer(record)
+
+    for fragment in ("First paragraph.", "Second paragraph.", "Third line."):
+        line = next(line for line in markdown.splitlines() if fragment in line)
+        assert line.lstrip().startswith(">"), f"{fragment!r} escaped the blockquote: {line!r}"
+
+
 def test_the_bibliography_lists_the_books_actually_cited():
     markdown = render_reader_answer(_record())
 

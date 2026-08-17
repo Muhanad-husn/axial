@@ -511,8 +511,8 @@ def persist_markdown(
     unresolved JSON, and the record `run_brief` returns to its own caller
     must stay exactly what `build_record` produced, quote-free regardless
     of citation mode. `citation_mode` reads `AXIAL_CITATION_MODE` the same
-    way the API does, defaulting to `locator` -- a local run is unconfigured
-    exactly like a fresh API deployment. Imported lazily so the base
+    way the API does, defaulting to `passage` (issue #785) -- a local run is
+    unconfigured exactly like a fresh API deployment. Imported lazily so the base
     pipeline does not require the optional `service` dependency group
     (mirrors `axial.cli`'s own `_publish` handler, issue #684)."""
     from axial.service.citation import render_record_for_serving, resolve_citation_mode
