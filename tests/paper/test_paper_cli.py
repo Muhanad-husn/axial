@@ -241,10 +241,18 @@ def test_draft_writes_the_record_and_the_rendered_paper(root):
 
     assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
     json_files = list((root / "data" / "papers").glob("*.json"))
-    md_files = list((root / "data" / "papers").glob("*.md"))
+    md_files = [
+        path
+        for path in (root / "data" / "papers").glob("*.md")
+        if not path.name.endswith(".audit.md")
+    ]
+    audit_files = list((root / "data" / "papers").glob("*.audit.md"))
     assert len(json_files) == 1, f"expected exactly one paper record, got {json_files}"
     assert len(md_files) == 1, f"expected exactly one rendered paper, got {md_files}"
     assert json_files[0].stem == md_files[0].stem
+    # Issue #783: the reader render and the audit render are written side by
+    # side every run, so the two can never disagree about one record.
+    assert len(audit_files) == 1, f"expected exactly one audit render, got {audit_files}"
 
     record = json.loads(json_files[0].read_text(encoding="utf-8"))
     assert record["corpus_pin"] == PIN
@@ -276,9 +284,15 @@ def test_draft_exits_nonzero_on_a_weak_shape_band_but_still_writes_the_files(roo
     assert exit_code == 1, f"stdout: {out!r}\nstderr: {err!r}"
     assert "weak" in err.lower()
     json_files = list((root / "data" / "papers").glob("*.json"))
-    md_files = list((root / "data" / "papers").glob("*.md"))
+    md_files = [
+        path
+        for path in (root / "data" / "papers").glob("*.md")
+        if not path.name.endswith(".audit.md")
+    ]
+    audit_files = list((root / "data" / "papers").glob("*.audit.md"))
     assert len(json_files) == 1, "the record must still be written on a weak shape band"
     assert len(md_files) == 1, "the rendered paper must still be written on a weak shape band"
+    assert len(audit_files) == 1, "the audit render must still be written on a weak shape band"
 
     record = json.loads(json_files[0].read_text(encoding="utf-8"))
     assert record["shape"]["band"] == "weak"
@@ -552,9 +566,15 @@ def test_ask_ends_in_a_drafted_paper(root):
     assert calls == ["paper_plan", "paper_draft", "paper_draft", "paper_shape"]
 
     json_files = list((root / "data" / "papers").glob("*.json"))
-    md_files = list((root / "data" / "papers").glob("*.md"))
+    md_files = [
+        path
+        for path in (root / "data" / "papers").glob("*.md")
+        if not path.name.endswith(".audit.md")
+    ]
+    audit_files = list((root / "data" / "papers").glob("*.audit.md"))
     assert len(json_files) == 1, f"expected exactly one paper record, got {json_files}"
     assert len(md_files) == 1
+    assert len(audit_files) == 1
 
     record = json.loads(json_files[0].read_text(encoding="utf-8"))
     assert record["paper_brief"]["thesis"] == "Did war make the state?"

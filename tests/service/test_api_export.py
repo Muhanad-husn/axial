@@ -1,8 +1,13 @@
 """Acceptance tests for issue #724's third "done when": `GET
-/asks/{id}/export?format=md|docx|odt` serves the brief, the rendered
-answer and the metrics block as one downloadable file. Markdown is the
-one rendering path; `docx`/`odt` are converted from that same markdown
-string (`axial.service.export`).
+/asks/{id}/export?format=md|docx|odt` serves the finished ask as one
+downloadable file. Markdown is the one rendering path; `docx`/`odt` are
+converted from that same markdown string (`axial.service.export`).
+
+Since #783 that markdown is the READER render
+(`axial.answer.reader.render_reader_answer`), not the audit render plus a
+metrics appendix: the document a reader downloads carries no chunk id, no
+usage ratio and no metrics block. The metrics are still computed and still
+served beside the record by `GET /asks/{id}/paper`.
 
 Export is free: it must never touch a job's `cost_usd`/quota accounting,
 and goes through the same `_require_own_job` ownership check as every
@@ -103,7 +108,7 @@ def _write_record(tmp_path: Path) -> Path:
     return record_path
 
 
-def test_export_md_contains_the_brief_the_answer_and_the_metrics(
+def test_export_md_contains_the_question_and_the_answer(
     job_store: JobStore, tmp_path: Path, authed_app
 ):
     record_path = _write_record(tmp_path)
@@ -115,14 +120,33 @@ def test_export_md_contains_the_brief_the_answer_and_the_metrics(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/markdown")
     body = response.text
-    # The brief.
-    assert "Syria" in body
+    # The question, as the document's own title.
     assert "Who led it?" in body
     # The rendered answer.
     assert "The regime's coercive apparatus expanded." in body
-    # The metrics block.
-    assert "## Metrics" in body
-    assert "0.13" in body
+
+
+def test_export_md_carries_no_telemetry(job_store: JobStore, tmp_path: Path, authed_app):
+    """Issue #783: the exported document is the reader render. The metrics
+    block, the source-usage ratios and the raw chunk pointers all belonged
+    to the audit render and none of them reach a downloaded file."""
+    vault_dir = _build_vault(tmp_path)
+    record_path = _write_record(tmp_path)
+
+    with TestClient(authed_app(create_app(job_store, vault_dir=vault_dir))) as client:
+        job_id = _submit_and_complete(client, job_store, record_path)
+        body = client.get(f"/asks/{job_id}/export", params={"format": "md"}).text
+
+    assert "## Metrics" not in body
+    assert "usage_ratio" not in body
+    assert "## Source usage" not in body
+    assert "## Coverage map" not in body
+    # The claim's ground resolved, so it cites the book rather than the id.
+    assert CHUNK_ID not in body
+    assert "chunk:" not in body
+    # ... and cites the book instead: `axial.cite`'s in-text form is the
+    # author's surname and the year ("Author A" -> "A 1999").
+    assert "A 1999" in body
 
 
 def test_export_defaults_to_markdown_when_no_format_is_given(

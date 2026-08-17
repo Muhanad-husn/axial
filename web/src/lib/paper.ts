@@ -49,20 +49,25 @@ export function markerLabel(kind: string, grounds: Ground[]): string {
   return kind;
 }
 
-/** One ground's citation, rendered as the mockup's `.cite` text: whatever
- * of `author`/`date`/`chapter`/`section` the server resolved, joined --
- * never a page number, which does not exist anywhere in this system
- * (`axial.service.citation` module docstring). `null` when the server
- * resolved nothing at all, so the caller can fall back to the raw
- * `ref_type:ref_id` pointer the way `axial.answer.render` does. */
+/** One ground's citation as the mockup's `.cite` text -- the string the
+ * server already formatted (`citation.display`, `axial.cite.format_citation`,
+ * issue #783). This client composes nothing: a citation that reads one way
+ * in a downloaded document and another way on screen is the defect #786 was
+ * filed on, and the only way that cannot happen is one formatter.
+ *
+ * The field-by-field fallback below covers a server that predates #783;
+ * it never invents a page number, which does not exist anywhere in this
+ * system. `null` when the server resolved nothing at all, so the caller can
+ * fall back to the raw `ref_type:ref_id` pointer. */
 export function citationLine(citation: Citation | undefined): string | null {
   if (!citation) return null;
+  if (citation.display) return citation.display;
   const parts: string[] = [];
   const who = citation.author ?? citation.source_id;
   parts.push(citation.date ? `${who} (${citation.date})` : who);
   if (citation.chapter) parts.push(`ch. ${citation.chapter}`);
   if (citation.section) parts.push(citation.section);
-  return parts.join(" · ");
+  return parts.join(", ");
 }
 
 /** The footer's citation column for one claim: every resolvable ground's

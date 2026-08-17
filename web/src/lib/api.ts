@@ -198,6 +198,11 @@ export interface Citation {
   chapter: string | null;
   section: string | null;
   quote?: string;
+  /** The citation as it reads on a page, formatted server-side by
+   * `axial.cite.format_citation` (issue #783). One formatter for the
+   * markdown renders and this client, so the same ground can never cite
+   * two different ways in a download and on the screen. */
+  display?: string;
 }
 
 /** One claim's evidence pointer (`axial.answer.record._claim_to_dict`).

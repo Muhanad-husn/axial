@@ -430,9 +430,15 @@ This rule binds the eval report and nothing else. **No per-run gate report (§10
 
 ### 7.10 The rendered paper **[FIRM]**
 
-Plain markdown at `data/papers/<paper_brief_id>.md`, rendered deterministically from the record. The same record renders the same markdown, byte for byte.
+Plain markdown, rendered deterministically from the record. The same record renders the same markdown, byte for byte.
 
-Contents, in order: title, thesis statement, the plan's sections in plan order with their prose and in-text markers, the counter-position section (or the one-sided disclosure), the confidence and coverage disclosure, the shape-check block, the citation table, and the bibliography.
+**Two renderings, written side by side every run (issue #783).** `data/papers/<paper_brief_id>.md` is the paper a READER gets; `data/papers/<paper_brief_id>.audit.md` is the operator rendering the gates, the sealed peer-review packet and a reviewer read. Both are written by `persist_paper`, so the two can never disagree about one record.
+
+The **reader rendering** carries, in order: title, thesis statement, the plan's sections in plan order with their prose, the counter-position section (or the one-sided disclosure), and the bibliography. Its in-text markers are citations -- a run of `[pc-001][pc-002]` becomes one parenthetical naming the books behind it (`(Vignal 2021; Bayat 2017)`), resolved through `axial.query.citations` and formatted by `axial.cite`, the one formatter this system has for a citation on a page. A marker whose claim id the record does not carry stays visible as a marker; a claim with no grounds at all cites what it is rather than a book -- a (c) claim reads `(runs past the books)`. Its bibliography states author, title, publisher and year, without the provenance tags. It carries **no chunk id, no coverage table, no shape band and no usage ratio**: a reader who asked a question is never shown the engine's own telemetry.
+
+The **audit rendering** carries all of the above plus the confidence and coverage disclosure, the shape-check block, the citation table and the provenance-tagged bibliography, and is unchanged from what this section required before the split.
+
+Everything below in this section describes the audit rendering, and every rule in it that concerns the title, the section headings or the prose binds on both.
 
 **The title's precedence, highest first (issue #717): a human-supplied `title` in the paper brief, the §7.16 shape check's own title of the finished paper, the plan's thesis statement, the brief's raw thesis, and finally `"Untitled paper"`.** An explicit brief title is a human override and always wins. Below it, the shape check is the pipeline's own naming of what it wrote -- the only pass that reads the whole drafted paper -- and it costs nothing beyond the call §7.16 already makes. `shape.title` is `None` on a record from before this issue or from a run where the judge's response carried no usable title, and rendering falls straight through to the thesis in that case: no record needs to be re-rendered for this to stay deterministic, and `_title` reads only the record, never calling a model, touching the clock, or reading disk.
 
