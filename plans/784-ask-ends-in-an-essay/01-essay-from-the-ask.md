@@ -4,7 +4,7 @@
 - **Slice slug:** essay-from-the-ask
 - **Branch:** feat/784-ask-ends-in-an-essay/01-essay-from-the-ask
 - **Project directory:** `.`
-- **Status:** ☐ todo
+- **Status:** ◐ in-progress
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -69,6 +69,9 @@ edits: src/axial/service/api.py
 edits: src/axial/service/cache.py
 edits: src/axial/service/export.py
 edits: src/axial/service/jobs.py
+edits: src/axial/paper/reader.py
+edits: src/axial/paper/test_paper_reader.py
+edits: docs/service-citation-mode.md
 edits: tests/service/test_worker.py
 creates: src/axial/ask/paper.py
 creates: src/axial/ask/test_paper.py
@@ -77,21 +80,25 @@ depends-on: 783
 depends-on: 785
 ```
 
-Three paths were added while building, all for the same reason — the
+Six paths were added while building. Three for one reason — the
 composition moved, so the two files that stub it moved their stub point with
 it, and the job row needed somewhere to put the paper's path. `jobs.py`,
 `test_cli_ask.py` and `tests/service/test_worker.py` were not foreseen at
-planning time. `docs/DECISIONS.md` was declared and not used: nothing here
-overturns a decision, it executes DEC-41 and DEC-65 as written.
+planning time. `src/axial/paper/reader.py` and its test came from a review
+finding — every essay opened by stating its thesis twice — and
+`docs/service-citation-mode.md` from another. `docs/DECISIONS.md` was declared
+and not used: nothing here overturns a decision, it executes DEC-41 and DEC-65
+as written.
 
 ## Design decisions this slice makes
 
 1. **The seam is `src/axial/ask/paper.py`.** `_ask_paper` today does three
    things in one function: decide whether a paper is owed, run the pipeline,
    and print the result. Lift the first two into
-   `draft_paper_for_turn(client, question, brief_id, *, analyses_dir,
+   `draft_paper(client, question, brief_id, record, *, analyses_dir,
    papers_dir, ...) -> dict | None`, returning the persisted paper record or
-   `None` when none is owed. `cli.py` keeps the printing and the exit code.
+   `None` when none is owed, with `draft_paper_for_turn(client, turn)` over it
+   for the two callers that hold a finished `Turn`. `cli.py` keeps the printing and the exit code.
    Behaviour through the CLI must not move — its existing tests are the guard.
 2. **The paper is served, not re-derived.** `run_ask_job` persists the paper
    into a principal-scoped `papers/` beside `analyses/` and `runs/`
@@ -105,12 +112,17 @@ overturns a decision, it executes DEC-41 and DEC-65 as written.
    writes to `<id>.md`. The payload carries that string plus the §7.3 paper
    record, so a client can render prose without parsing markdown for structure
    and an auditor can still see the plan. The audit render (`.audit.md`) is not
-   served.
+   served. **Both keys go through the deployment's citation mode** — serving a
+   raw `paper` beside a rendered `essay` was a review finding, and would have
+   handed a client raw `chunk:<id>` pointers where `record` had a book and a
+   chapter.
 4. **Cost is the sum, and it is honest about nulls.** `run_ask_job` returns
    `cost_usd`/`tokens` for the job row, which feeds the spend report and the
    quota. Add the paper's three passes to both, preserving the existing
    null rule: an unpriced pass keeps the total `None` rather than fabricating a
-   zero. A cache hit stays a genuine `0.0`.
+   zero. A cache hit stays a genuine `0.0` — unless it is a hit whose entry
+   carries no essay, which drafts one and reports that drafting's own cost
+   while staying `cached=True`.
 5. **A refusal is skipped, not failed** — the rule `_ask_paper` already
    states, and PHASE-C §7.1's refusal rejection is why. `essay` is absent and
    the record's own refusal still renders.
@@ -174,6 +186,8 @@ overturns a decision, it executes DEC-41 and DEC-65 as written.
       one record. `data/logs/2026-08-18-784-cost-per-ask/summary.md`.
 - [x] CLI behaviour unmoved: `src/axial/test_cli_ask.py` green with every
       assertion unchanged, only its stub point moved.
+- [x] Reviewer and verifier both dispatched; every finding actioned in the
+      branch rather than left advisory.
 - [ ] Slice's tests run in CI.
 - [ ] Evidence collected and PR opened via `/aeo:safe-pr`.
 
@@ -231,6 +245,24 @@ overturns a decision, it executes DEC-41 and DEC-65 as written.
   after paying for five retrieval turns; `axial ask`'s one-shot form promises
   "no prompts" and the fork check breaks that promise. Filed as **#790**. The
   hosted path is unaffected — `run_ask_job` passes no `on_fork`.
+- **Reviewer: DONE_WITH_CONCERNS. Verifier: NEEDS_CONTEXT, nine of ten claims
+  settled and holding. Eleven findings between them, all actioned.** Two were
+  real defects: a cache hit could never gain an essay (a hit short-circuits
+  before drafting, so one failed draft denied that question its essay
+  forever), and `paper` was served unrendered beside a rendered `essay`. Three
+  more: every essay opened by stating its thesis twice, an unresolvable
+  `paper_ref` read as "no essay was drafted", and the drafting catch was too
+  narrow to mean what its own docstring said. Two were corrections to prose —
+  the essay/claim-list size comparison paired two citation modes, and a
+  docstring had the worker's directory argument logic backwards.
+- **My first fix for the cache defect was wrong and the existing suite said
+  so.** Skipping the cache on a failed draft broke #686's guarantee that an
+  identical brief generates once; `test_worker_cache.py` failed within a
+  minute. The repair path is the right shape: draft from the cached answer,
+  fix the entry, keep the answer free.
+- **The first dispatch of both lanes read nothing.** The plugin's review-jail
+  confines them to a Temp packet root and the packet was staged in the repo.
+  Two wasted dispatches; memory corrected so it is not three.
 - **`tests/service/test_api_under_load.py::test_post_asks_returns_under_100ms
   _while_an_ask_is_running` fails when the whole package runs on this box and
   passes on its own.** Nothing in this slice is on its path: its `run_job` is
