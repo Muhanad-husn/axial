@@ -48,12 +48,13 @@ only ever reads a snapshot `axial publish` already produced
 Two things move real exposure, and both are the deployer's call, not this
 repository's:
 
-1. **Citation mode** (issue #690, `docs/service-citation-mode.md`). `locator`
-   (the default) never puts book text in a response. `passage` quotes the
-   passage a claim rests on — reading that on your own machine is private
-   use; serving it to a thousand readers over the internet is publishing.
-   Read that doc before setting `AXIAL_CITATION_MODE=passage` on anything
-   readers can reach.
+1. **Citation mode** (issues #690 and #785, `docs/service-citation-mode.md`).
+   `passage` — the default — quotes the passage a claim rests on, which is
+   what makes an answer checkable. Reading that on your own machine is
+   private use; serving it to a thousand readers over the internet is
+   publishing. `AXIAL_CITATION_MODE=locator` puts no book text in any
+   response, and costs a reader the ability to check a claim's wording. Read
+   that doc and decide before opening this to readers.
 2. **Public sign-up.** Invitation is Supabase's own switch (issue #763,
    `axial.service.api` module docstring): the service carries no second
    allowlist, so a Supabase project left open to public sign-up is an open
@@ -81,19 +82,19 @@ to `AXIAL_SNAPSHOT_DIR` and mounting the same `AXIAL_SNAPSHOT_HOST_PATH`
 there read-only — the same variables, the same host path, the worker
 already uses.
 
-**Until that mount exists, `AXIAL_CITATION_MODE=passage` is a silent
-no-op.** With nothing mounted at the API's cwd, `render_record_for_serving`
-finds no vault to resolve a chunk against and leaves every citation exactly
-as `locator` mode would have — no error, no warning, just no passage text.
-That is the one failure mode here that must never invert (a `locator`
-deployment must never accidentally start serving book text), and it does
-not: the untouched record already carries no quote either way. It is only
-confusing if you flip the setting and expect it to do something.
+**Until that mount exists, `passage` mode is a silent no-op** — and since
+#785 that is the default, so this is the mount every deployment needs, not
+one only an opted-in deployer does. With nothing mounted at the API's cwd,
+`render_record_for_serving` finds no vault to resolve a chunk against and
+leaves every citation exactly as `locator` mode would have — no error, no
+warning, just no passage text. Answers come back citing books they never
+quote, and the mount is the fix.
 
-With the mount in place and `AXIAL_CITATION_MODE=locator` (the default),
-nothing changes — `locator` mode reads nothing from the vault regardless of
-whether one is mounted, so an API container with the snapshot mounted stays
-exactly as correct as one without it.
+The failure direction here never inverts: a `locator` deployment cannot
+accidentally start serving book text, because the untouched record carries
+no quote either way. `locator` mode also reads nothing from the vault
+regardless of whether one is mounted, so a `locator` API container with the
+snapshot mounted stays exactly as correct as one without it.
 
 ## Health
 

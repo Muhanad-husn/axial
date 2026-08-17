@@ -503,7 +503,9 @@ def create_app(
     (`axial.service.citation.resolve_citation_mode`), resolved and
     validated HERE, at app construction -- an unrecognised value is a
     startup error naming the two valid modes, never a silent fallback to
-    `locator`. `vault_dir` is where `GET /asks/{id}/paper` reads
+    either. Unset resolves to `passage` (issue #785): quoting the book a
+    claim rests on is what an install does unless its deployer has decided
+    otherwise. `vault_dir` is where `GET /asks/{id}/paper` reads
     `notes.db`/prose from to resolve a citation (`axial.service.citation`);
     `None` (the default here, always the case in a test that does not pass
     one) means no resolution happens and every ground is served exactly as

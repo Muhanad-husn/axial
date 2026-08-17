@@ -27,12 +27,12 @@ services:
     # the same way the worker binds to one (`axial.service.snapshot.
     # Snapshot.bind`) -- issue #691's second half. Without this, every
     # cwd-relative read `axial.paths.default_vault_dir()` makes (and, with
-    # it, `AXIAL_CITATION_MODE=passage`) resolves nothing, which is safe
-    # but makes `passage` a silent no-op -- see `docs/service-deployment.md`.
+    # it, `passage` citation mode) resolves nothing, which makes the default
+    # mode a silent no-op -- see `docs/service-deployment.md`.
     working_dir: ${AXIAL_SNAPSHOT_DIR:-/snapshot}
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://axial:axial@postgres:5432/axial}
-      AXIAL_CITATION_MODE: ${AXIAL_CITATION_MODE:-locator}
+      AXIAL_CITATION_MODE: ${AXIAL_CITATION_MODE:-passage}
       AXIAL_SUPABASE_JWKS_URL: ${AXIAL_SUPABASE_JWKS_URL:-}
       AXIAL_QUOTA_ASKS_PER_DAY: ${AXIAL_QUOTA_ASKS_PER_DAY:-20}
       AXIAL_QUOTA_ASKS_PER_MONTH: ${AXIAL_QUOTA_ASKS_PER_MONTH:-300}

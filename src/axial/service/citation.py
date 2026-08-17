@@ -1,8 +1,19 @@
-"""Citation rendering mode (issue #690): a `locator` (book + chapter/
-section, no book text) or a full quoted `passage`, picked once by the
+"""Citation rendering mode (issue #690): a full quoted `passage` or a
+`locator` (book + chapter/section, no book text), picked once by the
 deployer through `AXIAL_CITATION_MODE` and applied at the API boundary
 (`axial.service.api`) -- no request field lets a client choose it, and no
-"third mode for later" (#690's own tripwire). Issue #732 reuses
+"third mode for later" (#690's own tripwire).
+
+**`passage` is what an unconfigured install resolves to** (issue #785). It
+was `locator` until then, on the reasoning that a fresh install should carry
+no copyright exposure it had not been asked to carry; the cost of that was
+that the reader-facing answer could not quote the book it argued from, which
+is not an answer. The exposure is real and it is still the deployer's to
+weigh -- `docs/service-citation-mode.md` states it plainly and names them as
+the decider -- but it is now a decision they make, not one the default makes
+for them.
+
+Issue #732 reuses
 `render_record_for_serving` for the persisted `.md` `axial ask`/`axial
 brief run` writes at the end of a run (`axial.answer.record.
 persist_markdown`, imported lazily there) -- the same function, the same
@@ -85,12 +96,13 @@ def resolve_citation_mode(
 ) -> str:
     """The active citation mode: `explicit` when given (a caller's own
     override, e.g. a test), otherwise `AXIAL_CITATION_MODE` from `env`
-    (defaulting to `os.environ`), defaulting to `locator` when that is
-    unset or blank -- a fresh install is safe unconfigured (#690's first
-    "done when")."""
+    (defaulting to `os.environ`), defaulting to `passage` when that is unset
+    or blank (issue #785) -- an install that has made no decision quotes the
+    books it argues from, because an answer that cannot quote its sources is
+    not an answer. A deployer choosing `locator` sets the variable."""
     source = env if env is not None else os.environ
     raw = explicit if explicit is not None else source.get(CITATION_MODE_ENV_VAR)
-    value = (raw or LOCATOR).strip().lower()
+    value = (raw or "").strip().lower() or PASSAGE
     if value not in CITATION_MODES:
         raise InvalidCitationModeError(value)
     return value

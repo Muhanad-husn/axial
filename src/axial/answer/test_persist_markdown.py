@@ -70,10 +70,24 @@ def _record() -> dict:
     }
 
 
-def test_default_locator_mode_writes_no_book_text(tmp_path: Path, monkeypatch):
+def test_an_unconfigured_run_writes_the_quoted_passage(tmp_path: Path, monkeypatch):
     """Unconfigured (no `AXIAL_CITATION_MODE`), exactly like a fresh API
-    deployment -- the persisted `.md` carries no book text."""
+    deployment -- and since issue #785 that resolves to `passage`, so the
+    persisted `.md` quotes the book behind each claim."""
     monkeypatch.delenv("AXIAL_CITATION_MODE", raising=False)
+    vault_dir = _build_vault(tmp_path)
+    record = _record()
+
+    path = persist_markdown("b1", record, analyses_dir=tmp_path / "analyses", vault_dir=vault_dir)
+
+    assert PASSAGE_TEXT in path.read_text(encoding="utf-8")
+
+
+def test_locator_mode_writes_no_book_text(tmp_path: Path, monkeypatch):
+    """A deployer who has chosen `locator` still gets a `.md` with no book
+    text in it -- the mode did not go away in #785, it stopped being what an
+    install starts in."""
+    monkeypatch.setenv("AXIAL_CITATION_MODE", "locator")
     vault_dir = _build_vault(tmp_path)
     record = _record()
 
