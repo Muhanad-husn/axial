@@ -189,7 +189,7 @@ as written.
 - [x] Reviewer and verifier both dispatched; every finding actioned in the
       branch rather than left advisory.
 - [ ] Slice's tests run in CI.
-- [ ] Evidence collected and PR opened via `/aeo:safe-pr`.
+- [x] Evidence collected and PR opened via `/aeo:safe-pr`: [#791](https://github.com/Muhanad-husn/axial/pull/791).
 
 ## Status / progress log
 
