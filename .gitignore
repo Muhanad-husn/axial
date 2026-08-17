@@ -50,6 +50,9 @@ data/**
 !data/logs/**/run.jsonl
 !data/logs/**/*.py
 !data/logs/**/*.sh
+# `.ps1` for the same reason as `.sh`: this is the box the runs happen on, and
+# a run whose script is not committed cannot be repeated (issue #784).
+!data/logs/**/*.ps1
 # Everything else in a log dir is a corpus snapshot or model output:
 # `*-before.jsonl`, `alias_map*.json`, analyses, papers. Those stay ignored.
 
