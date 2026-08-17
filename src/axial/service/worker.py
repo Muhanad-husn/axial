@@ -27,6 +27,17 @@ and never a re-derivation from anything `GET /me/usage` reads later. Same
 rule as `cost_usd`: `0` on a cache hit (this job made no model call), and
 `None` when the record carried no `cost` block to sum at all.
 
+**Every ask ends in an essay (issue #784).** Once the analysis record is
+written, `run_ask_job` runs the Phase-C composition over that one record
+(`axial.ask.paper.draft_paper_for_turn`, the same call `axial ask` has made
+since #668) and records where the paper landed on the job row. Three
+consequences live in `_draft_the_essay` below: a drafting failure never
+fails the ask, because the analysis is already persisted and already paid
+for; the drafting passes are counted into the `cost_usd`/`tokens` this job
+reports, so the spend an analyst is shown is the spend they incurred; and
+the paper is drafted BEFORE `cache.store`, so a later cache hit serves the
+essay along with the answer rather than losing it.
+
 **`main()` is the worker container's own entry point** (issue #691,
 `python -m axial.service.worker`, this module's own `if __name__` guard):
 bind the process to the published snapshot mounted at `AXIAL_SNAPSHOT_DIR`
@@ -61,6 +72,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
+from axial.ask.paper import PAPER_PIPELINE_ERRORS, draft_paper_for_turn
 from axial.brief.intake import BriefContent, compute_brief_id
 from axial.llm import LLMClient, get_client
 from axial.paths import scoped_for_principal
@@ -93,6 +105,22 @@ def _tokens_used(record: dict[str, Any]) -> int | None:
     if by_pass is None:
         return None
     return sum(entry.get("total_tokens", 0) for entry in by_pass.values())
+
+
+def _combined(analysis: float | int | None, paper: float | int | None):
+    """The ask's total across both halves of the work it did (issue #784):
+    the Phase-B answer and the Phase-C essay drafted from it.
+
+    `None` means unknown, never zero, and it survives one side at a time the
+    way `axial.llm.usage_and_cost_by_pass` already treats a single record --
+    a total is `None` only when NOTHING priced. Dropping a known half
+    because the other is unpriced would report a smaller number than the ask
+    actually cost, which is worse than either honest answer.
+    """
+    known = [value for value in (analysis, paper) if value is not None]
+    if not known:
+        return None
+    return sum(known)
 
 
 def run_ask_job(
@@ -182,6 +210,12 @@ def run_ask_job(
                 "served from cache, no model call made",
                 {"stage": "cache", "brief_id": brief_id, "corpus_pin": snapshot.corpus_pin},
             )
+            # The essay comes with it (issue #784). A repeat question is free
+            # by design; a free answer that silently lost its essay would be
+            # a worse answer, not a cheaper one.
+            cached_paper = cache.lookup_paper(brief_id, snapshot.corpus_pin)
+            if cached_paper is not None:
+                store.set_paper_ref(job["id"], cached_paper)
             return cached_ref, snapshot.corpus_pin, True, 0.0, 0
 
     def on_event(message: str, detail: dict[str, Any]) -> None:
@@ -203,12 +237,75 @@ def run_ask_job(
     if recorded != snapshot.corpus_pin:
         raise SnapshotPinMismatchError(snapshot.version, snapshot.corpus_pin, recorded)
 
-    if cache is not None:
-        cache.store(brief_id, snapshot.corpus_pin, turn.result.path, Path(work_dir) / "cache")
+    # Drafted BEFORE the cache is written, so the entry a later hit reads
+    # carries the essay as well as the answer -- one insert, never a record
+    # cached now and an essay attached to it later.
+    paper_record, paper_path = _draft_the_essay(
+        job, turn, client=client, store=store, work_dir=work_dir
+    )
 
-    cost_usd = (turn.result.record.get("cost") or {}).get("total_usd")
-    tokens = _tokens_used(turn.result.record)
+    if cache is not None:
+        cache.store(
+            brief_id,
+            snapshot.corpus_pin,
+            turn.result.path,
+            Path(work_dir) / "cache",
+            paper_path=paper_path,
+        )
+
+    cost_usd = _combined(
+        (turn.result.record.get("cost") or {}).get("total_usd"),
+        None if paper_record is None else (paper_record.get("cost") or {}).get("total_usd"),
+    )
+    tokens = _combined(
+        _tokens_used(turn.result.record),
+        None if paper_record is None else _tokens_used(paper_record),
+    )
     return str(turn.result.path), snapshot.corpus_pin, False, cost_usd, tokens
+
+
+def _draft_the_essay(
+    job: dict[str, Any],
+    turn: Any,
+    *,
+    client: LLMClient,
+    store: JobStore,
+    work_dir: Path,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    """Draft the paper this ask ends in (issue #784) and record where it
+    landed, returning `(paper record, its path)` -- `(None, None)` when
+    there is none.
+
+    **A drafting failure does not fail the ask.** The analysis is already
+    persisted and already paid for, and losing it because the essay drawn
+    from it could not be written would charge the analyst for an answer they
+    never receive. The failure is appended as an event instead, so it reads
+    as a failure of the drafting run rather than as a corpus with nothing to
+    say -- the distinction PHASE-C §7.3 draws for a failed counter-position,
+    one level up.
+    """
+    papers_dir = scoped_for_principal(Path(work_dir) / "papers", job["principal"])
+    try:
+        paper_record = draft_paper_for_turn(
+            client,
+            turn,
+            analyses_dir=turn.result.path.parent,
+            papers_dir=papers_dir,
+        )
+    except PAPER_PIPELINE_ERRORS as exc:
+        store.append_event(
+            job["id"],
+            f"the answer stands, but writing the essay from it failed: {exc}",
+            {"stage": "draft", "error": str(exc)},
+        )
+        return None, None
+
+    if paper_record is None:
+        return None, None
+
+    paper_path = papers_dir / f"{paper_record['paper_brief_id']}.json"
+    store.set_paper_ref(job["id"], str(paper_path))
+    return paper_record, paper_path
 
 
 class Worker:

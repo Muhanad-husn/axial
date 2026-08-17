@@ -68,16 +68,22 @@ def _paper_record(paper_brief_id: str = "paper-1") -> dict[str, Any]:
 def _stub_paper(monkeypatch):
     """Every `axial ask` turn drafts a paper since #668. Stub the pipeline
     for the whole file and hand each test the recorded calls, so no test
-    here reaches Phase C or spends anything."""
-    import axial.cli as cli_mod
+    here reaches Phase C or spends anything.
+
+    Stubbed one layer lower than `axial.cli` since issue #784: the
+    composition itself moved to `axial.ask.paper` so the service worker
+    could run it too, and `run_paper` is what that module calls. Every
+    assertion below is unchanged -- the recorded value is still the
+    `PaperBrief` the composition built."""
+    import axial.ask.paper as paper_mod
 
     calls: list[Any] = []
 
-    def _fake_run_paper(client, paper_brief):
+    def _fake_run_paper(client, paper_brief, **_):
         calls.append(paper_brief)
         return _paper_record()
 
-    monkeypatch.setattr(cli_mod, "run_paper", _fake_run_paper)
+    monkeypatch.setattr(paper_mod, "run_paper", _fake_run_paper)
     return calls
 
 
@@ -434,18 +440,19 @@ def test_a_failed_draft_does_not_lose_the_answer(monkeypatch, capsys, _stub_pape
     """The answer is already on screen and already persisted when drafting
     runs. A drafting failure names itself and exits non-zero; it never
     swallows the turn."""
+    import axial.ask.paper as paper_mod
     import axial.cli as cli_mod
     from axial.paper.draft import DraftError
 
     def _fake_ask(question, case, **kwargs):
         return _turn("sess-1", 1, question, case)
 
-    def _boom(client, paper_brief):
+    def _boom(client, paper_brief, **_):
         raise DraftError("the drafter fell over")
 
     monkeypatch.setattr(cli_mod, "ask_question", _fake_ask)
     monkeypatch.setattr(cli_mod, "get_client", lambda: object())
-    monkeypatch.setattr(cli_mod, "run_paper", _boom)
+    monkeypatch.setattr(paper_mod, "run_paper", _boom)
 
     exit_code = cli_mod.main(["ask", "Q", "--case", "Syria"])
     captured = capsys.readouterr()

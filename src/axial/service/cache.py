@@ -1,7 +1,14 @@
 """A content-keyed paper cache (issue #686): a `paper_cache` table keyed
-`(brief_id, corpus_pin)` pointing at a finished analysis record, so two
-analysts asking the same brief against the same published corpus cost one
+`(brief_id, corpus_pin)` pointing at a finished analysis record -- and,
+since issue #784, at the Phase-C essay drafted from it -- so two analysts
+asking the same brief against the same published corpus cost one
 generation, not two.
+
+**The essay travels with the record it was drawn from.** A repeat question
+is free by design, and a free answer that silently lost its essay would be
+a worse answer rather than a cheaper one. `paper_ref` is nullable because
+three real cases have no essay: an entry stored before that column existed,
+a refused ask, and a run whose drafting failed.
 
 **The cache resolves in the worker, not the API** (DEC-65's own #691 shape,
 issue #686's second decision): only the worker process holds the bound
@@ -48,6 +55,11 @@ CREATE TABLE IF NOT EXISTS paper_cache (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (brief_id, corpus_pin)
 );
+-- Added by issue #784, after `paper_cache` already existed in deployed
+-- databases: the Phase-C essay drafted from that same record, materialised
+-- beside it. Nullable -- an entry stored before this column existed, a
+-- refused ask, and a run whose drafting failed all have none.
+ALTER TABLE paper_cache ADD COLUMN IF NOT EXISTS paper_ref TEXT;
 """
 
 
@@ -78,7 +90,32 @@ class PaperCache:
             ).fetchone()
         return row[0] if row else None
 
-    def store(self, brief_id: str, corpus_pin: str, source_path: Path, cache_dir: Path) -> Path:
+    def lookup_paper(self, brief_id: str, corpus_pin: str) -> str | None:
+        """The cached §7.3 **paper** record's path for this exact
+        `(brief_id, corpus_pin)`, or `None` when this entry has none (issue
+        #784).
+
+        A second query rather than a second column on `lookup`'s return:
+        `lookup`'s single-value signature is what four call sites and every
+        existing test are written against, and a hit is already the path
+        that makes no model call, so one more round trip on it costs
+        nothing worth the churn.
+        """
+        with psycopg.connect(self._dsn) as conn:
+            row = conn.execute(
+                "SELECT paper_ref FROM paper_cache WHERE brief_id = %s AND corpus_pin = %s",
+                (brief_id, corpus_pin),
+            ).fetchone()
+        return row[0] if row else None
+
+    def store(
+        self,
+        brief_id: str,
+        corpus_pin: str,
+        source_path: Path,
+        cache_dir: Path,
+        paper_path: Path | None = None,
+    ) -> Path:
         """Materialise `source_path` (a just-generated §7.3 record) into
         `cache_dir` under a name keyed on `(brief_id, corpus_pin)`, record
         the entry, and return the materialised path.
@@ -93,10 +130,19 @@ class PaperCache:
         cache_dir.mkdir(parents=True, exist_ok=True)
         target = cache_dir / f"{brief_id}__{corpus_pin}.json"
         shutil.copyfile(source_path, target)
+
+        # The essay is materialised on the same terms and for the same
+        # reason as the record (module docstring): a later hit must not
+        # depend on the originating analyst's own directory surviving.
+        paper_target = None
+        if paper_path is not None:
+            paper_target = cache_dir / f"{brief_id}__{corpus_pin}.paper.json"
+            shutil.copyfile(paper_path, paper_target)
+
         with psycopg.connect(self._dsn) as conn:
             conn.execute(
-                "INSERT INTO paper_cache (brief_id, corpus_pin, result_ref) VALUES (%s, %s, %s) "
-                "ON CONFLICT (brief_id, corpus_pin) DO NOTHING",
-                (brief_id, corpus_pin, str(target)),
+                "INSERT INTO paper_cache (brief_id, corpus_pin, result_ref, paper_ref) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (brief_id, corpus_pin) DO NOTHING",
+                (brief_id, corpus_pin, str(target), None if paper_target is None else str(paper_target)),
             )
         return target

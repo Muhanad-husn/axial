@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from axial.answer.record import BriefRunResult
 from axial.ask.engine import Turn
 from axial.brief.intake import Brief
@@ -28,6 +30,16 @@ _SNAPSHOT = Snapshot(
     sources=("alpha-0123456789ab",),
     built_at="2026-08-10T00:00:00Z",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_paper(monkeypatch):
+    """Every ask ends in a Phase-C paper since issue #784. This file is
+    about the worker's own lifecycle and its wiring to the ask engine, and
+    its stub engines return records no paper could be drafted from, so the
+    composition is stubbed off for the whole file -- the same way
+    `src/axial/test_cli_ask.py` stubs it for the CLI's own tests."""
+    monkeypatch.setattr(worker_mod, "draft_paper_for_turn", lambda *args, **kwargs: None)
 
 
 def test_run_once_returns_false_when_queue_is_empty(job_store: JobStore):

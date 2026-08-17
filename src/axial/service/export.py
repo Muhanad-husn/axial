@@ -70,18 +70,31 @@ def _strip_markdown_emphasis(text: str) -> str:
     return _BOLD_RE.sub(r"\1", text)
 
 
-def render_export_markdown(record: dict[str, Any]) -> str:
-    """The exported document: the reader-facing rendering of `record`
-    (`axial.answer.reader.render_reader_answer`) and nothing else. `record`
-    should already be rendered through this deployment's citation mode
-    (`axial.service.citation.render_record_for_serving`) by the caller,
+def render_export_markdown(record: dict[str, Any], essay: str | None = None) -> str:
+    """The exported document: the essay this ask ended in, followed by the
+    reader-facing rendering of `record` (`axial.answer.reader.
+    render_reader_answer`).
+
+    `record` should already be rendered through this deployment's citation
+    mode (`axial.service.citation.render_record_for_serving`) by the caller,
     exactly as `GET /asks/{id}/paper` already does -- and since #783 that
     now MATTERS to what comes out: the reader render prints each claim's
     citation from the resolved `citation` block, so an unresolved record
     exports raw `chunk:<id>` pointers rather than `Vignal 2021, ch. 30`.
-    Reads only `record`, calls no model, opens no vault -- the same purity
-    `render_reader_answer` itself holds."""
-    return render_reader_answer(record)
+
+    `essay` (issue #784) leads when there is one, because an export that
+    disagrees with what the analyst read on screen is a defect. `None` --
+    a refused ask, a drafting failure, and every call site before this
+    parameter existed -- exports exactly the document it exported before,
+    with no empty heading and no stated absence: a file read on its own
+    cannot ask what is missing.
+
+    Reads only its arguments, calls no model, opens no vault -- the same
+    purity `render_reader_answer` itself holds."""
+    answer = render_reader_answer(record)
+    if not essay:
+        return answer
+    return f"{essay.rstrip()}\n\n---\n\n{answer}"
 
 
 def render_docx(markdown_text: str) -> bytes:
