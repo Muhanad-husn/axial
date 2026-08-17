@@ -1,0 +1,18 @@
+=== the boundary, exercised for real: what the flip does over the 19 records in data/analyses/ ===
+$ uv run python data/logs/2026-08-17-785-citation-default-flip/measure.py
+records: 19
+quotes resolved, locator mode: 0
+quotes resolved, passage mode: 729
+reader words, locator: 26585
+reader words, passage: 585711  (+559126, x22.03)
+rendered_word_count (audit, raw record): 31579
+records resolving no quote at all in passage mode: 0 []
+
+No book text is reproduced here or in the committed run log -- counts only (DEC-23).
+
+=== the mode itself, at the edge ===
+AXIAL_CITATION_MODE=<unset>              -> passage
+AXIAL_CITATION_MODE=''  (set but blank)  -> passage
+AXIAL_CITATION_MODE=locator              -> locator
+AXIAL_CITATION_MODE=passage              -> passage
+AXIAL_CITATION_MODE=verbatim             -> startup error: AXIAL_CITATION_MODE='verbatim' is not a valid citation mode -- use one of 'locator' or 'passage'
