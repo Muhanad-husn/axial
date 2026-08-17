@@ -30,6 +30,7 @@ from axial.ask import Turn as AskTurn
 from axial.ask import ask as ask_question
 from axial.ask import new_session_id as new_ask_session_id
 from axial.ask.history import PastTurn, list_past_turns, load_turn
+from axial.ask.paper import PAPER_PIPELINE_ERRORS, draft_paper_for_turn
 from axial.ask.role import ANALYST, InvalidRoleError, current_role
 from axial.brief import BriefError, load_brief
 from axial.brief.fork import ForkAnswer, ForkCheckError, ForkCheckResult
@@ -130,23 +131,15 @@ from axial.panel.coherence_eval import (
     run_coherence_eval,
 )
 from axial.panel.sample import SampleSpecError, load_sample_spec
-from axial.paper.biblio import BibliographyError
 from axial.paper.brief import (
-    PaperBriefContent,
     PaperBriefError,
-    build_paper_brief,
     load_paper_brief,
 )
-from axial.paper.citations import CitationError
-from axial.paper.claims import PaperClaimError
-from axial.paper.coverage import PaperCoverageError
-from axial.paper.draft import DraftError
 from axial.paper.examine import format_paper_examine_report, run_paper_examine
 from axial.paper.intake import PaperIntakeError
 from axial.paper.lens import LensError
 from axial.paper.plan import PlanError
-from axial.paper.record import PaperRunError, run_paper
-from axial.paper.shape import ShapeCheckError
+from axial.paper.record import run_paper
 from axial.paths import DEFAULT_DOMAIN_DIR, default_analyses_dir
 from axial.pipeline_ready import PipelineReadyError, run_pipeline_ready
 from axial.polity_canonical import PolityCanonicalError, run_polity_build, run_polity_report
@@ -2434,22 +2427,18 @@ def _ask_paper(client: Any, turn: AskTurn) -> int:
     `axial paper draft`: the analyst asked a question and has both the answer
     and the paper in front of them, and `_print_paper` has already named the
     defects on stderr. Only a drafting failure is non-zero here."""
-    record = turn.result.record
-    if (record.get("interrogation") or {}).get("disposition") == "refuse":
-        print("\nno paper drafted: the question was refused, so there are no claims to draft.")
-        return 0
-
-    paper_brief = build_paper_brief(
-        PaperBriefContent(thesis=turn.question, analysis_ids=(turn.brief.brief_id,))
-    )
     try:
-        paper_record = run_paper(client, paper_brief)
+        paper_record = draft_paper_for_turn(client, turn)
     except _PAPER_PIPELINE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    if paper_record is None:
+        print("\nno paper drafted: the question was refused, so there are no claims to draft.")
+        return 0
+
     print()
-    _print_paper(paper_brief.paper_brief_id, paper_record)
+    _print_paper(paper_record["paper_brief_id"], paper_record)
     return 0
 
 
@@ -2701,25 +2690,15 @@ def _brief_smoke(
 # (the §7.4 confidence ceiling and the single-record-inference check),
 # citation indexing (§7.5), the bibliography (§7.6), and
 # `LLMError`/`ModelJsonError` from the model seam itself (`complete_json`
-# never catches either -- see its own docstring). `PaperRunError` is
-# `run_paper`'s own base class, held open for a future whole-pipeline failure
-# though nothing raises it yet. Caught together so every rejection reports as
-# a named, non-zero failure -- never a traceback -- exactly like
-# `_brief_run`'s own tuple one layer down.
-_PAPER_PIPELINE_ERRORS = (
-    PaperIntakeError,
-    LensError,
-    PlanError,
-    DraftError,
-    ShapeCheckError,
-    PaperClaimError,
-    CitationError,
-    PaperCoverageError,
-    BibliographyError,
-    PaperRunError,
-    LLMError,
-    ModelJsonError,
-)
+# never catches either -- see its own docstring). Caught together so every
+# rejection reports as a named, non-zero failure -- never a traceback --
+# exactly like `_brief_run`'s own tuple one layer down.
+#
+# The tuple itself moved to `axial.ask.paper` in issue #784, so the service
+# worker catches the same set rather than keeping a second idea of what a
+# drafting failure is. Aliased here under its old name because this module
+# names it in two places and it is the CLI's own vocabulary.
+_PAPER_PIPELINE_ERRORS = PAPER_PIPELINE_ERRORS
 
 
 def _print_paper(paper_brief_id: str, record: dict[str, Any]) -> bool:

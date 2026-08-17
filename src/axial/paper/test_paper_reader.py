@@ -170,3 +170,27 @@ def test_an_ungrounded_c_claim_cites_the_fact_that_it_runs_past_the_books():
     markdown = render_reader_paper(record)
 
     assert "It also unmade it (runs past the books)." in markdown
+
+
+def test_a_paper_with_no_title_does_not_say_its_thesis_twice():
+    """Issue #784. `paper_title` falls back to the plan's own
+    `thesis_statement` when the brief names no title (§7.1), and a paper
+    drafted from an ask never names one -- so the H1 and the first body line
+    were the identical sentence on every answer an analyst reads."""
+    rendered = render_reader_paper(_record())
+
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    assert lines[0] == "# War made the state."
+    assert lines[1] != "War made the state."
+
+
+def test_a_titled_paper_still_states_its_thesis_under_the_title():
+    """The de-duplication is about a title that IS the thesis, not about
+    dropping the thesis. A paper whose brief names its own title still opens
+    with the title, then states the thesis."""
+    record = _record(paper_brief={"thesis": "Did war make the state?", "title": "War and the State"})
+    rendered = render_reader_paper(record)
+
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    assert lines[0] == "# War and the State"
+    assert lines[1] == "War made the state."

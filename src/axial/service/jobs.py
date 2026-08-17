@@ -42,6 +42,18 @@ read from, never a second read of the record. Same null-preserving rule as
 unpriced or uncaptured run), a real `0` on a cache hit (this job made no
 model call, so it used none of its own), never coerced into each other.
 
+`paper_ref` (issue #784) is where the Phase-C essay this ask ended in was
+written -- the analogue of `result_ref` for the paper, set by
+`axial.service.worker.run_ask_job` through `set_paper_ref` while the job is
+still running rather than travelling in `JobRunner`'s return tuple. It is
+nullable, and a `done` row with no `paper_ref` is a real outcome, not a
+missing write: a refused ask drafts no paper and a drafting failure leaves
+the analysis standing without one. The path is recorded rather than derived
+at serve time, because a follow-up turn's thesis is the question the
+analyst typed while its record's own `request` carries the previous turn
+folded in -- the two hash to different `paper_brief_id`s, so a recomputed
+filename would miss, silently, and look correct.
+
 `count_since` and `sum_spend_for_principal` both grew two optional filters
 for issue #724's usage endpoint: `session_id` (`payload->>'session_id'`,
 a session is identified by that id alone, never a time window) and, on
@@ -107,12 +119,16 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cost_usd DOUBLE PRECISION;
 -- Added by issue #724, after both columns above already existed in
 -- deployed databases -- same idiom, same reason.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS tokens BIGINT;
+-- Added by issue #784: where the Phase-C paper this ask ends in was
+-- written. Nullable, because a refused ask drafts none and a drafting
+-- failure leaves the analysis standing without one -- same idiom again.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS paper_ref TEXT;
 """
 
 _COLUMNS = (
     "id, kind, principal, payload, state, created_at, "
     "claimed_at, heartbeat_at, finished_at, result_ref, error, corpus_pin, "
-    "cached, cost_usd, tokens"
+    "cached, cost_usd, tokens, paper_ref"
 )
 
 
@@ -235,6 +251,18 @@ class JobStore:
                     job_id,
                 ),
             )
+
+    def set_paper_ref(self, job_id: str, paper_ref: str) -> None:
+        """Record where this ask's Phase-C paper was written (issue #784).
+
+        Called by the job body itself, mid-run, rather than travelling in
+        `JobRunner`'s return tuple: the runner already writes to its own row
+        through `append_event`, and widening that tuple would change the
+        contract every other job kind and every test stub is written
+        against, for a column only the `ask` kind ever fills.
+        """
+        with psycopg.connect(self._dsn) as conn:
+            conn.execute("UPDATE jobs SET paper_ref = %s WHERE id = %s", (paper_ref, job_id))
 
     def fail(self, job_id: str, *, error: str) -> None:
         """Mark a job `failed`, recording the error it raised."""

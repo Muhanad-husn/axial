@@ -7,24 +7,28 @@ composition or evidence lives here.
 minutes, so `POST /asks` writes a `queued` row and returns its id; a worker
 process runs it. Nothing in this module ever calls the engine.
 
-**`GET /asks/{id}/paper` serves the §7.3 analysis record** an ask produces
-(`axial.answer.record.BriefRunResult.record`, persisted at the job's
-`result_ref`), as JSON, for the client to render. That is what an ask
-produces; the Phase-C paper is a separate pipeline that runs off an
-analysis record. The route path is the issue's own and #687's client is
-written against it.
+**`GET /asks/{id}/paper` serves the essay an ask ends in, and the §7.3
+analysis record it was drawn from** (issue #784): `{"record": ...,
+"metrics": ..., "essay": <markdown>, "paper": <§7.3 paper record>}`. The
+record is `axial.answer.record.BriefRunResult.record`, persisted at the
+job's `result_ref`; the paper is the Phase-C record the worker drafted from
+it, at the job's `paper_ref`. The route path is issue #682's own and #687's
+client is written against it, so it keeps its name even though "paper" now
+means two things one key apart.
 
-**The response carries the record and a `metrics` block beside it, never
-merged into one** (issue #724): `{"record": ..., "metrics": {...}}`. The
-metrics block is exactly the four fields the §7.3 record already carries
--- `cost`, `model_by_pass`, `coverage_map`, `confidence` -- pulled out
-into their own sibling key so #687's client reads them without hunting
-through `record` for which top-level keys are "the answer" and which are
-"the bill." `retries` and a shape band are Phase-C-only
-(`src/axial/paper/record.py`) and are never served here: an ask is not a
-paper run, and chaining a paper draft onto every ask to manufacture them
-would turn a ~$0.13 ask into a paper run nobody asked for. `GET
-/asks/{id}/export` (below) reuses this same pair.
+**`essay` and `paper` are absent, not null, when there is none.** A refused
+ask drafts no paper (PHASE-C §7.1 rejects a refusal at intake -- it carries
+no claims) and a drafting failure leaves the analysis standing without one.
+Both are real answers; a client falls back to the claim list and says which.
+
+**The record and a `metrics` block sit beside each other, never merged**
+(issue #724). The metrics block is exactly the four fields the §7.3 record
+already carries -- `cost`, `model_by_pass`, `coverage_map`, `confidence` --
+pulled out into their own sibling key so #687's client reads them without
+hunting through `record` for which top-level keys are "the answer" and
+which are "the bill." The Phase-C-only `retries` and shape band stay on
+`paper`, where they belong, and are never folded into `metrics`. `GET
+/asks/{id}/export` (below) reuses this same payload.
 
 **The record is rendered through this deployment's citation mode before it
 is served** (issue #690, `axial.service.citation`): `locator` (the
@@ -110,11 +114,12 @@ new query for the numbers `_check_quota` already knows how to read, and
 `quota["month"].used` is `month_to_date.asks_charged` itself, not a second
 count of the same window.
 
-**`GET /asks/{id}/export?format=md|docx|odt` serves the brief, the
-rendered answer and the metrics block as one file** (issue #724,
-`axial.service.export`): markdown is the one rendering path, and `docx`/
-`odt` are converted from that same markdown string, never re-derived from
-the record. Exporting is free -- no model call, no job row touched, no
+**`GET /asks/{id}/export?format=md|docx|odt` serves the essay and the
+rendered answer as one file** (issue #724, `axial.service.export`;
+the essay leads it since #784, because an export that disagrees with what
+the analyst read on screen is a defect): markdown is the one rendering
+path, and `docx`/`odt` are converted from that same markdown string, never
+re-derived from the record. Exporting is free -- no model call, no job row touched, no
 quota consulted -- and goes through `_require_own_job` exactly like every
 other by-id route, so an export is exactly as private as the paper it
 comes from. The citation mode applies here too, for the same reason it
@@ -140,6 +145,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -155,6 +161,7 @@ from axial.access import ANALYST, READ, WORK, Resource, can_access
 from axial.context import (
     DEFAULT_PRINCIPAL,  # noqa: F401 -- re-exported; tests/service imports it from here
 )
+from axial.paper.reader import render_reader_paper
 from axial.paths import default_vault_dir
 from axial.service.auth import verify_bearer_token
 from axial.service.citation import render_record_for_serving, resolve_citation_mode
@@ -610,7 +617,49 @@ def create_app(
             )
         record = json.loads(Path(job["result_ref"]).read_text(encoding="utf-8"))
         record = render_record_for_serving(record, citation_mode=citation_mode, vault_dir=vault_dir)
-        return {"record": record, "metrics": metrics_block(record)}
+        payload: dict[str, Any] = {"record": record, "metrics": metrics_block(record)}
+        payload.update(_essay_payload(job))
+        return payload
+
+    def _essay_payload(job: dict[str, Any]) -> dict[str, Any]:
+        """The Phase-C essay this ask ended in (issue #784), as `{"essay":
+        <markdown>, "paper": <§7.3 record>}` -- or `{}` when there is none.
+
+        Absent is a real answer here, not an error: a refused ask drafts no
+        paper, and a drafting failure leaves the analysis standing without
+        one. The client falls back to the claim list and says so.
+
+        **Both are rendered here, not read off the `.md` the worker wrote**,
+        for the same reason the analysis record above is: the deployment's
+        citation mode is enforced at this boundary (DEC-65, DEC-72), and a
+        worker resolving `passage` must not be able to put book text into a
+        `locator` deployment's response by having baked it into a file
+        first. `paper` ships the SAME rendered record the essay was built
+        from -- serving the raw one beside a rendered essay would give a
+        client reading `paper` raw `chunk:<id>` pointers where `record` has
+        `Vignal 2021, ch. 30`, and would put one of the two keys outside the
+        boundary this function exists to be.
+        """
+        paper_ref = job.get("paper_ref")
+        if not paper_ref:
+            return {}
+        paper_path = Path(paper_ref)
+        if not paper_path.is_file():
+            # A recorded path that does not resolve is a deployment fault --
+            # an unmounted work_dir, a pruned scratch volume -- not the same
+            # thing as an ask that drafted no essay. Degrade rather than
+            # 500, because the analysis is still good and the analyst still
+            # wants it; but say so, or a mount misconfiguration presents as
+            # "no ask ever has an essay" with nothing anywhere to explain it.
+            print(
+                f"paper_ref_unresolvable ask={job['id']} path={paper_ref}: the job row names "
+                "an essay that is not on disk; serving the answer without it",
+                file=sys.stderr,
+            )
+            return {}
+        paper = json.loads(paper_path.read_text(encoding="utf-8"))
+        served = render_record_for_serving(paper, citation_mode=citation_mode, vault_dir=vault_dir)
+        return {"essay": render_reader_paper(served), "paper": served}
 
     @app.get("/asks/{ask_id}/paper")
     def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
@@ -707,7 +756,7 @@ def create_app(
                 status_code=422, detail=f"format must be one of {EXPORT_FORMATS!r}, got {format!r}"
             )
         payload = _paper_payload(ask_id, principal)
-        markdown_text = render_export_markdown(payload["record"])
+        markdown_text = render_export_markdown(payload["record"], payload.get("essay"))
         if format == "md":
             content: bytes = markdown_text.encode("utf-8")
             media_type = "text/markdown; charset=utf-8"

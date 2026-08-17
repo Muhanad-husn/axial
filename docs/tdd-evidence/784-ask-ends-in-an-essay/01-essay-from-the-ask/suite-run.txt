@@ -1,0 +1,21 @@
+=== uv run pytest   (fast tier: testpaths=src, -m 'not slow', -n auto) ===
+........................................................................ [ 94%]
+........................................................................ [ 97%]
+............................................................             [100%]
+2508 passed in 40.38s
+
+=== uv run ruff check ===
+All checks passed!
+
+=== DATABASE_URL= uv run pytest tests/service tests/paper   (real Postgres container) ===
+Run 1 of 2 -- fully green, no failures.
+Run 2 of 2, immediately after, same command, same tree:
+=========================== short test summary info ===========================
+FAILED tests/service/test_api_under_load.py::test_post_asks_returns_under_100ms_while_an_ask_is_running
+
+That test asserts POST /asks returns in under 100ms while another ask occupies
+a worker. It passes on its own and it passed in run 1; nothing in this slice is
+on its path (its run_job is a local closure, and POST /asks still does a quota
+check and an enqueue and nothing else). Two consecutive runs of the same
+command disagreeing is what a wall-clock budget losing to local contention
+looks like. CI's own runner is the arbiter.

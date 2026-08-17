@@ -27,6 +27,20 @@ and never a re-derivation from anything `GET /me/usage` reads later. Same
 rule as `cost_usd`: `0` on a cache hit (this job made no model call), and
 `None` when the record carried no `cost` block to sum at all.
 
+**Every ask ends in an essay (issue #784).** Once the analysis record is
+written, `run_ask_job` runs the Phase-C composition over that one record
+(`axial.ask.paper.draft_paper_for_turn`, the same call `axial ask` has made
+since #668) and records where the paper landed on the job row. Four
+consequences, three in `_draft_the_essay` and one in
+`_hit_without_an_essay`: a drafting failure never fails the ask, because
+the analysis is already persisted and already paid for; the drafting passes
+are counted into the `cost_usd`/`tokens` this job reports, so the spend an
+analyst is shown is the spend they incurred; the paper is drafted BEFORE
+`cache.store`, so a later hit serves the essay along with the answer; and a
+hit whose entry has no essay -- a failed earlier draft, or an entry written
+by a worker predating this issue -- drafts one and repairs the entry rather
+than serving an essay-less answer forever.
+
 **`main()` is the worker container's own entry point** (issue #691,
 `python -m axial.service.worker`, this module's own `if __name__` guard):
 bind the process to the published snapshot mounted at `AXIAL_SNAPSHOT_DIR`
@@ -52,15 +66,19 @@ mid-run once the container's grace period expires.
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import signal
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from axial.ask.engine import ask as run_ask
+from axial.ask.paper import draft_paper, draft_paper_for_turn
 from axial.brief.intake import BriefContent, compute_brief_id
 from axial.llm import LLMClient, get_client
 from axial.paths import scoped_for_principal
@@ -93,6 +111,22 @@ def _tokens_used(record: dict[str, Any]) -> int | None:
     if by_pass is None:
         return None
     return sum(entry.get("total_tokens", 0) for entry in by_pass.values())
+
+
+def _combined(analysis: float | int | None, paper: float | int | None):
+    """The ask's total across both halves of the work it did (issue #784):
+    the Phase-B answer and the Phase-C essay drafted from it.
+
+    `None` means unknown, never zero, and it survives one side at a time the
+    way `axial.llm.usage_and_cost_by_pass` already treats a single record --
+    a total is `None` only when NOTHING priced. Dropping a known half
+    because the other is unpriced would report a smaller number than the ask
+    actually cost, which is worse than either honest answer.
+    """
+    known = [value for value in (analysis, paper) if value is not None]
+    if not known:
+        return None
+    return sum(known)
 
 
 def run_ask_job(
@@ -182,7 +216,23 @@ def run_ask_job(
                 "served from cache, no model call made",
                 {"stage": "cache", "brief_id": brief_id, "corpus_pin": snapshot.corpus_pin},
             )
-            return cached_ref, snapshot.corpus_pin, True, 0.0, 0
+            # The essay comes with it (issue #784). A repeat question is free
+            # by design; a free answer that silently lost its essay would be
+            # a worse answer, not a cheaper one.
+            cached_paper = cache.lookup_paper(brief_id, snapshot.corpus_pin)
+            if cached_paper is not None:
+                store.set_paper_ref(job["id"], cached_paper)
+                return cached_ref, snapshot.corpus_pin, True, 0.0, 0
+            return _hit_without_an_essay(
+                job,
+                brief_id,
+                Path(cached_ref),
+                client=client,
+                store=store,
+                cache=cache,
+                snapshot=snapshot,
+                work_dir=Path(work_dir),
+            )
 
     def on_event(message: str, detail: dict[str, Any]) -> None:
         store.append_event(job["id"], message, detail)
@@ -203,12 +253,168 @@ def run_ask_job(
     if recorded != snapshot.corpus_pin:
         raise SnapshotPinMismatchError(snapshot.version, snapshot.corpus_pin, recorded)
 
-    if cache is not None:
-        cache.store(brief_id, snapshot.corpus_pin, turn.result.path, Path(work_dir) / "cache")
+    # Drafted BEFORE the cache is written, so the entry a later hit reads
+    # carries the essay as well as the answer -- one insert, never a record
+    # cached now and an essay attached to it later.
+    essay = _draft_the_essay(job, turn, client=client, store=store, work_dir=work_dir)
 
-    cost_usd = (turn.result.record.get("cost") or {}).get("total_usd")
-    tokens = _tokens_used(turn.result.record)
+    if cache is not None:
+        cache.store(
+            brief_id,
+            snapshot.corpus_pin,
+            turn.result.path,
+            Path(work_dir) / "cache",
+            paper_path=essay.path,
+        )
+
+    cost_usd = _combined(
+        (turn.result.record.get("cost") or {}).get("total_usd"),
+        None if essay.record is None else (essay.record.get("cost") or {}).get("total_usd"),
+    )
+    tokens = _combined(
+        _tokens_used(turn.result.record),
+        None if essay.record is None else _tokens_used(essay.record),
+    )
     return str(turn.result.path), snapshot.corpus_pin, False, cost_usd, tokens
+
+
+@dataclass(frozen=True)
+class _EssayOutcome:
+    """What `_draft_the_essay` found. `failed` distinguishes the two ways
+    `record` can be `None` -- a refusal, which never has an essay, from a
+    drafting run that died, which should have had one."""
+
+    record: dict[str, Any] | None
+    path: Path | None
+    failed: bool
+
+
+def _hit_without_an_essay(
+    job: dict[str, Any],
+    brief_id: str,
+    cached_ref: Path,
+    *,
+    client: LLMClient,
+    store: JobStore,
+    cache: PaperCache,
+    snapshot: Snapshot,
+    work_dir: Path,
+) -> tuple[str, str, bool, float | None, int | None]:
+    """A cache hit whose entry carries no essay: draft one from the cached
+    answer and repair the entry, rather than serving an essay-less answer
+    forever (issue #784).
+
+    **Why this exists.** A cache hit short-circuits before any drafting, so
+    without this an entry stored after a failed drafting run -- or stored by
+    a worker that predates this issue -- would deny every later ask of that
+    question its essay permanently, with nothing recorded to say why. Not
+    caching such a run instead would be worse: it would cost a full Phase B
+    re-run to recover a $0.013 essay, and it would break issue #686's own
+    guarantee that an identical brief generates once.
+
+    The answer is still free; only the essay is paid for. The row stays
+    `cached=True`, because the ask WAS served from the cache -- what it
+    reports is the drafting cost it actually incurred, not `0.0`.
+    """
+    record = json.loads(cached_ref.read_text(encoding="utf-8"))
+    # The record's OWN id, not the cache key: intake keys its claim
+    # inventory on the id it is asked for, and the plan the drafter writes
+    # names claims by the id the record carries. On a first turn the two are
+    # the same string; taking it off the record is what keeps them the same
+    # here without relying on that.
+    record_id = record.get("brief_id") or brief_id
+
+    analyses_dir = scoped_for_principal(Path(work_dir) / "analyses", job["principal"])
+    analyses_dir.mkdir(parents=True, exist_ok=True)
+    record_path = analyses_dir / f"{record_id}.json"
+    # Intake resolves `<analyses_dir>/<brief_id>.json`; the cached copy is
+    # filed under a cache-keyed name, so it has to land here first. The
+    # analyst asked this question, so the record belongs in their own
+    # working set either way.
+    shutil.copyfile(cached_ref, record_path)
+
+    papers_dir = scoped_for_principal(Path(work_dir) / "papers", job["principal"])
+    try:
+        paper_record = draft_paper(
+            client,
+            job["payload"]["question"],
+            record_id,
+            record,
+            analyses_dir=analyses_dir,
+            papers_dir=papers_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 - see `_draft_the_essay`: the answer outlives the essay
+        store.append_event(
+            job["id"],
+            f"the cached answer stands, but writing the essay from it failed: {exc}",
+            {"stage": "draft", "error": str(exc)},
+        )
+        return str(record_path), snapshot.corpus_pin, True, 0.0, 0
+
+    if paper_record is None:  # a cached refusal: no essay, and never one
+        return str(record_path), snapshot.corpus_pin, True, 0.0, 0
+
+    paper_path = papers_dir / f"{paper_record['paper_brief_id']}.json"
+    store.set_paper_ref(job["id"], str(paper_path))
+    cache.attach_paper(brief_id, snapshot.corpus_pin, paper_path, Path(work_dir) / "cache")
+    return (
+        str(record_path),
+        snapshot.corpus_pin,
+        True,
+        (paper_record.get("cost") or {}).get("total_usd"),
+        _tokens_used(paper_record),
+    )
+
+
+def _draft_the_essay(
+    job: dict[str, Any],
+    turn: Any,
+    *,
+    client: LLMClient,
+    store: JobStore,
+    work_dir: Path,
+) -> _EssayOutcome:
+    """Draft the paper this ask ends in (issue #784) and record where it
+    landed.
+
+    **A drafting failure does not fail the ask.** The analysis is already
+    persisted and already paid for, and losing it because the essay drawn
+    from it could not be written would charge the analyst for an answer they
+    never receive. The failure is appended as an event instead, so it reads
+    as a failure of the drafting run rather than as a corpus with nothing to
+    say -- the distinction PHASE-C §7.3 draws for a failed counter-position,
+    one level up.
+
+    **The catch is deliberately broad**, not the enumerated
+    `PAPER_PIPELINE_ERRORS` alone. The rule is that the answer outlives the
+    essay, and a rule that holds only for the failures somebody thought to
+    list is not that rule: an `AttributeError` in the drafting layer would
+    otherwise throw away an analysis the analyst has already been charged
+    for. `Worker.run_once` catches broadly one level up for the same
+    reason, and the failure is recorded rather than swallowed.
+    """
+    papers_dir = scoped_for_principal(Path(work_dir) / "papers", job["principal"])
+    try:
+        paper_record = draft_paper_for_turn(
+            client,
+            turn,
+            analyses_dir=turn.result.path.parent,
+            papers_dir=papers_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 - deliberate, see the docstring above
+        store.append_event(
+            job["id"],
+            f"the answer stands, but writing the essay from it failed: {exc}",
+            {"stage": "draft", "error": str(exc)},
+        )
+        return _EssayOutcome(None, None, failed=True)
+
+    if paper_record is None:
+        return _EssayOutcome(None, None, failed=False)
+
+    paper_path = papers_dir / f"{paper_record['paper_brief_id']}.json"
+    store.set_paper_ref(job["id"], str(paper_path))
+    return _EssayOutcome(paper_record, paper_path, failed=False)
 
 
 class Worker:

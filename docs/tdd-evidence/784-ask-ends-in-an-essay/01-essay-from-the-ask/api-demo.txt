@@ -1,0 +1,87 @@
+D:\axial\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+llm_cost_unpriced model='stub/shape': no PRICE_TABLE_USD_PER_1K entry, cost for this model will be null (issue #363)
+
+========================================================================
+POST /asks
+========================================================================
+$ POST /asks  {"case": "Syria, 1920-2024", "request": "Did the mandate build the institutions the Baath later inherited?"}
+< 202  {"id":"600d4f4fd8384f5ea03db8bedde93d37","state":"queued"}
+
+========================================================================
+the worker claims it and runs the ask, then drafts the essay
+========================================================================
+claimed and ran: True
+state       : done
+result_ref  : b1.json   (the analysis record)
+paper_ref   : 0aa9de1de88abf9c.json   (the essay, issue #784)
+cost_usd    : 0.020560000000000002   answer + the three Phase-C passes
+model calls : ['paper_plan', 'paper_draft', 'paper_draft', 'paper_draft', 'paper_draft', 'paper_shape']
+
+========================================================================
+GET /asks/600d4f4fd8384f5ea03db8bedde93d37/paper
+========================================================================
+top-level keys: ['essay', 'metrics', 'paper', 'record']
+claims still served: ['c1', 'c2', 'c3']
+paper sections    : ['What the question asks', "The mandate's bureaucracy", 'The case for a Baathist rebuild', 'Inheritance, not invention']
+
+--- payload['essay'] ---
+# The institutions that decided who held power were built under the mandate.
+
+## What the question asks
+
+The question is what the mandate left behind.
+
+## The mandate's bureaucracy
+
+A centralised bureaucracy was built [pc-001]. Notables were drawn into it [pc-002].
+
+## The case for a Baathist rebuild
+
+Against this, the apparatus was rebuilt after 1963 [pc-003].
+
+## Inheritance, not invention
+
+The inheritance runs through the notables [pc-002].
+
+## Bibliography
+
+- src-1999
+
+
+========================================================================
+GET /asks/600d4f4fd8384f5ea03db8bedde93d37/export?format=md  (the export follows the screen)
+========================================================================
+# The institutions that decided who held power were built under the mandate.
+
+## What the question asks
+
+The question is what the mandate left behind.
+
+## The mandate's bureaucracy
+
+A centralised bureaucracy was built [pc-001]. Notables were drawn into it [pc-002].
+
+## The case for a Baathist rebuild
+
+Against this, the apparatus was rebuilt after 1963 [pc-003].
+
+## Inheritance, not invention
+
+The inheritance runs through the notables [pc-002].
+
+## Bibliography
+
+- src-1999
+
+---
+
+# Syria, 1920-2024
+
+**The question:** Did the mandate build the institutions the Baath later inherited?
+
+## Answer
+
+- **[stated]** The mandate built a centralised bureaucracy. (chunk:src-1999_1_intro_c1)
+- **[stated]*
+... [988 chars total; the claim list follows the essay]
