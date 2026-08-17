@@ -143,10 +143,15 @@ def render_reader_paper(record: dict[str, Any]) -> str:
     prose = prose_by_section(record)
     citations = _citations_by_claim_id(record)
 
-    lines = [f"# {paper_title(record)}", ""]
+    title = paper_title(record)
+    lines = [f"# {title}", ""]
 
+    # `paper_title` falls back to the plan's own `thesis_statement` when the
+    # brief names no title (§7.1), and a paper drafted from an ask never
+    # names one -- so without this the H1 and the first body line are the
+    # identical sentence, on every answer an analyst reads (issue #784).
     thesis_statement = plan.get("thesis_statement")
-    if thesis_statement:
+    if thesis_statement and str(thesis_statement) != title:
         lines.extend([str(thesis_statement), ""])
 
     for section in plan_sections(record):

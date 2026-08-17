@@ -59,25 +59,32 @@ PAPER_PIPELINE_ERRORS = (
 )
 
 
-def paper_brief_for_turn(turn: Any):
-    """The in-memory paper brief one finished ask implies: the turn's
-    question as the thesis, the record it just produced as the whole
-    `analysis_ids`, and no lens named so stage 1 chooses and records its own
-    (§7.1).
+def paper_brief_for(question: str, brief_id: str):
+    """The in-memory paper brief one finished ask implies: the question as
+    the thesis, the record it produced as the whole `analysis_ids`, and no
+    lens named so stage 1 chooses and records its own (§7.1).
 
     The thesis is the question the analyst typed, not the brief's own
     `request` -- on a follow-up turn the engine folds the previous turn's
     context into that request, and the thesis a reader is owed is the thing
     they asked.
     """
-    return build_paper_brief(
-        PaperBriefContent(thesis=turn.question, analysis_ids=(turn.brief.brief_id,))
+    return build_paper_brief(PaperBriefContent(thesis=question, analysis_ids=(brief_id,)))
+
+
+def draft_paper_for_turn(client: Any, turn: Any, **directories: Any) -> dict[str, Any] | None:
+    """`draft_paper` for a caller holding a finished `Turn` -- the CLI, and
+    the worker on a fresh generation."""
+    return draft_paper(
+        client, turn.question, turn.brief.brief_id, turn.result.record, **directories
     )
 
 
-def draft_paper_for_turn(
+def draft_paper(
     client: Any,
-    turn: Any,
+    question: str,
+    brief_id: str,
+    record: dict[str, Any],
     *,
     analyses_dir: Path | None = None,
     papers_dir: Path | None = None,
@@ -85,28 +92,36 @@ def draft_paper_for_turn(
     source_meta_dir: Path | None = None,
     vault_dir: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Run stages 1-5 over the one record `turn` just produced, returning
-    the persisted §7.3 paper record -- or `None` when the ask was refused
-    and there is nothing to draft.
+    """Run stages 1-5 over the one record `brief_id` names, returning the
+    persisted §7.3 paper record -- or `None` when the ask was refused and
+    there is nothing to draft.
+
+    `brief_id` is passed rather than read off `record["brief_id"]` because
+    the two are the same only on a first turn, and because the worker has
+    already computed it for the cache key.
 
     Every directory is optional and falls through to `run_paper`'s own
-    defaults, which is what the CLI wants. A hosted worker passes all of
-    them, because `run_paper`'s `PAPERS_DIR` is a bare relative
-    `data/papers` that would put one principal's paper in the repo rather
-    than under their own scoped directory.
+    defaults. **A hosted worker passes exactly two of them, and that is
+    correct, not an oversight.** `Snapshot.bind` does `os.chdir` into the
+    published snapshot for the process's whole life, so every cwd-relative
+    default -- `config/lenses/`, `data/source_meta/`, `data/vault/` --
+    already resolves inside the corpus the worker is serving, which is
+    where they belong. The two that must be passed are the two that must
+    NOT land there: `analyses_dir` and `papers_dir` hold the analyst's own
+    work, and `run_paper`'s `PAPERS_DIR` is a bare relative `data/papers`
+    that would write it into the read-only snapshot.
 
     Raises any member of `PAPER_PIPELINE_ERRORS` on a drafting failure. It is
     the caller's job to decide what that means: the CLI reports it and exits
     non-zero, the service records it against a job that still completed,
     because the analysis is already persisted and already paid for.
     """
-    record = turn.result.record
     if (record.get("interrogation") or {}).get("disposition") == _REFUSAL_DISPOSITION:
         return None
 
     return run_paper(
         client,
-        paper_brief_for_turn(turn),
+        paper_brief_for(question, brief_id),
         analyses_dir=analyses_dir,
         lenses_dir=lenses_dir,
         source_meta_dir=source_meta_dir,

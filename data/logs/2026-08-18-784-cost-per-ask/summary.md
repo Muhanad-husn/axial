@@ -93,43 +93,49 @@ scope on purpose.**
   option before the question is known.
 - **This shell had `AXIAL_CITATION_MODE=locator`, `DATABASE_URL` and a mangled
   `AXIAL_SECRETS_PATH` leaked into it** from the local compose stack. None of
-  them changes the cost figures above, but the citation mode does change the
-  companion length measurement below.
+  them changes the cost figures above. The companion measurement below clears
+  the variable and renders both modes explicitly rather than inheriting one.
 
 ---
 
 ## Companion measurement: how long is the essay, next to the claim list?
 
-Zero model calls — both renders run over paper records already on disk.
-Measured on the six single-record papers in `data/papers/`, which are the
-shape an ask produces (one analysis record in, one paper out).
+Zero model calls, both renders over records already on disk, resolved against
+the real `data/vault/`. Seven single-record papers — the six that predate this
+issue plus `ca17d607`, the one the cost run above drafted. Script:
+`measure_lengths.py`.
 
-| paper | essay words | claim-list words (`locator`) |
-|---|---|---|
-| `273aea05` | 3,935 | 1,690 |
-| `408378f2` | 2,067 | 1,666 |
-| `5d866ef2` | 2,263 | 1,416 |
-| `9f449f41` | 1,611 | 1,133 |
-| `a1039fad` | 1,483 | 1,162 |
-| `f5ae5ff2` | 1,595 | 983 |
+**The first cut of this was wrong and the verifier caught it.** It rendered the
+essay under `locator` and compared it against a `passage`-mode claim-list
+figure quoted from DEC-72 — two different modes in one comparison — and called
+the claim list "the thing it replaces" when nothing is replaced: both still
+ship, and the export carries the essay *and* the claim list. All four cells are
+rendered here instead.
 
-**The comparison that matters is against `passage`, the mode a fresh install
-now resolves to.** DEC-72 measured the reader-facing answer at about **31,000
-words** per answer once every ground is quoted in full — 22× the `locator`
-figures above, and about 95% quoted book text. This run was made with
-`AXIAL_CITATION_MODE=locator` set in the shell (leaked from the local compose
-stack, alongside `DATABASE_URL` and a mangled `AXIAL_SECRETS_PATH`), so the
-right-hand column is the small version.
+| paper | essay, `locator` | answer, `locator` | essay, `passage` | answer, `passage` |
+|---|---|---|---|---|
+| `273aea05` | 4,038 | 1,711 | 4,038 | 41,529 |
+| `408378f2` | 2,124 | 1,668 | 2,124 | 50,652 |
+| `5d866ef2` | 2,344 | 1,539 | 2,344 | 26,340 |
+| `9f449f41` | 1,762 | 1,262 | 1,762 | 22,445 |
+| `a1039fad` | 1,596 | 1,306 | 1,596 | 18,537 |
+| `ca17d607` | 1,287 | 824 | 1,287 | 19,393 |
+| `f5ae5ff2` | 1,713 | 1,041 | 1,713 | 23,822 |
+| **total** | **14,864** | **9,351** | **14,864** | **202,718** |
 
-So the essay is **1,500–3,900 words of argued prose** where the default answer
-is a **31,000-word claim list**. That is the case #784 makes, in one number.
+Three readings, all from the table:
 
-The essay's own in-text citations are book-level (`Vignal 2021, ch. 30`), so
-it is short in either citation mode; the quoted passages stay with the claim
-list beneath it.
+1. **The essay is byte-identical in both modes — ×1.00.** Its in-text
+   citations are book-level (`format_citation(form=SHORT)`), so `passage`
+   resolution adds nothing to it. This is the measurement behind the sentence
+   `docs/service-citation-mode.md` now carries; before this run that sentence
+   was an unmeasured claim in a document a deployer acts on.
+2. **The claim list grows ×21.68 under `passage`** (9,351 → 202,718 words over
+   seven answers), which reproduces DEC-72's ×22 on an overlapping set.
+3. **In the default mode, the answer is 13.6× longer than the essay** — 18,537
+   to 50,652 words of claim list against 1,287 to 4,038 words of argued prose.
 
-**One caveat on the essay column.** These six papers were drafted from
-hand-written declarative theses, not from an ask's question. The arcs a
-question plans are the same size (5–8 sections against these papers' 5–10, see
-`data/logs/2026-08-17-784-question-as-thesis/`), so the word counts should
-carry — but they were not measured on a question-thesis paper.
+**In `locator` mode the essay is the longer of the two** (14,864 against
+9,351, about ×1.6). That is the honest shape of it: the essay is a roughly
+constant 1,300–4,000 words whatever the mode, and what moves is the claim list
+underneath it.

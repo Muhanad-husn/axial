@@ -28,6 +28,7 @@ from axial.context import DEFAULT_PRINCIPAL
 from axial.llm import LLMError, StubLLMClient
 from axial.service import worker as worker_mod
 from axial.service.api import create_app
+from axial.service.citation import LOCATOR, PASSAGE
 from axial.service.jobs import JobStore
 from axial.service.snapshot import Snapshot
 from axial.service.worker import Worker, run_ask_job
@@ -406,3 +407,151 @@ def test_an_export_with_no_essay_is_what_it_always_was(
 
     assert PLAN["thesis_statement"] not in exported
     assert "The mandate built a centralised bureaucracy." in exported
+
+
+PASSAGE_TEXT = "The mandate's bureaucracy outlived the mandate by forty years."
+
+
+def _build_vault(root: Path) -> Path:
+    """A real vault holding the chunks this fixture's claims are grounded
+    in, so a citation actually resolves and the mode has something to
+    decide about."""
+    from axial.query import store as note_store
+
+    vault_dir = root / "vault"
+    chunk_ids = [f"src-1999_1_intro_{claim_id}" for claim_id in ("c1", "c2", "c3")]
+    note_store.write_store(
+        vault_dir / "notes.db",
+        sources=[("src-1999", "Author A", "The Book", "1999", 1999)],
+        notes=[
+            (chunk_id, "src-1999", "Introduction", "Chapter 1: Origins", "claim text", None, 0)
+            for chunk_id in chunk_ids
+        ],
+        names=[],
+        note_names=[],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+    prose_dir = vault_dir / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    for chunk_id in chunk_ids:
+        (prose_dir / f"{chunk_id}.md").write_text(
+            "---\n"
+            f"chunk_id: {chunk_id}\n"
+            "section: Introduction\n"
+            f'chunk_text: "{PASSAGE_TEXT}"\n'
+            "source_meta: {author: Author A, title: The Book, date: '1999'}\n"
+            "---\n\nbody\n",
+            encoding="utf-8",
+        )
+    return vault_dir
+
+
+def _essay_payload_under(mode, job_store, tmp_path, authed_app):
+    vault_dir = _build_vault(tmp_path)
+    app = create_app(job_store, vault_dir=vault_dir, citation_mode=mode)
+    with TestClient(authed_app(app)) as http:
+        ask_id = http.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
+        _run_the_ask(job_store, tmp_path / "work", PaperStubClient())
+        return http.get(f"/asks/{ask_id}/paper").json()
+
+
+def test_a_locator_deployment_serves_no_book_text_under_either_new_key(
+    job_store: JobStore, tmp_path: Path, monkeypatch, authed_app
+):
+    """The property the whole render-at-the-boundary design exists for
+    (DEC-65, DEC-72). A worker resolving `passage` must not be able to put
+    book text into a `locator` deployment's response by baking it into the
+    file it wrote -- so neither `essay` nor `paper` may carry a quote here.
+    This is an oracle, not a judgement: the passage is a known string."""
+    monkeypatch.setattr(worker_mod, "run_ask", _stub_ask(_analysis_record()))
+
+    payload = _essay_payload_under(LOCATOR, job_store, tmp_path, authed_app)
+
+    assert PASSAGE_TEXT not in payload["essay"]
+    assert PASSAGE_TEXT not in json.dumps(payload["paper"])
+    assert PASSAGE_TEXT not in json.dumps(payload["record"])
+
+
+def test_a_passage_deployment_resolves_the_paper_the_same_way_it_resolves_the_record(
+    job_store: JobStore, tmp_path: Path, monkeypatch, authed_app
+):
+    """The other half: `paper` goes through the same resolution `record`
+    does, so a client reading one is not handed raw `chunk:<id>` pointers
+    where the other has a book and a chapter."""
+    monkeypatch.setattr(worker_mod, "run_ask", _stub_ask(_analysis_record()))
+
+    payload = _essay_payload_under(PASSAGE, job_store, tmp_path, authed_app)
+
+    assert PASSAGE_TEXT in json.dumps(payload["paper"])
+    assert PASSAGE_TEXT in json.dumps(payload["record"])
+    # The essay itself cites book-level in either mode -- it never carries
+    # the quoted passage, which is why it stays short.
+    assert PASSAGE_TEXT not in payload["essay"]
+    assert "(A 1999)" in payload["essay"]  # `format_citation(form=SHORT)`: surname and year
+
+
+def test_a_hit_whose_entry_has_no_essay_drafts_one_and_repairs_the_entry(
+    job_store: JobStore, paper_cache, tmp_path: Path, monkeypatch, authed_app
+):
+    """A cache hit short-circuits before any drafting, so an entry with no
+    essay -- a failed earlier draft, or a row written by a worker predating
+    #784 -- would otherwise deny every later ask of that question its essay
+    forever. The answer stays free; only the essay is paid for. The third
+    ask finds the repaired entry and pays nothing."""
+    paper_cache.create_schema()
+    monkeypatch.setattr(worker_mod, "run_ask", _stub_ask(_analysis_record()))
+    work_dir = tmp_path / "work"
+
+    with TestClient(authed_app(create_app(job_store))) as http:
+        first_id = http.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
+        _run_the_ask(job_store, work_dir, _RaisingClient(), cache=paper_cache)
+        assert "essay" not in http.get(f"/asks/{first_id}/paper").json()
+
+        second_id = http.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
+        _run_the_ask(job_store, work_dir, PaperStubClient(), cache=paper_cache)
+        second = http.get(f"/asks/{second_id}/paper").json()
+
+        third_id = http.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
+        # Nothing left to pay for: the repaired entry carries the essay.
+        _run_the_ask(job_store, work_dir, _RaisingClient(), cache=paper_cache)
+        third = http.get(f"/asks/{third_id}/paper").json()
+
+    second_row = job_store.get(second_id)
+    # The answer was still served from cache -- no second Phase B run, which
+    # is issue #686's own guarantee. Only the essay cost anything.
+    assert second_row["cached"] is True
+    assert second_row["cost_usd"] > 0
+    assert PLAN["thesis_statement"] in second["essay"]
+
+    assert job_store.get(third_id)["cost_usd"] == 0.0
+    assert third["essay"] == second["essay"]
+
+
+def test_a_cached_refusal_stays_a_refusal_and_costs_nothing_to_repeat(
+    job_store: JobStore, paper_cache, tmp_path: Path, monkeypatch, authed_app
+):
+    """The repair path must not mistake a refusal for a missing essay. A
+    refusal has none and never will, so a repeat serves it free rather than
+    re-attempting a draft on every ask."""
+    paper_cache.create_schema()
+    refused = _analysis_record()
+    refused["interrogation"] = {"disposition": "refuse", "refusal": {"reason": "out of corpus"}}
+    refused["claims"] = []
+    monkeypatch.setattr(worker_mod, "run_ask", _stub_ask(refused))
+    work_dir = tmp_path / "work"
+
+    with TestClient(authed_app(create_app(job_store))) as http:
+        http.post("/asks", json={"case": CASE, "request": QUESTION})
+        _run_the_ask(job_store, work_dir, PaperStubClient(), cache=paper_cache)
+
+        second_id = http.post("/asks", json={"case": CASE, "request": QUESTION}).json()["id"]
+        client = PaperStubClient()
+        _run_the_ask(job_store, work_dir, client, cache=paper_cache)
+        payload = http.get(f"/asks/{second_id}/paper").json()
+
+    assert job_store.get(second_id)["cached"] is True
+    assert job_store.get(second_id)["cost_usd"] == 0.0
+    assert client.passes == []
+    assert "essay" not in payload
+    assert payload["record"]["interrogation"]["disposition"] == "refuse"

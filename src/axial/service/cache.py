@@ -108,6 +108,28 @@ class PaperCache:
             ).fetchone()
         return row[0] if row else None
 
+    def attach_paper(
+        self, brief_id: str, corpus_pin: str, paper_path: Path, cache_dir: Path
+    ) -> Path:
+        """Materialise an essay onto an entry that already exists without
+        one, and record it (issue #784).
+
+        The `WHERE paper_ref IS NULL` guard makes this a repair rather than
+        an overwrite: two workers racing the same essay-less entry both fill
+        it with the same content-addressed paper, and the loser's UPDATE
+        matches nothing instead of pointing the row at a second copy.
+        """
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / f"{brief_id}__{corpus_pin}.paper.json"
+        shutil.copyfile(paper_path, target)
+        with psycopg.connect(self._dsn) as conn:
+            conn.execute(
+                "UPDATE paper_cache SET paper_ref = %s "
+                "WHERE brief_id = %s AND corpus_pin = %s AND paper_ref IS NULL",
+                (str(target), brief_id, corpus_pin),
+            )
+        return target
+
     def store(
         self,
         brief_id: str,

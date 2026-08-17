@@ -16,10 +16,15 @@ rendered markdown answer (whether served by the API or written to disk by
 The **essay** an ask now ends in (issue #784) is rendered through the same
 mode, at the same API boundary, and never read off the file the worker
 wrote — so a worker resolving `passage` cannot put book text into a
-`locator` deployment's response by baking it in first. Its own in-text
-citations are book-level (`Vignal 2021, ch. 30`) rather than quoted
-passages, so the essay is short in either mode; the quoted passages stay
-with the claim list beneath it.
+`locator` deployment's response by baking it in first.
+
+**The essay's own size does not move with the mode, and that is measured, not
+assumed.** Its in-text citations are book-level (`Vignal 2021, ch. 30`) rather
+than quoted passages, so rendering it under `passage` adds nothing: across
+seven papers it comes to 14,864 words in both modes, ×1.00
+(`data/logs/2026-08-18-784-cost-per-ask/`). The ×22 above is the claim list
+beneath the essay, which is where every quoted passage lands. In the default
+mode that claim list runs about 13× longer than the essay it follows.
 
 This is what an install resolves to with nothing configured (DEC-72). An
 answer that cannot quote the book it argues from is not an answer, and that

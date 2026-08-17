@@ -145,6 +145,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -628,22 +629,37 @@ def create_app(
         paper, and a drafting failure leaves the analysis standing without
         one. The client falls back to the claim list and says so.
 
-        **The essay is rendered here, not read off the `.md` the worker
-        wrote**, for the same reason the analysis record above is: the
-        deployment's citation mode is enforced at this boundary (DEC-65,
-        DEC-72), and a worker resolving `passage` must not be able to put
-        book text into a `locator` deployment's response by having baked it
-        into a file first.
+        **Both are rendered here, not read off the `.md` the worker wrote**,
+        for the same reason the analysis record above is: the deployment's
+        citation mode is enforced at this boundary (DEC-65, DEC-72), and a
+        worker resolving `passage` must not be able to put book text into a
+        `locator` deployment's response by having baked it into a file
+        first. `paper` ships the SAME rendered record the essay was built
+        from -- serving the raw one beside a rendered essay would give a
+        client reading `paper` raw `chunk:<id>` pointers where `record` has
+        `Vignal 2021, ch. 30`, and would put one of the two keys outside the
+        boundary this function exists to be.
         """
         paper_ref = job.get("paper_ref")
         if not paper_ref:
             return {}
         paper_path = Path(paper_ref)
         if not paper_path.is_file():
+            # A recorded path that does not resolve is a deployment fault --
+            # an unmounted work_dir, a pruned scratch volume -- not the same
+            # thing as an ask that drafted no essay. Degrade rather than
+            # 500, because the analysis is still good and the analyst still
+            # wants it; but say so, or a mount misconfiguration presents as
+            # "no ask ever has an essay" with nothing anywhere to explain it.
+            print(
+                f"paper_ref_unresolvable ask={job['id']} path={paper_ref}: the job row names "
+                "an essay that is not on disk; serving the answer without it",
+                file=sys.stderr,
+            )
             return {}
         paper = json.loads(paper_path.read_text(encoding="utf-8"))
         served = render_record_for_serving(paper, citation_mode=citation_mode, vault_dir=vault_dir)
-        return {"essay": render_reader_paper(served), "paper": paper}
+        return {"essay": render_reader_paper(served), "paper": served}
 
     @app.get("/asks/{ask_id}/paper")
     def get_paper(ask_id: str, principal: Principal) -> dict[str, Any]:
