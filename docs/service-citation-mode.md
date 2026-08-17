@@ -13,6 +13,14 @@ rendered markdown answer (whether served by the API or written to disk by
 `axial ask`), and in the markdown/docx/odt download from `GET
 /asks/{id}/export`. One resolution, every surface a reader sees.
 
+The **essay** an ask now ends in (issue #784) is rendered through the same
+mode, at the same API boundary, and never read off the file the worker
+wrote — so a worker resolving `passage` cannot put book text into a
+`locator` deployment's response by baking it in first. Its own in-text
+citations are book-level (`Vignal 2021, ch. 30`) rather than quoted
+passages, so the essay is short in either mode; the quoted passages stay
+with the claim list beneath it.
+
 This is what an install resolves to with nothing configured (DEC-72). An
 answer that cannot quote the book it argues from is not an answer, and that
 cost is not one a default should impose on a deployer who has not been asked.

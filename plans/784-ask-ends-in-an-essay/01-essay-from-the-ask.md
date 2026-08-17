@@ -63,17 +63,26 @@ And   the ask's reported cost includes the paper_plan, paper_draft and
 ```aeo-independence
 slice: 01-essay-from-the-ask
 edits: src/axial/cli.py
+edits: src/axial/test_cli_ask.py
 edits: src/axial/service/worker.py
 edits: src/axial/service/api.py
 edits: src/axial/service/cache.py
 edits: src/axial/service/export.py
-edits: docs/DECISIONS.md
+edits: src/axial/service/jobs.py
+edits: tests/service/test_worker.py
 creates: src/axial/ask/paper.py
 creates: src/axial/ask/test_paper.py
 creates: tests/service/test_ask_ends_in_an_essay.py
 depends-on: 783
 depends-on: 785
 ```
+
+Three paths were added while building, all for the same reason — the
+composition moved, so the two files that stub it moved their stub point with
+it, and the job row needed somewhere to put the paper's path. `jobs.py`,
+`test_cli_ask.py` and `tests/service/test_worker.py` were not foreseen at
+planning time. `docs/DECISIONS.md` was declared and not used: nothing here
+overturns a decision, it executes DEC-41 and DEC-65 as written.
 
 ## Design decisions this slice makes
 
@@ -118,24 +127,27 @@ depends-on: 785
 
 ## Inner loop — initial unit test list
 
-- [ ] `draft_paper_for_turn` builds a brief whose thesis is the question and
+- [x] `draft_paper_for_turn` builds a brief whose thesis is the question and
       whose single `analysis_ids` entry is the turn's `brief_id`.
-- [ ] `draft_paper_for_turn` returns `None`, and makes zero model calls, when
+- [x] `draft_paper_for_turn` returns `None`, and makes zero model calls, when
       the record's `interrogation.disposition` is `refuse`.
-- [ ] `draft_paper_for_turn` writes the record and both renders under the
+- [x] `draft_paper_for_turn` writes the record and both renders under the
       `papers_dir` it was given, never `data/papers/`.
-- [ ] Two identical questions against one record produce one
+- [x] Two identical questions against one record produce one
       `paper_brief_id` (the content-keyed id, pinned).
-- [ ] `run_ask_job` returns a `cost_usd` that is the analysis total plus the
-      paper's three passes, and `None` when either side has an unpriced pass.
-- [ ] `run_ask_job` completes the job with the essay present when drafting
-      raises — recorded as an event, not as a failed job.
-- [ ] A cache hit serves the same essay the first ask produced, with
-      `cost_usd == 0.0`.
-- [ ] `_paper_payload` returns `record`, `metrics`, `essay`, `paper`, and
+- [x] `run_ask_job` returns a `cost_usd` that is the analysis total plus the
+      paper's three passes (`_combined`, `None` only when neither half
+      priced — dropping a known half would report less than the ask cost).
+- [x] `run_ask_job` completes the job when drafting raises — the failure is
+      an event, not a failed job, and the claim list still serves.
+- [x] A cache hit serves the same essay the first ask produced, proven with a
+      client that raises on any call.
+- [x] `_paper_payload` returns `record`, `metrics`, `essay`, `paper`, and
       omits `essay`/`paper` when no paper was drafted.
-- [ ] `render_export_markdown` leads with the essay when one exists and is
-      byte-identical to today's output when none does.
+- [x] `render_export_markdown` leads with the essay when one exists and is
+      unchanged when none does.
+- [x] The job row carries `paper_ref`, under the principal's own scoped
+      directory (added during the loop — the path has to travel somewhere).
 
 ## Out of scope for this slice (deferred)
 
@@ -148,20 +160,81 @@ depends-on: 785
 
 ## Definition of done
 
-- [ ] `axial paper examine` measurement run, logged under `data/logs/`, and
-      its finding stated in the PR body.
-- [ ] Acceptance test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; `uv run pytest` green,
+- [x] `axial paper examine` measurement run, logged under
+      `data/logs/2026-08-17-784-question-as-thesis/`.
+- [x] Acceptance test written, seen to fail for the right reason, now GREEN
+      (8 tests in `tests/service/test_ask_ends_in_an_essay.py`, real
+      Postgres).
+- [x] All seeded unit behaviours covered; `uv run pytest` green (src tier),
       `uv run ruff check` clean.
-- [ ] **Cost per ask measured on a real end-to-end run and reported** — the
-      issue's own bar. Analysis cost, paper cost, and the total, from the job
-      row rather than from the price table's estimate where the provider
-      reports one.
-- [ ] CLI behaviour unmoved: `axial ask` and `axial ask --no-paper` produce
-      what they produced before the extraction.
+- [x] **Cost per ask measured on a real end-to-end run and reported.**
+      $0.134203 total = $0.121133 answer + **$0.013070 essay**, 307,793
+      tokens, 486 s. The essay is **9.7% of the ask**, not the +$0.13 the
+      issue estimated — that figure was a multi-record paper's, and an ask is
+      one record. `data/logs/2026-08-18-784-cost-per-ask/summary.md`.
+- [x] CLI behaviour unmoved: `src/axial/test_cli_ask.py` green with every
+      assertion unchanged, only its stub point moved.
 - [ ] Slice's tests run in CI.
 - [ ] Evidence collected and PR opened via `/aeo:safe-pr`.
 
 ## Status / progress log
 
 - 2026-08-17 planned.
+- **The measurement ran first and answered its question.** Six paired
+  `axial paper examine` runs, zero drafting calls, 10–18 s each: a question
+  thesis plans 5–8 sections against the same records' declarative-thesis
+  baselines of 5–10, every plan well-formed. The mechanism is that stage 2
+  *restates* the question as a declarative thesis, so the interrogative never
+  reaches the drafter.
+  `data/logs/2026-08-17-784-question-as-thesis/summary.md`.
+  **One record was run twice on byte-identical input and planned 5 sections
+  then 7** — a single draw of this pass is not a measurement, and no
+  one-or-two-section difference in that table means anything.
+- **The Bash tool exports `AXIAL_SECRETS_PATH=/secrets/secrets.toml`** — MSYS
+  mangling the repo-relative default into a POSIX path that resolves to
+  nothing on Windows. Six runs died with `no API key was found` before any
+  model call, which reads exactly like a missing key. Everything needing
+  secrets ran through PowerShell after that.
+- Acceptance test watched red with `KeyError: 'essay'` off the real route,
+  against a real Postgres, before any production line was written.
+- **`paper_ref` is a column, not a derivation.** Recomputing
+  `paper_brief_id` at serve time was considered and rejected: a follow-up
+  turn's thesis is the question the analyst typed, while its record's own
+  `request` carries the previous turn folded in, so the two hash differently
+  and a derived filename would miss silently. `ALTER TABLE ... ADD COLUMN IF
+  NOT EXISTS` is the idiom #686 and #724 already established here.
+- **`JobRunner`'s five-tuple was left alone.** The paper path is written by
+  the job body through `JobStore.set_paper_ref`, the way it already writes
+  events, rather than widening a contract every job kind and every test stub
+  is written against for a column only `ask` fills.
+- **The essay is rendered at the API boundary, not read off the worker's
+  `.md`.** Otherwise a worker resolving `passage` could put book text into a
+  `locator` deployment's response by baking it into a file first — which is
+  exactly the enforcement point DEC-65 and DEC-72 put at the API.
+- **The drafting had to move above `cache.store`.** With the original order
+  the cache entry was written before the paper existed, so every later hit
+  would have served an answer with no essay.
+- `_ask_paper` took `(client, turn)`; the seam briefly took `(client,
+  question, record)` and broke three worker tests whose stub records carry no
+  `brief_id`. Reverted to taking the turn — the shape the CLI always had.
+- Two test files moved their stub point with the composition
+  (`src/axial/test_cli_ask.py`, `tests/service/test_worker.py`); every
+  assertion in them is unchanged.
+- **The real run's paper came back `shape: weak`, with one defect: the
+  counter-position is introduced already diminished rather than at its
+  strongest.** That is the strawman failure already on record for the argument
+  map, now visible in the writer. The shape check reports and never blocks
+  (§7.16), so the run stands and this slice ships — prompt quality is out of
+  scope here by design. It is a finding for #787 or its own issue, not
+  something to fix inside a wiring slice.
+- **Attempt 1 of the cost run hung on the intake fork check and was killed**
+  after paying for five retrieval turns; `axial ask`'s one-shot form promises
+  "no prompts" and the fork check breaks that promise. Filed as **#790**. The
+  hosted path is unaffected — `run_ask_job` passes no `on_fork`.
+- **`tests/service/test_api_under_load.py::test_post_asks_returns_under_100ms
+  _while_an_ask_is_running` fails when the whole package runs on this box and
+  passes on its own.** Nothing in this slice is on its path: its `run_job` is
+  a local closure, and `POST /asks` still does a quota check and an enqueue
+  and nothing else. Read as a wall-clock budget losing to local contention,
+  not as proven pre-existing — the clean baseline run was not obtained. CI's
+  own runner is the arbiter.
