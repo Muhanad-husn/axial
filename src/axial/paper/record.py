@@ -47,6 +47,7 @@ check never is, so it carries no entry.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -72,9 +73,10 @@ from axial.paper.draft import assign_claim_ids, draft_section, remap_local_ids
 from axial.paper.intake import PaperIntake, run_intake
 from axial.paper.lens import resolve_lens
 from axial.paper.plan import Plan, run_plan
+from axial.paper.reader import render_reader_paper
 from axial.paper.render import render_paper
 from axial.paper.shape import run_shape_check
-from axial.paths import ANALYSES_DIR
+from axial.paths import ANALYSES_DIR, VAULT_DIR
 
 # Where a paper record and its rendered markdown land (§6, §7.3).
 PAPERS_DIR = Path("data/papers")
@@ -333,14 +335,42 @@ def run_paper(
     return record
 
 
-def persist_paper(record: dict[str, Any], *, papers_dir: Path | None = None) -> Path:
-    """Write the record and its rendered markdown side by side (§7.3, §7.10)."""
+def persist_paper(
+    record: dict[str, Any], *, papers_dir: Path | None = None, vault_dir: Path | None = None
+) -> Path:
+    """Write the record and its two renderings side by side (§7.3, §7.10).
+
+    `<id>.md` is the paper a reader gets (`axial.paper.reader`); `<id>.audit.md`
+    is the operator rendering (`axial.paper.render`) with the citation table,
+    the coverage map, the shape band and the provenance-tagged bibliography.
+    Issue #783 split them, and both are written every run: the audit render is
+    what the gates and a reviewer read, and leaving it to be regenerated on
+    demand would mean the two could disagree about the same record.
+
+    The reader render cites `Vignal 2021, ch. 30` rather than a chunk id, so
+    the grounds are resolved first -- on a DEEP COPY, never `record` itself,
+    which is written to JSON below and must stay exactly what `run_paper`
+    built (`passage` mode would otherwise put book text into the record).
+    Same lazy service import, same env var and same default as
+    `axial.answer.record.persist_markdown` already uses for the analysis
+    `.md`."""
+    from axial.service.citation import render_record_for_serving, resolve_citation_mode
+
     papers_dir = Path(papers_dir) if papers_dir is not None else PAPERS_DIR
     papers_dir.mkdir(parents=True, exist_ok=True)
 
     paper_brief_id = record["paper_brief_id"]
+    resolved_vault_dir = vault_dir if vault_dir is not None else VAULT_DIR
+    reader_record = render_record_for_serving(
+        copy.deepcopy(record),
+        citation_mode=resolve_citation_mode(),
+        vault_dir=resolved_vault_dir,
+    )
     markdown_path = papers_dir / f"{paper_brief_id}.md"
-    markdown_path.write_text(render_paper(record), encoding="utf-8")
+    markdown_path.write_text(render_reader_paper(reader_record), encoding="utf-8")
+
+    audit_path = papers_dir / f"{paper_brief_id}.audit.md"
+    audit_path.write_text(render_paper(record), encoding="utf-8")
 
     record_path = papers_dir / f"{paper_brief_id}.json"
     record_path.write_text(

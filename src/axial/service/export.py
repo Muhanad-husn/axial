@@ -1,8 +1,16 @@
 """Export the finished ask as one downloadable file (issue #724): the
-brief, the rendered §7.10 answer (`axial.answer.render.render_markdown`)
-and the metrics block (`axial.service.api`'s own four-field envelope --
-`cost`, `model_by_pass`, `coverage_map`, `confidence`) as markdown -- and,
-converted from that SAME markdown, `docx` and `odt`.
+reader-facing answer (`axial.answer.reader.render_reader_answer`) as
+markdown -- and, converted from that SAME markdown, `docx` and `odt`.
+
+**The metrics left the document in #783.** This module used to export
+`render_markdown(record) + _render_metrics_markdown(metrics)`: the AUDIT
+rendering plus a telemetry appendix, in the file a reader downloads. So an
+exported `.docx` carried lines like `evidence_share=0.523 available_share=
+0.318 usage_ratio=22.954545454545453`, which is the exact failure
+`axial.paper.render`'s own docstring names. The metrics are still computed,
+still served beside the record by `GET /asks/{id}/paper`
+(`metrics_block`, below) and still rendered in the web client's metrics
+panel; they are no longer stapled to the document.
 
 **One rendering path, three containers, per the issue's own line.**
 `render_export_markdown` is the only place record content turns into
@@ -36,7 +44,7 @@ import io
 import re
 from typing import Any
 
-from axial.answer.render import render_markdown
+from axial.answer.reader import render_reader_answer
 
 EXPORT_FORMATS = ("md", "docx", "odt")
 
@@ -62,42 +70,18 @@ def _strip_markdown_emphasis(text: str) -> str:
     return _BOLD_RE.sub(r"\1", text)
 
 
-def _render_metrics_markdown(metrics: dict[str, Any]) -> str:
-    lines = ["", "## Metrics", ""]
-    cost = metrics.get("cost") or {}
-    lines.append(f"**Total cost (USD):** {cost.get('total_usd')}")
-    model_by_pass = metrics.get("model_by_pass") or {}
-    lines.append("**Model by pass:**")
-    if not model_by_pass:
-        lines.append("- (none)")
-    for pass_name in sorted(model_by_pass):
-        lines.append(f"- {pass_name}: {model_by_pass[pass_name]}")
-    confidence = metrics.get("confidence") or {}
-    lines.append(f"**Confidence band:** {confidence.get('overall_band')}")
-    coverage_map = metrics.get("coverage_map") or {}
-    lines.append(f"**Names covered:** {len(coverage_map)}")
-    return "\n".join(lines) + "\n"
-
-
-def render_export_markdown(record: dict[str, Any], metrics: dict[str, Any]) -> str:
-    """The brief, the rendered answer (§7.10, `render_markdown`) and the
-    metrics block, as one markdown document -- the issue's own three-part
-    "done when". `record` should already be rendered through this
-    deployment's citation mode (`axial.service.citation.
-    render_record_for_serving`) by the caller, exactly as `GET
-    /asks/{id}/paper` already does before this function ever sees it --
-    though it makes no difference to what this function emits:
-    `render_markdown` never surfaces a ground's `citation` block (quote
-    included) in either mode, the same gap the persisted analyst markdown
-    answer already carries (issue #535, predates #690). So a `locator`
-    deployment's export carries no book text for the same reason the
-    paper JSON does not, and a `passage` deployment's export carries none
-    either -- an honest limitation, not a citation-mode leak, and pinned
-    as such in `tests/service/test_api_export.py` rather than silently
-    fixed here as scope this issue never asked for. This function itself
-    reads only `record`/`metrics` and calls no model, opens no vault --
-    same purity `render_markdown` already holds."""
-    return render_markdown(record) + _render_metrics_markdown(metrics)
+def render_export_markdown(record: dict[str, Any]) -> str:
+    """The exported document: the reader-facing rendering of `record`
+    (`axial.answer.reader.render_reader_answer`) and nothing else. `record`
+    should already be rendered through this deployment's citation mode
+    (`axial.service.citation.render_record_for_serving`) by the caller,
+    exactly as `GET /asks/{id}/paper` already does -- and since #783 that
+    now MATTERS to what comes out: the reader render prints each claim's
+    citation from the resolved `citation` block, so an unresolved record
+    exports raw `chunk:<id>` pointers rather than `Vignal 2021, ch. 30`.
+    Reads only `record`, calls no model, opens no vault -- the same purity
+    `render_reader_answer` itself holds."""
+    return render_reader_answer(record)
 
 
 def render_docx(markdown_text: str) -> bytes:

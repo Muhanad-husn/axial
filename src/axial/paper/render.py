@@ -40,7 +40,7 @@ from axial.paper.biblio import BIB_FIELDS, format_field
 _BAND_NOTE = "band shown with the coverage counts that justify it"
 
 
-def _title(record: dict[str, Any]) -> str:
+def paper_title(record: dict[str, Any]) -> str:
     """The rendered `#` title (§7.10). Precedence, highest first: a human-
     supplied `title` in the paper brief (an explicit override always wins),
     the §7.16 shape check's own title of the finished paper, the plan's
@@ -61,7 +61,7 @@ def _title(record: dict[str, Any]) -> str:
     )
 
 
-def _sections(record: dict[str, Any]) -> list[dict[str, Any]]:
+def plan_sections(record: dict[str, Any]) -> list[dict[str, Any]]:
     plan = record.get("plan") or {}
     return [section for section in (plan.get("sections") or []) if isinstance(section, dict)]
 
@@ -69,7 +69,7 @@ def _sections(record: dict[str, Any]) -> list[dict[str, Any]]:
 _LEADING_HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+)(.*\S)\s*\n?")
 
 
-def _drop_restated_heading(prose: str, heading: Any) -> str:
+def drop_restated_heading(prose: str, heading: Any) -> str:
     """Strip a leading markdown heading line from `prose` when it merely
     restates the section's own heading the renderer is about to emit.
 
@@ -90,7 +90,7 @@ def _drop_restated_heading(prose: str, heading: Any) -> str:
     return rest.lstrip("\n")
 
 
-def _prose_by_section(record: dict[str, Any]) -> dict[str, str]:
+def prose_by_section(record: dict[str, Any]) -> dict[str, str]:
     return {
         str(entry.get("section_id")): str(entry.get("prose") or "")
         for entry in (record.get("drafts") or [])
@@ -98,7 +98,7 @@ def _prose_by_section(record: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _render_counter_position(record: dict[str, Any]) -> list[str]:
+def counter_position_lines(record: dict[str, Any]) -> list[str]:
     """The counter-position, the one-sided disclosure, or the failure.
 
     Three states, never two (§7.3, PR #558), and they render in two different
@@ -270,23 +270,23 @@ def _render_bibliography(record: dict[str, Any]) -> list[str]:
 def render_paper(record: dict[str, Any]) -> str:
     """The §7.10 rendered paper. Deterministic given the record alone."""
     plan = record.get("plan") or {}
-    prose = _prose_by_section(record)
+    prose = prose_by_section(record)
 
-    lines = [f"# {_title(record)}", ""]
+    lines = [f"# {paper_title(record)}", ""]
 
     thesis_statement = plan.get("thesis_statement")
     if thesis_statement:
         lines.extend([str(thesis_statement), ""])
 
-    for section in _sections(record):
+    for section in plan_sections(record):
         heading = section.get("heading")
         lines.append(f"## {heading}")
         lines.append("")
         section_prose = prose.get(str(section.get("section_id")), "")
-        lines.append(_drop_restated_heading(section_prose, heading))
+        lines.append(drop_restated_heading(section_prose, heading))
         lines.append("")
 
-    lines.extend(_render_counter_position(record))
+    lines.extend(counter_position_lines(record))
     lines.extend(_render_coverage(record))
     lines.extend(_render_shape(record))
     lines.extend(_render_citation_table(record))

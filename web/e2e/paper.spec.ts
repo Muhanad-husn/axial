@@ -29,8 +29,10 @@ test("every claim carries its evidence marker, in locator mode", async ({ page }
   await expect(paper.getByText("runs past the books")).toBeVisible();
 
   // The (a) claim's citation -- author, chapter, section, never a page
-  // number (none exists anywhere in this system).
-  await expect(paper.getByText("Batatu (1999) · ch. 8 · Troupes Spéciales recruitment")).toBeVisible();
+  // number (none exists anywhere in this system). Since #783 the string
+  // itself is formatted server-side (`axial.cite`) and printed as sent, so
+  // a download and this screen can never cite the same ground two ways.
+  await expect(paper.getByText("Batatu (1999), 8, Troupes Spéciales recruitment")).toBeVisible();
 
   // The (c) claim's empty grounds render as a correct value, not a gap.
   await expect(paper.getByText("no supporting passage")).toBeVisible();

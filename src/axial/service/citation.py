@@ -37,7 +37,14 @@ are the model's own summarizing prose, never a verbatim quote; `trajectory`
 entries carry tool names, args and chunk ids, never note text
 (`axial.retrieve.loop`); and `GET /asks/{id}/events`' SSE frames narrate
 tool actions and counts (`axial.llm.emit_event`'s callers), also never note
-text. Nothing on that surface needed a change."""
+text. Nothing on that surface needed a change.
+
+**Where the resolution itself lives, since #783.** The reader-facing
+markdown renders need the same store lookup, and core may not import
+`axial.service` (`axial/service/__init__.py`), so `resolve_record_citations`
+and its two helpers moved to `axial.query.citations` and are re-exported
+here under their old names. What stays here is what is genuinely the
+deployer's: the mode, read from the environment once, at the edge."""
 
 from __future__ import annotations
 
@@ -45,12 +52,14 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from axial.query import store
-from axial.query.reader import ChunkNotFoundError, get_chunk
-
-LOCATOR = "locator"
-PASSAGE = "passage"
-CITATION_MODES = (LOCATOR, PASSAGE)
+from axial.query.citations import (  # noqa: F401 -- re-exported; the API and tests import them from here
+    CITATION_MODES,
+    LOCATOR,
+    PASSAGE,
+    resolve_chunk_citation,
+    resolve_grounds,
+    resolve_record_citations,
+)
 
 # Mirrors the `AXIAL_ROLE`/`AXIAL_QUOTA_ASKS_PER_DAY` seam
 # (`axial.ask.role`, `axial.service.quotas`): one env var, one documented
@@ -87,69 +96,15 @@ def resolve_citation_mode(
     return value
 
 
-def _resolve_chunk_citation(
-    ref_id: Any, *, citation_mode: str, vault_dir: Path | None
-) -> dict[str, Any] | None:
-    """One `chunk` ground's citation block, or `None` when it cannot be
-    resolved -- no `vault_dir`, no store at it, or `ref_id` not in it."""
-    if vault_dir is None or not isinstance(ref_id, str) or not ref_id.strip():
-        return None
-    connection = store.connect(Path(vault_dir))
-    if connection is None:
-        return None
-    try:
-        locator = store.note_locator(connection, ref_id)
-    finally:
-        connection.close()
-    if locator is None:
-        return None
-    citation = dict(locator)
-    if citation_mode == PASSAGE:
-        try:
-            note = get_chunk(ref_id, vault_dir=vault_dir)
-        except ChunkNotFoundError:
-            pass
-        else:
-            citation["quote"] = note.chunk_text
-    return citation
-
-
-def _resolve_grounds(grounds: Any, *, citation_mode: str, vault_dir: Path | None) -> None:
-    """Attach `citation` to every resolvable `chunk` entry of `grounds`, in
-    place. An `artifact` ground (or any other `ref_type`) is left
-    untouched -- `axial.query.reader.ArtifactNote` carries no chunk text to
-    leak, so there is nothing for either mode to add or withhold."""
-    if not isinstance(grounds, list):
-        return
-    for ground in grounds:
-        if not isinstance(ground, dict) or ground.get("ref_type") != "chunk":
-            continue
-        citation = _resolve_chunk_citation(
-            ground.get("ref_id"), citation_mode=citation_mode, vault_dir=vault_dir
-        )
-        if citation is not None:
-            ground["citation"] = citation
-
-
 def render_record_for_serving(
     record: dict[str, Any], *, citation_mode: str, vault_dir: Path | None
 ) -> dict[str, Any]:
     """`record` (the §7.3 analysis record `GET /asks/{id}/paper` serves),
     with every `chunk` ground's citation resolved for the caller's own
-    `citation_mode`. Mutates and returns `record` in place -- it was just
-    freshly parsed from JSON by the caller (`axial.service.api.get_paper`),
-    never the on-disk file, so there is nothing else holding a reference to
-    mutate out from under."""
-    claims = record.get("claims")
-    if isinstance(claims, list):
-        for claim in claims:
-            if isinstance(claim, dict):
-                _resolve_grounds(
-                    claim.get("grounds"), citation_mode=citation_mode, vault_dir=vault_dir
-                )
-    counter_position = record.get("counter_position")
-    if isinstance(counter_position, dict):
-        _resolve_grounds(
-            counter_position.get("grounds"), citation_mode=citation_mode, vault_dir=vault_dir
-        )
-    return record
+    `citation_mode` (`axial.query.citations.resolve_record_citations`, where
+    the resolution itself now lives -- issue #783 needed it in core, which
+    may not import this layer). Mutates and returns `record` in place -- it
+    was just freshly parsed from JSON by the caller
+    (`axial.service.api.get_paper`), never the on-disk file, so there is
+    nothing else holding a reference to mutate out from under."""
+    return resolve_record_citations(record, citation_mode=citation_mode, vault_dir=vault_dir)

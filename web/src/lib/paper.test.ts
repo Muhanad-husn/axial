@@ -78,7 +78,20 @@ describe("citationLine", () => {
     expect(citationLine(undefined)).toBeNull();
   });
 
-  it("joins whatever the server resolved, author preferred over source id", () => {
+  it("prints the string the server formatted, rather than composing a second one", () => {
+    const line = citationLine({
+      source_id: "batatu-1999",
+      author: "Batatu",
+      title: null,
+      date: "1999",
+      chapter: "8",
+      section: "Troupes Spéciales recruitment",
+      display: "Batatu (1999), 8, Troupes Spéciales recruitment",
+    });
+    expect(line).toBe("Batatu (1999), 8, Troupes Spéciales recruitment");
+  });
+
+  it("falls back to the fields for a server that predates the display string", () => {
     const line = citationLine({
       source_id: "batatu-1999",
       author: "Batatu",
@@ -87,7 +100,7 @@ describe("citationLine", () => {
       chapter: "8",
       section: "Troupes Spéciales recruitment",
     });
-    expect(line).toBe("Batatu (1999) · ch. 8 · Troupes Spéciales recruitment");
+    expect(line).toBe("Batatu (1999), ch. 8, Troupes Spéciales recruitment");
   });
 
   it("falls back to the source id when no author was resolved", () => {

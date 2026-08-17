@@ -693,9 +693,10 @@ def create_app(
 
     @app.get("/asks/{ask_id}/export")
     def export_paper(ask_id: str, principal: Principal, format: str = "md") -> Response:
-        """The brief, the rendered answer and the metrics block as one
-        downloadable file (module docstring, issue #724,
-        `axial.service.export`). Free: no model call, no job row touched,
+        """The reader-facing answer as one downloadable file (module
+        docstring, issue #724; the metrics left the document in #783 and
+        are still served beside the record by `GET /asks/{id}/paper`).
+        Free: no model call, no job row touched,
         no quota consulted -- `_paper_payload` above is a read of an
         already-persisted record, the same one `GET /asks/{id}/paper`
         reads."""
@@ -704,7 +705,7 @@ def create_app(
                 status_code=422, detail=f"format must be one of {EXPORT_FORMATS!r}, got {format!r}"
             )
         payload = _paper_payload(ask_id, principal)
-        markdown_text = render_export_markdown(payload["record"], payload["metrics"])
+        markdown_text = render_export_markdown(payload["record"])
         if format == "md":
             content: bytes = markdown_text.encode("utf-8")
             media_type = "text/markdown; charset=utf-8"

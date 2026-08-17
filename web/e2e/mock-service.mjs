@@ -120,6 +120,12 @@ function readBody(req) {
 // in that mode rather than sending it `null` in the other.
 function chunkGround(refId, { source_id, author, date, chapter, section, quote }, passageMode) {
   const citation = { source_id, author, title: null, date, chapter, section };
+  // `display` is the citation as the server formatted it (`axial.cite.
+  // format_citation`, issue #783). Both modes carry it; the client prints
+  // it rather than composing a second version of the same string.
+  citation.display = [author ? `${author} (${date})` : source_id, chapter, section]
+    .filter(Boolean)
+    .join(", ");
   if (passageMode) citation.quote = quote;
   return { ref_type: "chunk", ref_id: refId, citation };
 }
