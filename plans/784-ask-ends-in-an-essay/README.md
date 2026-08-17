@@ -8,7 +8,7 @@ stays reachable, unchanged, for a reader who wants to check the answer.
 - **Slug:** 784-ask-ends-in-an-essay
 - **Issue:** [#784](https://github.com/Muhanad-husn/axial/issues/784)
 - **Created:** 2026-08-17
-- **Status:** planning
+- **Status:** in-progress
 - **New system?** no
 - **Project directory:** `.` (the web slice's install/build run in `web/`)
 
@@ -57,7 +57,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | # | Slice | Goal (one line) | Status | PR |
 |---|-------|-----------------|--------|----|
-| 01 | [essay-from-the-ask](01-essay-from-the-ask.md) | A finished ask serves its essay from the API, cost included | ◐ in-progress | [#791](https://github.com/Muhanad-husn/axial/pull/791) |
+| 01 | [essay-from-the-ask](01-essay-from-the-ask.md) | A finished ask serves its essay from the API, cost included | ✅ done | [#791](https://github.com/Muhanad-husn/axial/pull/791) |
 | 02 | [essay-is-the-answer](02-essay-is-the-answer.md) | The web client shows the essay; the claim list moves behind disclosure | ☐ todo | — |
 | 03 | [sections-stream-as-they-draft](03-sections-stream-as-they-draft.md) | Planning and each drafted section reach the walk over SSE | ☐ todo | — |
 
@@ -74,8 +74,10 @@ and `src/axial/service/worker.py`, which 01 edits.
 - **A second Phase B run of any kind.** Phase C consumes records (DEC-41); no
   slice here re-asks a question, and no test in this feature runs retrieval.
 - **Changing the paper pipeline's own quality** — prompts, section count,
-  claim assignment. If the arc from a question thesis is poor, that is a
-  finding to file, not a fix to make inside this feature.
+  claim assignment. Slice 01's real run came back `shape: weak` with a
+  straw-manned counter-position; per the founder's 2026-08-18 ruling that work
+  is folded into #787, alongside venue, length and house style, because all of
+  them edit the same two prompt builders.
 - **The four per-run Phase C gates.** They run through `axial gate run` and
   nothing here wires them into the ask path.
 - **Chat mode / follow-up turns in the web client.** The composer still

@@ -4,7 +4,7 @@
 - **Slice slug:** essay-from-the-ask
 - **Branch:** feat/784-ask-ends-in-an-essay/01-essay-from-the-ask
 - **Project directory:** `.`
-- **Status:** ◐ in-progress
+- **Status:** ✅ done
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -188,7 +188,8 @@ as written.
       assertion unchanged, only its stub point moved.
 - [x] Reviewer and verifier both dispatched; every finding actioned in the
       branch rather than left advisory.
-- [ ] Slice's tests run in CI.
+- [x] Slice's tests run in CI — all six checks green on #791, including
+      `acceptance (rest)`, where the local flake below lives.
 - [x] Evidence collected and PR opened via `/aeo:safe-pr`: [#791](https://github.com/Muhanad-husn/axial/pull/791).
 
 ## Status / progress log
