@@ -58,7 +58,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | # | Slice | Goal (one line) | Status | PR |
 |---|-------|-----------------|--------|----|
 | 01 | [essay-from-the-ask](01-essay-from-the-ask.md) | A finished ask serves its essay from the API, cost included | ✅ done | [#791](https://github.com/Muhanad-husn/axial/pull/791) |
-| 02 | [essay-is-the-answer](02-essay-is-the-answer.md) | The web client shows the essay; the claim list moves behind disclosure | ✅ done | — |
+| 02 | [essay-is-the-answer](02-essay-is-the-answer.md) | The web client shows the essay; the claim list moves behind disclosure | ✅ done | [#793](https://github.com/Muhanad-husn/axial/pull/793) |
 | 03 | [sections-stream-as-they-draft](03-sections-stream-as-they-draft.md) | Planning and each drafted section reach the walk over SSE | ☐ todo | — |
 
 Slices 02 and 03 share no file and may be built concurrently once 01 has

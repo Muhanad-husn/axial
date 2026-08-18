@@ -162,3 +162,10 @@ no new colour.
   was ticked.
 - No orphan node process matched the worktree slug after the Playwright
   runs; nothing to kill before cleanup.
+- 2026-08-18 PR [#793](https://github.com/Muhanad-husn/axial/pull/793) opened,
+  evidence attached. Reviewer and verifier dispatched; both returned
+  DONE_WITH_CONCERNS and both findings were fixed in `c1bedec` — the mock
+  essay's bibliography now lists every source its own claims cite (the
+  verifier's, and a defect in the evidence rather than in the product), and
+  `vitest.config.mts` is declared in the independence block above (the
+  reviewer's). Awaiting the founder's merge.
