@@ -1,0 +1,33 @@
+llm_call_request pass=paper_plan model=deepseek/deepseek-v4-pro prompt_chars=9722
+llm_call_response pass=paper_plan model=deepseek/deepseek-v4-pro outcome=received status=200 elapsed=16.38s finish_reason=stop prompt_tokens=2156 completion_tokens=779 total_tokens=2935
+planned the paper's arc -- 5 section(s)
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=5678
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=4.23s finish_reason=stop prompt_tokens=1227 completion_tokens=307 total_tokens=1534
+drafted the 'Introduction' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=8055
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=20.02s finish_reason=stop prompt_tokens=1767 completion_tokens=1775 total_tokens=3542
+drafted the 'The Bellicist Core: War as the Driver of European State Formation' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=9932
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=8.53s finish_reason=stop prompt_tokens=2148 completion_tokens=799 total_tokens=2947
+drafted the 'Mann’s Distinction as a Specification, Not a Displacement' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=12423
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=29.17s finish_reason=stop prompt_tokens=2672 completion_tokens=2472 total_tokens=5144
+drafted the 'The Apparent Displacement: Scholarly Reception and the Limits of Mann’s Refinement' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=13549
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=9.89s finish_reason=stop prompt_tokens=2912 completion_tokens=833 total_tokens=3745
+drafted the 'Where the Specification Fails: External Rent and the Severed War–Taxation Link' section
+llm_call_request pass=paper_shape model=deepseek/deepseek-v4-pro prompt_chars=11291
+llm_call_response pass=paper_shape model=deepseek/deepseek-v4-pro outcome=received status=200 elapsed=5.75s finish_reason=stop prompt_tokens=2251 completion_tokens=366 total_tokens=2617
+llm_call_request pass=paper_abstract model=openai/gpt-5.6-luna prompt_chars=11270
+llm_call_response pass=paper_abstract model=openai/gpt-5.6-luna outcome=received status=200 elapsed=3.46s finish_reason=stop prompt_tokens=2197 completion_tokens=263 total_tokens=2460
+wrote the paper
+paper_brief_id: a1039fad4da31320
+corpus_pin: sim-2026-07-30
+lens: state-formation
+sections: 5
+claims cited: 14
+confidence: low
+shape: strong
+cross-section repetition: 0.10%
+persisted: data\papers\a1039fad4da31320.json
+paper: data\papers\a1039fad4da31320.md
