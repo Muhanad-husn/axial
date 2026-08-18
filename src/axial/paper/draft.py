@@ -306,6 +306,23 @@ def _counter_position_block(role: str) -> str:
     return _COUNTER_POSITION_INSTRUCTION if role == COUNTER_POSITION_ROLE else ""
 
 
+def _word_budget_line(word_budget: int | None) -> str:
+    """The section's own share of a brief's `target_words` (issue #787
+    slice 02), stated as a target the drafter writes to, never a cap:
+    nothing downstream truncates this section's prose, so the instruction
+    says so rather than implying a hard limit the drafter has no way to
+    know is not enforced. `None` -- every brief that declares no length
+    target -- returns an empty string, so the prompt is unchanged from
+    before this parameter existed."""
+    if word_budget is None:
+        return ""
+    return (
+        f"\nThis section's own word budget is about {word_budget} words. Write to "
+        "that scale -- it is a target to aim for, not a hard cap, and nothing here "
+        "will be cut afterward to make it fit.\n"
+    )
+
+
 def _new_claims_block(has_visible_claims: bool, cross_source_possible: bool) -> str:
     """What the drafter may introduce, given what this paper actually has.
 
@@ -340,6 +357,7 @@ def compose_draft_prompt(
     earlier_claims: str,
     has_visible_claims: bool = True,
     cross_source_possible: bool = True,
+    word_budget: int | None = None,
 ) -> str:
     """The stage-3 prompt for one section.
 
@@ -352,16 +370,22 @@ def compose_draft_prompt(
 
     `cross_source_possible` is false when the paper stands on one analysis
     record, where §7.4 makes a (b) claim impossible and (c) the only new claim
-    available (issue #597)."""
+    available (issue #597).
+
+    `word_budget` (issue #787 slice 02) is this section's own share of a
+    brief's `target_words`, `None` on every brief that declares no length
+    target -- the prompt is then unchanged from before this parameter
+    existed, byte for byte."""
     counter_position_block = _counter_position_block(section.role)
     counter_position_line = f"\n{counter_position_block}\n" if counter_position_block else ""
+    word_budget_line = _word_budget_line(word_budget)
     return f"""You are the drafting pass of a paper author (specs/PHASE-C.md §7.4). Write ONE section of a paper. You have no tools, no retrieval, and no access to any source: the claims below are the whole world, and you may not assert anything that is not traceable to one of them.
 
 The paper argues: "{thesis_statement}"
 Read through the lens: {lens.for_prompt()}
 
 This section: "{section.heading}" -- its role in the argument is "{section.role}".
-{counter_position_line}
+{counter_position_line}{word_budget_line}
 Claims assigned to this section, each with the marker that cites it:
 {section_claims}
 
@@ -514,6 +538,12 @@ def draft_section(
     check on a proposed (b) claim (issue #616), which used to run only after
     this function returned and was fatal on the first occurrence.
 
+    `section.word_budget` (issue #787 slice 02) reaches the prompt through
+    `compose_draft_prompt` unchanged -- this function reads it off the
+    section rather than taking it as its own parameter, so a caller that
+    threads a `Plan` through never has to also thread its per-section
+    budgets separately.
+
     `on_event` (issue #784 slice 03) narrates a retry alongside the existing
     `_log_draft_retry` stderr line, not instead of it -- that line is a
     structured record `tests/paper/test_paper_retry.py` pins, and this is a
@@ -537,6 +567,7 @@ def draft_section(
         _earlier_lines(already_cited, claims_by_id),
         has_visible_claims=bool(visible),
         cross_source_possible=cross_source_possible,
+        word_budget=section.word_budget,
     )
     prompt = base_prompt
     for attempt in range(1, _MAX_ATTEMPTS + 1):

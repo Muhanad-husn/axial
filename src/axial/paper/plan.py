@@ -110,15 +110,21 @@ class MissingCounterPositionError(PlanError):
 
 @dataclass(frozen=True)
 class Section:
-    """One planned section (§7.2)."""
+    """One planned section (§7.2).
+
+    `word_budget` (issue #787 slice 02) is this section's own share of a
+    brief's `target_words`, `None` whenever the brief declared no target --
+    the same "absent means the field never existed" contract §7.1 already
+    holds for `lens` and `title`."""
 
     section_id: str
     heading: str
     role: str
     assigned_claims: tuple[tuple[str, str], ...] = ()
+    word_budget: int | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "section_id": self.section_id,
             "heading": self.heading,
             "role": self.role,
@@ -127,6 +133,9 @@ class Section:
                 for brief_id, claim_id in self.assigned_claims
             ],
         }
+        if self.word_budget is not None:
+            payload["word_budget"] = self.word_budget
+        return payload
 
 
 @dataclass(frozen=True)
@@ -168,8 +177,29 @@ def _inventory_lines(inventory: tuple[InventoryClaim, ...]) -> str:
     return "\n".join(lines) or "(the named records carry no claims)"
 
 
-def compose_plan_prompt(thesis: str, lens: Lens, intake: PaperIntake) -> str:
-    """The stage-2 prompt. No prose is requested and none is accepted."""
+def _length_block(target_words: int) -> str:
+    """What the planner is told when the brief declares `target_words`
+    (issue #787 slice 02). Length is an input the analyst set, allocated
+    across sections here, before a drafting dollar is spent -- never a cap
+    truncated against afterward. The counter-position instruction is named
+    explicitly rather than left to fall out of the allocation on its own:
+    the founder's own ruling is that a tight budget crushes the
+    counter-position section first, which is exactly how a strawman gets
+    written."""
+    return f"""
+This paper has a target length of {target_words} words in total. Allocate a share of that budget to each section as a "word_budget" (a positive integer number of words), so every section's share sums to exactly {target_words}. Do not give the counter-position section the smallest share -- it is not the section to squeeze, whatever else the arc needs room for."""
+
+
+def compose_plan_prompt(
+    thesis: str, lens: Lens, intake: PaperIntake, target_words: int | None = None
+) -> str:
+    """The stage-2 prompt. No prose is requested and none is accepted.
+
+    `target_words` (issue #787 slice 02) is `None` on the great majority of
+    briefs, which carry no length target -- the prompt then says nothing
+    about length at all, byte-identical to before this parameter existed."""
+    length_block = _length_block(target_words) if target_words else ""
+    word_budget_field = ', "word_budget": 400' if target_words else ""
     return f"""You are the arc-planning pass of a paper author (specs/PHASE-C.md §7.2). You plan the argument of a paper; you do NOT write it. Emit no prose, no sentences of the paper, and no new claims.
 
 Thesis the paper must argue: "{thesis}"
@@ -188,13 +218,70 @@ At least one section must have role "counter-position" and state the opposing po
 Also state the thesis as the PAPER will state it -- one sentence, in the paper's own voice, read through the lens. That sentence is the paper's claim, not a restatement of the question.
 
 Every entry in "assigned_claims" copies "brief_id" and "claim_id" verbatim from one inventory line above, as two separate fields. Do not combine them into one field, and do not put a claim's text in either.
-
+{length_block}
 Return JSON only:
-{{"thesis_statement": "...", "sections": [{{"section_id": "s1", "heading": "...", "role": "...", "assigned_claims": [{{"brief_id": "...", "claim_id": "..."}}]}}]}}"""
+{{"thesis_statement": "...", "sections": [{{"section_id": "s1", "heading": "...", "role": "...", "assigned_claims": [{{"brief_id": "...", "claim_id": "..."}}]{word_budget_field}}}]}}"""
 
 
-def parse_plan_response(raw: str, intake: PaperIntake) -> Plan:
-    """Parse and validate the planner's response against the inventory."""
+def _parse_word_budget(section_id: str, raw_section: dict[str, Any]) -> int:
+    """One section's share, required and validated only when the caller
+    passed `target_words` (issue #787 slice 02). `PlanParseError`, not a new
+    class: a malformed or missing budget is the same shape of failure as a
+    malformed section elsewhere in this response, and reusing it means it is
+    retried the same way (`_PLAN_RETRYABLE_ERRORS` already names the base
+    parse error, not each of its callers)."""
+    value = raw_section.get("word_budget")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise PlanParseError(
+            f"section {section_id!r} has no valid 'word_budget' ({value!r}); a plan "
+            "asked to allocate a length target must give every section a positive "
+            "integer share"
+        )
+    return value
+
+
+def _check_word_budgets(sections: list[Section], target_words: int) -> None:
+    """The two length-allocation rules a parsed plan must hold to (issue
+    #787 slice 02), checked once every section is built.
+
+    The sum check is exact, not a tolerance: the planner is the one doing
+    the arithmetic, over a handful of integers, and a plan that cannot make
+    its own shares add up is a malformed response like any other -- retried,
+    not silently rebalanced.
+
+    The counter-position floor is relative, not a hand-tuned word count: a
+    counter-position section's own share must never fall below the smallest
+    share any other section carries. That is the plan's own promise --
+    "never allocated the smallest share by construction" -- read as a
+    constraint on the allocation rather than as an instruction the prompt
+    merely hopes is followed."""
+    total = sum(section.word_budget for section in sections if section.word_budget is not None)
+    if total != target_words:
+        raise PlanParseError(
+            f"section word_budget(s) total {total}, not the requested {target_words}"
+        )
+
+    cp_budgets = [s.word_budget for s in sections if s.role == COUNTER_POSITION_ROLE]
+    other_budgets = [s.word_budget for s in sections if s.role != COUNTER_POSITION_ROLE]
+    if cp_budgets and other_budgets and min(cp_budgets) < min(other_budgets):
+        raise PlanParseError(
+            f"the counter-position section's word_budget ({min(cp_budgets)}) is smaller "
+            f"than another section's ({min(other_budgets)}); a tight length target must "
+            "not be the reason the counter-position gets squeezed"
+        )
+
+
+def parse_plan_response(
+    raw: str, intake: PaperIntake, target_words: int | None = None
+) -> Plan:
+    """Parse and validate the planner's response against the inventory.
+
+    `target_words` (issue #787 slice 02), when given, additionally requires
+    every section to carry a positive integer `word_budget` that sums to it,
+    with the counter-position floor `_check_word_budgets` enforces. `None`
+    (every caller before this parameter existed, and every brief that
+    declares no length target) parses exactly as it always has -- a
+    `word_budget` in the response is simply never asked for or read."""
     parsed = parse_model_json(raw)
     if not isinstance(parsed, dict):
         raise PlanParseError(f"expected an object, got {type(parsed).__name__}")
@@ -230,14 +317,20 @@ def parse_plan_response(raw: str, intake: PaperIntake) -> Plan:
         if not assigned and role not in _MAY_BE_EMPTY:
             raise EmptySectionError(section_id, str(role))
 
+        word_budget = _parse_word_budget(section_id, raw_section) if target_words else None
+
         sections.append(
             Section(
                 section_id=section_id,
                 heading=str(raw_section.get("heading") or section_id),
                 role=str(role),
                 assigned_claims=tuple(assigned),
+                word_budget=word_budget,
             )
         )
+
+    if target_words:
+        _check_word_budgets(sections, target_words)
 
     return Plan(thesis_statement=thesis_statement.strip(), sections=tuple(sections))
 
@@ -314,17 +407,23 @@ def _plan_retry_prompt(base_prompt: str, error: PlanError, attempt: int) -> str:
     )
 
 
-def run_plan(client: Any, thesis: str, lens: Lens, intake: PaperIntake) -> Plan:
+def run_plan(
+    client: Any, thesis: str, lens: Lens, intake: PaperIntake, target_words: int | None = None
+) -> Plan:
     """Stage 2, end to end: parsed and validated, with a bounded retry
     (issue #598) on the four §7.2 errors a malformed or rule-violating
     response can raise. `validate_plan`'s counter-position guard is not
-    retried -- see `_PLAN_RETRYABLE_ERRORS`."""
-    base_prompt = compose_plan_prompt(thesis, lens, intake)
+    retried -- see `_PLAN_RETRYABLE_ERRORS`.
+
+    `target_words` (issue #787 slice 02) threads straight through to the
+    prompt and the parser; `None` is every brief that declares no length
+    target, and behaves exactly as `run_plan` always has."""
+    base_prompt = compose_plan_prompt(thesis, lens, intake, target_words=target_words)
     prompt = base_prompt
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         raw = complete_json(client, prompt, pass_name=PAPER_PLAN_PASS_NAME)
         try:
-            plan = parse_plan_response(raw, intake)
+            plan = parse_plan_response(raw, intake, target_words=target_words)
         except _PLAN_RETRYABLE_ERRORS as exc:
             if attempt == _MAX_ATTEMPTS:
                 raise

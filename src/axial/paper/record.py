@@ -211,7 +211,7 @@ def run_paper(
     intake = run_intake(paper_brief.analysis_ids, analyses_dir=analyses_dir or ANALYSES_DIR)
 
     lens = resolve_lens(paper_brief.lens, lenses_dir=lenses_dir)
-    plan = run_plan(client, paper_brief.thesis, lens, intake)
+    plan = run_plan(client, paper_brief.thesis, lens, intake, target_words=paper_brief.target_words)
     emit_event(
         on_event,
         f"planned the paper's arc -- {len(plan.sections)} section(s)",
@@ -342,6 +342,7 @@ def run_paper(
             "analysis_ids": list(paper_brief.analysis_ids),
             "lens": paper_brief.lens,
             "title": paper_brief.title,
+            "target_words": paper_brief.target_words,
         },
         "corpus_pin": intake.corpus_pin,
         "lens": lens.name,
