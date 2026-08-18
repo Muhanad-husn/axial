@@ -33,12 +33,16 @@ statement and the drafted prose, both already persisted, so both arms run over
 the same 10 records in `data/papers/` — which include papers drafted from real
 analyst questions, not only the dev briefs.
 
-**The block never names the string being counted.** `house_style.yaml` states
-the convention the way a style guide states one — "Open with substance. A
-paragraph begins with the point it makes about the subject, not with an
-announcement of what is about to be done" — so the count is a consequence, not
-the instruction restated. That constraint was written into the plan before the
-slice was built, precisely so this number would mean something.
+**The block never names the opening formula.** `house_style.yaml` states the
+convention the way a style guide states one — "Open with substance. A paragraph
+begins with the point it makes about the subject, not with an announcement of
+what is about to be done" — so the count is a consequence, not the instruction
+restated. That constraint was written into the plan before the slice was built,
+precisely so this number would mean something.
+
+That is true of the opening formula and of nothing else counted here. The
+spelling count below is the opposite case, and is read as the opposite kind of
+evidence.
 
 ## Result
 
@@ -46,16 +50,36 @@ slice was built, precisely so this number would mean something.
 |---|---|---|
 | Abstracts generated | 10 of 10 | 10 of 10 |
 | **Open with "This paper argues that"** | **10 of 10** | **0 of 10** |
+| **Formula anywhere in the abstract** | **10 of 10** | **2 of 10** |
 | `-ise`/`-isation` tokens | 6 (in 5 of 10) | **34 (in 9 of 10)** |
 | `-ize`/`-ization` tokens | 29 | **5** |
 | Words | 196–218, mean 209 | 195–233, mean 215 |
 | Cost | $0.0259 | $0.0282 |
 | Wall clock | 38s | 36s |
 
-Two independent conventions in the block moved, and both moved the way the
-block asks. The spelling convention is the stronger evidence of the two: nothing
-in the measurement was designed around it, it was counted afterwards, and it
-reverses a 29-to-6 split into a 34-to-5 one.
+**The opening claim is exact, and it is narrower than "the formula is gone."**
+No styled abstract opens with the formula. Two of the ten still contain it
+later in the paragraph — displaced rather than removed. The move is large
+either way, 10 of 10 to 2 of 10 on presence, but the honest headline is about
+where the sentence starts, not about whether the phrase survives.
+
+**The spelling count is not evidence that style changed how the prose reads.**
+Convention 8 names the token: "Spelling and punctuation follow British
+convention (-ise, organisation, judgement)". Counting `-ise` after the fact does
+not undo the block naming the string — it measures instruction-following on a
+literal the instruction supplies. What it does prove, and proves more cleanly
+than anything else here, is **arrival**: the block's text physically reached the
+model and was acted on. Take it as the arrival check and nothing more.
+
+**The opening-formula count is therefore the sole evidence of a style effect
+the block did not dictate word for word.** One count, one convention, n=10.
+
+**One styled abstract kept American spelling entirely.** `408378f2e286fff2`
+came back at 0 `-ise` against 5 `-ize` while the other nine switched. One of
+the nine conventions did not land in 1 of 10 runs, and nothing in the system
+catches that — there is no checker, by design. A blinded verifier, told nothing
+about which arm was which, independently picked out that same abstract as the
+one missing the spelling tell.
 
 **The control reproduced slice 04's finding exactly** — 10 of 10, on a different
 day, against the same records. The signal is stable, which is what makes the
@@ -78,8 +102,18 @@ Syrian political economy is best understood
 Sovereignty in quasi-states is neither a
 ```
 
-Ten different openings, every one on the paper's subject. The failure worth
-looking for here was a new uniformity replacing the old one; it did not happen.
+Ten different openings, every one on the paper's subject. Across papers, the
+failure worth looking for — a new uniformity replacing the old one — did not
+happen.
+
+**Within one paper it did.** A blinded reader found it in the styled
+`data/papers/a1039fad4da31320.md`: the abstract, the introduction and the first
+section all open on the same frame applied to the same subject, and the
+abstract and the first section share nine consecutive words. The old formula
+was replaced by a new one — each prompt applies the convention blind to its
+neighbours, so a good instruction became a tic. The unstyled openings at least
+varied. Convention 2 has been amended to name that failure; this measurement
+predates the amendment and does not test it.
 
 ## The abstract still does its job
 
@@ -111,6 +145,21 @@ open-question rule is holding there too.
   owns and edits. This measures that the mechanism carries it, not that its nine
   entries are the correct nine.
 - **Anything at all about a second domain.** There is one domain frame, `syria`.
+- **Whether the conventions are worth their cost.** They cost something. Losing
+  "This paper argues that" also loses the frame that marks a thesis as
+  contested: the unstyled "This paper argues that sectarian exclusion… was
+  produced through a struggle over political order" becomes the styled
+  "Sectarian exclusion in Syria after 2011 functioned primarily as an
+  instrument of political order" — a contested claim rendered as a flat
+  assertion. That is a trade, not a defect, and it is the founder's to price.
+
+**A blinded verifier called 10 of 10 pairs correctly**, 8 at high confidence, on
+which member of each pair was written under the conventions. That is the
+strongest evidence in this slice that the block reaches the writer. It is also
+mechanical rather than judged: two regexes — the opening formula and `-ise`
+against `-ize` — score 9 of the same 10 on their own. Read it as arrival
+confirmed by a second, independent method, not as a reader preferring the
+styled prose.
 
 ## Files
 
