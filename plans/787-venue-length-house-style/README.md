@@ -87,6 +87,29 @@ anything that costs money.
   tests in ~40s) and `uv run ruff check`, which no gate runs for you. The full
   `tests/` tree takes ~55 min serially — leave it to CI.
 
+## Measured 2026-08-18: dev briefs are the wrong substrate for judging writing quality
+
+Slice 01's acceptance run
+(`data/logs/2026-08-18-787-counter-position-steelman/`) drafted all nine
+`config/paper_briefs/dev/` briefs twice, on both arms, and `shape.band` came
+back `strong` on **35 of 35 successful drafts** with zero defects and a
+counter-position section planned in every one.
+
+The shape check is not broken. It returned `weak`, with a named
+counter-position defect, on `data/papers/ca17d6077c1a7f5e.json` -- the paper
+`axial ask` drafted from a real analyst question. It discriminates fine. The
+dev briefs are simply all easy: each carries a hand-written thesis and every
+one plans a clean counter-position.
+
+**This binds every slice in this feature, not just 01.** Any slice whose bar is
+a judged property of the writing -- the counter-position, the abstract's
+quality, whether house style changed anything -- must be measured against real
+asks, and a null on the dev briefs must be read as "the instrument could not
+tell", never as "the change worked".
+
+Two consequences already applied: slice 02's measurement section is rewritten,
+and slices 04 and 05 should have theirs reviewed before they are built.
+
 ## Notes / open questions
 
 - **The sharper instrument for slice 01 already exists, and the ruling did not

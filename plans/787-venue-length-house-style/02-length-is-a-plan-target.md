@@ -77,7 +77,7 @@ edits: src/axial/paper/plan.py
 edits: src/axial/paper/draft.py
 edits: src/axial/paper/record.py
 creates: tests/paper/test_length_target.py
-creates: src/axial/paper/test_plan_length_allocation.py
+creates: tests/paper/test_plan_length_allocation.py
 depends-on: 01-counter-position-at-its-strongest
 ```
 
@@ -93,11 +93,37 @@ depends-on: 01-counter-position-at-its-strongest
 
 ## The measurement that closes the slice
 
-Same shape as slice 01, and it must re-check slice 01's gain: the steelman
-verdict and `shape.band` across the same five dev briefs, three draws, at a
-target length and without one. **A length target that reintroduces the strawman
-has not shipped**, however close its word count lands. Log under
-`data/logs/<date>-787-length-target/`, records copied in first.
+**Rewritten 2026-08-18, after slice 01's measurement refuted the bar this
+section originally carried.** It previously asked for `shape.band` across five
+dev briefs. That run happened
+(`data/logs/2026-08-18-787-counter-position-steelman/`) and returned `strong`
+on **35 of 35 drafts across both arms**. A metric that never varies cannot
+report an improvement or a regression, so that bar was unmeasurable here.
+
+The bar now splits in two, and only half of it needs a model at all.
+
+**The primary claim has an oracle, so it is a test, not a judgement.** Does the
+rendered paper land within a stated tolerance of `target_words`, and did any
+text get cut after drafting? Both are countable. Assert them in the acceptance
+test and no judge is involved.
+
+**Only the regression check needs a model**, and it should not be
+`shape.band`. Use the bounded steelman/strawman verdict in
+`src/axial/validators/counter_position.py` -- a binary judgement on the
+counter-position section itself, rather than a three-value band over the whole
+paper. It discriminates where the band cannot. **A length target that
+reintroduces the strawman has not shipped**, however close its word count
+lands.
+
+**Run it against real asks, not the dev briefs.** The same slice-01 run
+established that the nine dev briefs are the wrong substrate for judging
+writing quality: each carries a hand-written thesis, every one plans a clean
+counter-position, and all of them pass. The defect that motivated this work
+came from `axial ask` on a real analyst question. Reuse
+`run_787_ask_arm.py`'s shape from slice 01 rather than the brief driver.
+
+Log under `data/logs/<date>-787-length-target/`, with the paper records copied
+in before the first arm.
 
 ## Out of scope for this slice (deferred)
 

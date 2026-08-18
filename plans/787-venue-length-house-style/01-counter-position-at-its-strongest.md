@@ -96,7 +96,7 @@ against.
 slice: 01-counter-position-at-its-strongest
 edits: src/axial/paper/draft.py
 creates: tests/paper/test_counter_position_drafting.py
-creates: src/axial/paper/test_draft_counter_position.py
+creates: tests/paper/test_draft_counter_position.py
 ```
 
 ## Inner loop — initial unit test list

@@ -58,7 +58,7 @@ slice: 05-house-style-is-domain-data
 edits: src/axial/paper/draft.py
 edits: config/domains/default/schema.yaml
 creates: tests/paper/test_house_style.py
-creates: src/axial/paper/test_draft_house_style.py
+creates: tests/paper/test_draft_house_style.py
 depends-on: 02-length-is-a-plan-target
 ```
 
