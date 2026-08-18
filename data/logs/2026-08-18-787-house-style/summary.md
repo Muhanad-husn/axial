@@ -112,8 +112,51 @@ section all open on the same frame applied to the same subject, and the
 abstract and the first section share nine consecutive words. The old formula
 was replaced by a new one — each prompt applies the convention blind to its
 neighbours, so a good instruction became a tic. The unstyled openings at least
-varied. Convention 2 has been amended to name that failure; this measurement
-predates the amendment and does not test it.
+varied. Convention 2 has been amended to name that failure. **The two-arm
+measurement above predates the amendment**; a separate confirmation run of the
+styled arm alone was made afterwards, and is reported below rather than folded
+into the table.
+
+## Confirmation run, after convention 2 was amended
+
+The amendment adds, to "open with substance": *"A stock frame applied to the
+subject is still a formula: open on the particular thing being said here, not on
+a shape that would fit any paragraph about this topic. Where consecutive
+passages share a subject, they must not share an opening shape."*
+
+It would otherwise ship without ever having been run. One styled arm, $0.0280,
+10 of 10 generated. **This is a confirmation run, not the measurement** — the
+table above is the measurement, and it was taken before anyone had read the
+output.
+
+| | pre-amendment | amended |
+|---|---|---|
+| **Opens with the formula** | **0 of 10** | **0 of 10** |
+| Formula anywhere in the abstract | 2 of 10 | **4 of 10** |
+| `-ise`/`-isation` tokens | 34 | 41 |
+| `-ize`/`-ization` tokens | 5 | **1** |
+
+**Mixed, and reported as mixed.**
+
+- **The headline claim holds.** No abstract opens with the formula, in either
+  version of the block.
+- **The spelling hold-out closed.** `408378f2e286fff2` — the one abstract that
+  kept American spelling entirely, which a blinded verifier picked out without
+  being told — comes back with "unrecognised" this time, and `-ize` across the
+  set drops from 5 tokens to 1. The amendment did not touch convention 8, so
+  this is a different draw of the same instruction rather than a fix: read it as
+  evidence that the 1-in-10 miss was variance, not that it is now solved.
+- **The formula surviving deeper in the paragraph got worse, 2 of 10 to 4 of
+  10.** The amendment targets the *shape* an opening takes, not the phrase, so
+  the phrase migrating further down is a coherent thing to have happened. But it
+  moved the wrong way and it should not be explained away: on 10 samples of a
+  stochastic model, a 2-versus-4 difference is not a powered comparison, and
+  nothing here separates "the amendment pushed it deeper" from "this is what a
+  second draw looks like."
+
+Whether the amendment is worth keeping on that evidence is the founder's call.
+It is one line of domain data, editable by whoever owns the domain, and it is
+not load-bearing for anything in `src/`.
 
 ## The abstract still does its job
 

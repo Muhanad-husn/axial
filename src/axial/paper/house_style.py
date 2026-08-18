@@ -42,10 +42,16 @@ HOUSE_STYLE_FILENAME = "house_style.yaml"
 
 # How the block introduces itself to a model. Framing, not content: what the
 # conventions ARE lives in the domain file and only there.
+#
+# "any instruction", not "an instruction above": the block is interpolated
+# BEFORE the new-claims rules in `compose_draft_prompt`, so a disclaimer
+# scoped to what precedes it would exclude the kind-(b) and kind-(c) rules --
+# exactly the grounds-and-markers instructions it most needs to bind. The two
+# prompts also site the block differently, and one wording has to cover both.
 _PROMPT_HEADER = (
     "House style -- the conventions this domain's papers are written to. They "
     "govern how the prose reads, never what it argues, and nothing here "
-    "overrides an instruction above about grounds, markers or honesty:"
+    "overrides any instruction about grounds, markers or honesty:"
 )
 
 

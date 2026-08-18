@@ -11,6 +11,16 @@ and a paid measurement over ten real papers -- so the goldens under
 slice branched from, and are compared byte for byte. A diff there is a
 failure of the change, never a golden to update.
 
+**Why one golden per prompt covers every branch, rather than four.** The seam
+is a single f-string interpolation of `prompt_block(house_style)`, which
+returns `""` for nothing -- so byte-identity on one role/word-budget
+combination implies it on all of them. A parametrised test over the role x
+word-budget matrix stood here until it was noticed that it compared an
+explicit `house_style=None` against an omitted argument whose default IS
+`None`: the two calls were identical by construction and the assertion could
+not fail, whatever the seam did. It was deleted rather than expanded, because
+four more goldens would buy what the interpolation already guarantees.
+
 The goldens are read with `Path.read_text`, whose universal-newline
 translation returns LF on this repo's `core.autocrlf: true` checkout as well
 as on CI's Linux runner, so the comparison is against the bytes that were
@@ -20,8 +30,6 @@ composed rather than against whatever git handed the working tree.
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from axial.paper.abstract import compose_abstract_prompt
 from axial.paper.draft import compose_draft_prompt
@@ -90,38 +98,6 @@ def test_omitting_the_argument_entirely_composes_the_same_two_prompts():
         "draft"
     )
     assert compose_abstract_prompt(THESIS, ABSTRACT_SECTIONS) == _golden("abstract")
-
-
-@pytest.mark.parametrize("word_budget", [None, 650])
-@pytest.mark.parametrize("role", ["claim", "counter-position"])
-def test_no_house_style_leaves_every_other_prompt_branch_untouched(role, word_budget):
-    """The seam is one insertion point, so an absent block has to be a no-op
-    on the branches slices 01 and 02 already pinned, not only on the golden's
-    own combination."""
-    section = Section(
-        section_id="s3",
-        heading="Rent dependence",
-        role=role,
-        assigned_claims=SECTION.assigned_claims,
-    )
-    with_argument = compose_draft_prompt(
-        THESIS,
-        LENS,
-        section,
-        SECTION_CLAIMS,
-        EARLIER_CLAIMS,
-        word_budget=word_budget,
-        house_style=None,
-    )
-    without_argument = compose_draft_prompt(
-        THESIS,
-        LENS,
-        section,
-        SECTION_CLAIMS,
-        EARLIER_CLAIMS,
-        word_budget=word_budget,
-    )
-    assert with_argument == without_argument
 
 
 # ---------------------------------------------------------------------------
