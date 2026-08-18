@@ -143,14 +143,21 @@ harness writes no record, but the copies are what the eye-read is quoted from.
 - [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
 - [x] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
 - [x] Refactor pass complete with the bar green.
-- [ ] Measured per the section below, and the abstracts read by eye. Logged under
-      `data/logs/<date>-787-abstract/`.
+- [x] Measured per the section below, and the abstracts read by eye. Logged under
+      `data/logs/2026-08-18-787-abstract/` — 10 of 10 state the argument, 0 markers,
+      0 citations, $0.0257, 35s.
 - [ ] Slice's tests run in CI (`tdd-ci`).
 - [ ] Evidence collected and PR opened into `main` (`safe-pr`).
 
 ## Status / progress log
 
 - 2026-08-18 planned.
+- 2026-08-18 measurement section reviewed before building (`1ca3e15`); the pass
+  sited on its own rather than on the shape check.
+- 2026-08-18 built green at `fd37703`; 2,525 tests, ruff clean.
+- 2026-08-18 measured over all 10 records in `data/papers/`: 10 of 10 state the
+  paper's own argument, none describes the sources. Every one opens with the
+  identical five words, which is slice 05's business.
 - 2026-08-18 built on `feat/787-venue-length-house-style/04-every-paper-carries-an-abstract`.
   `uv run pytest` 2,525 passed; `uv run ruff check` clean; `tests/paper`,
   `tests/analysis`, `tests/service/test_ask_ends_in_an_essay.py` green.

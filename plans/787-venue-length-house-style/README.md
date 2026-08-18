@@ -31,7 +31,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | 01 | [counter-position-at-its-strongest](01-counter-position-at-its-strongest.md) | The drafter is told what a counter-position section is for, so it stops introducing the opposing view already diminished | ☑ merged | #798 |
 | 02 | [length-is-a-plan-target](02-length-is-a-plan-target.md) | A brief may set a target word count, and the planner allocates sections to it instead of the paper being truncated afterwards | ☑ merged | #799 |
 | 03 | [apa-citations-and-bibliography](03-apa-citations-and-bibliography.md) | The reader-facing paper cites and lists its sources in APA | ☑ merged | #796 |
-| 04 | [every-paper-carries-an-abstract](04-every-paper-carries-an-abstract.md) | A finished paper opens with a ~200-word abstract of the argument it actually made | ☐ todo | — |
+| 04 | [every-paper-carries-an-abstract](04-every-paper-carries-an-abstract.md) | A finished paper opens with a ~200-word abstract of the argument it actually made | ☑ measured | — |
 | 05 | [house-style-is-domain-data](05-house-style-is-domain-data.md) | House style reaches the drafter from `config/domains/<domain>/`, as context and never as a gate | ☐ todo | — |
 
 ## Dependency order
