@@ -43,7 +43,7 @@ import sys
 from dataclasses import dataclass, replace
 from typing import Any
 
-from axial.llm import PAPER_DRAFT_PASS_NAME
+from axial.llm import PAPER_DRAFT_PASS_NAME, EventCallback, emit_event
 from axial.model_json import complete_json, parse_model_json
 from axial.paper.claims import MIN_DISTINCT_RECORDS
 from axial.paper.lens import Lens
@@ -491,11 +491,26 @@ def draft_section(
     claims_by_id: dict[str, dict[str, Any]],
     already_cited: list[dict[str, Any]],
     cross_source_possible: bool = True,
+    on_event: EventCallback | None = None,
 ) -> SectionDraft:
     """One section, with a bounded retry (issue #598) on `DraftError` --
     `DraftParseError`, the new-claim validation errors, and the §7.4 span
     check on a proposed (b) claim (issue #616), which used to run only after
-    this function returned and was fatal on the first occurrence."""
+    this function returned and was fatal on the first occurrence.
+
+    `on_event` (issue #784 slice 03) narrates a retry alongside the existing
+    `_log_draft_retry` stderr line, not instead of it -- that line is a
+    structured record `tests/paper/test_paper_retry.py` pins, and this is a
+    plain sentence for a walk to show while a retried section is taking
+    multiples of a section's usual time. A retried section takes longer, not
+    less predictable time, and a walk that says nothing during it reads as a
+    stall rather than as work.
+
+    That sentence names no exception class. The failure's type goes in
+    `detail.reason`, which is operator-facing, because an internal class name
+    inline in plain English reads to an analyst as an error surfacing rather
+    than as work being redone -- the one line in this narration most likely
+    to be misread that way."""
     visible = {claim_ids[key] for key in section.assigned_claims}
     visible.update(str(claim.get("paper_claim_id")) for claim in already_cited)
     base_prompt = compose_draft_prompt(
@@ -517,6 +532,20 @@ def draft_section(
             if attempt == _MAX_ATTEMPTS:
                 raise
             _log_draft_retry(section.section_id, attempt, exc)
+            emit_event(
+                on_event,
+                f"rewriting the '{section.heading}' section -- "
+                f"attempt {attempt} of {_MAX_ATTEMPTS} came back unusable",
+                {
+                    "stage": "draft",
+                    "event": "retry",
+                    "section_id": section.section_id,
+                    "heading": section.heading,
+                    "attempt": attempt,
+                    "max_attempts": _MAX_ATTEMPTS,
+                    "reason": type(exc).__name__,
+                },
+            )
             prompt = _draft_retry_prompt(base_prompt, exc, attempt)
             continue
         return replace(draft, retries=attempt - 1)

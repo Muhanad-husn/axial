@@ -256,7 +256,9 @@ def run_ask_job(
     # Drafted BEFORE the cache is written, so the entry a later hit reads
     # carries the essay as well as the answer -- one insert, never a record
     # cached now and an essay attached to it later.
-    essay = _draft_the_essay(job, turn, client=client, store=store, work_dir=work_dir)
+    essay = _draft_the_essay(
+        job, turn, client=client, store=store, work_dir=work_dir, on_event=on_event
+    )
 
     if cache is not None:
         cache.store(
@@ -373,9 +375,17 @@ def _draft_the_essay(
     client: LLMClient,
     store: JobStore,
     work_dir: Path,
+    on_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> _EssayOutcome:
     """Draft the paper this ask ends in (issue #784) and record where it
     landed.
+
+    `on_event` (issue #784 slice 03) is the same closure `run_ask_job` wires
+    the analysis stages through, threaded straight to `draft_paper_for_turn`
+    -> `run_paper`: the arc it planned and each section as it finishes land
+    in `job_events` under this job's own id, continuing the same monotonic
+    `seq` the analysis events already used, so `GET /asks/{id}/events` stays
+    live through the last minute of a run rather than going quiet at `check`.
 
     **A drafting failure does not fail the ask.** The analysis is already
     persisted and already paid for, and losing it because the essay drawn
@@ -398,6 +408,7 @@ def _draft_the_essay(
         paper_record = draft_paper_for_turn(
             client,
             turn,
+            on_event=on_event,
             analyses_dir=turn.result.path.parent,
             papers_dir=papers_dir,
         )

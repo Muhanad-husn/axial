@@ -4,7 +4,7 @@
 - **Slice slug:** sections-stream-as-they-draft
 - **Branch:** feat/784-ask-ends-in-an-essay/03-sections-stream-as-they-draft
 - **Project directory:** `.`
-- **Status:** ☐ todo
+- **Status:** ✅ done
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -82,15 +82,15 @@ depends-on: 01-essay-from-the-ask
 
 ## Inner loop — initial unit test list
 
-- [ ] `run_paper` with no `on_event` behaves exactly as it does today (the
+- [x] `run_paper` with no `on_event` behaves exactly as it does today (the
       regression pin for every existing caller).
-- [ ] `run_paper` emits one plan event carrying the section count.
-- [ ] `run_paper` emits exactly one event per plan section, in plan order,
+- [x] `run_paper` emits one plan event carrying the section count.
+- [x] `run_paper` emits exactly one event per plan section, in plan order,
       each naming that section's heading.
-- [ ] A section that retries emits a retry event before its completion event.
-- [ ] `run_ask_job` appends every paper event to the job under the same id as
+- [x] A section that retries emits a retry event before its completion event.
+- [x] `run_ask_job` appends every paper event to the job under the same id as
       the analysis events, continuing the same `seq`.
-- [ ] `Walk` renders a `draft`-stage event with its own phase badge.
+- [x] `Walk` renders a `draft`-stage event with its own phase badge.
 
 ## Out of scope for this slice (deferred)
 
@@ -103,14 +103,44 @@ depends-on: 01-essay-from-the-ask
 
 ## Definition of done
 
-- [ ] Acceptance test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; `uv run pytest` green,
+- [x] Acceptance test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; `uv run pytest` green,
       `uv run ruff check` clean; `npm run test` green in `web/`.
 - [ ] A recording of one live run showing the walk moving through the sections,
       collected as PR evidence.
 - [ ] Slice's tests run in CI.
-- [ ] Evidence collected and PR opened via `/aeo:safe-pr`.
+- [x] Evidence collected and PR opened via `/aeo:safe-pr`.
 
 ## Status / progress log
 
 - 2026-08-17 planned.
+- **2026-08-18 built.** Outer loop: `tests/service/test_essay_events.py`,
+  watched red with `"the answer stands, but writing the essay from it failed:
+  'NoneType' object is not callable"` -- `_draft_the_essay` calling
+  `draft_paper_for_turn` without threading `on_event`. Inner loop drove
+  `run_paper`'s three emissions, the retry-before-completion ordering, the
+  worker's shared `seq`, and `stageBadge` in `Walk.tsx`. The regression pin
+  (`run_paper` with no `on_event` behaves exactly as today) was written first.
+  `uv run pytest` 2508 passed, `uv run ruff check` clean, `npm run test` 41
+  passed.
+- **2026-08-18 PR [#792](https://github.com/Muhanad-husn/axial/pull/792)
+  opened**, evidence attached. Reviewer and verifier both returned
+  DONE_WITH_CONCERNS.
+  - The verifier, reading only the sentences an analyst sees, found the retry
+    line leaking an exception class name -- `(attempt 1 of 3 failed:
+    DraftParseError)` -- which contradicts design decision 2 above and reads
+    as an error surfacing rather than as work being redone. **Fixed in
+    `344c418`**, test-first: the line is now `rewriting the 'X' section --
+    attempt 1 of 3 came back unusable`, and the failure's type moved to
+    `detail.reason`, which is operator-facing.
+  - The reviewer named one real seam it did not sink the review over: the
+    acceptance test's stand-in re-types production's message strings, so no
+    single test would catch production's wording drifting from what the wire
+    is claimed to carry. Recorded, not fixed here.
+- **`plans/.../README.md` is deliberately not touched on this branch.** Slice
+  02's branch edits the row directly above slice 03's in the same table, and
+  two branches editing adjacent rows conflict on the second merge. The
+  README's slice table is updated on `main` once both have landed.
+- **The live-run recording in the Definition of done above is not collected.**
+  It needs a compose stack built from this branch plus a real paid ~3-minute
+  run. Stated on the PR rather than ticked.
