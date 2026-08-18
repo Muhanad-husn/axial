@@ -12,8 +12,14 @@ export default defineConfig({
   },
   test: {
     // Unit tests sit beside the module they pin. `e2e/` is Playwright's and
-    // must not be swept in by vitest's default `*.spec.ts` glob.
-    include: ["src/**/*.test.ts"],
+    // must not be swept in by vitest's default `*.spec.ts` glob. `.tsx`
+    // joined the glob for the component tests issue #784 adds
+    // (`Essay.test.tsx`, `Paper.test.tsx`) -- the first in this repo to
+    // render a component rather than exercise a plain module. Every prior
+    // `.test.ts` file stays on the `node` environment declared here; each
+    // new `.test.tsx` opts into `jsdom` itself with a `// @vitest-environment
+    // jsdom` docblock, so this default is unchanged for everything else.
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "node",
   },
 });

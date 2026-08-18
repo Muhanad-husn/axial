@@ -43,6 +43,15 @@
  * /asks` and reopening have something to show without driving a live ask
  * through the SSE flow first: a plain `done` row, a `cached` (free) one,
  * and a `failed` one carrying the service's own error text.
+ *
+ * The case `"Beirut"` additionally carries an `essay` (issue #784) --
+ * markdown shaped exactly like `axial.paper.reader.render_reader_paper`'s
+ * real output (a `#` thesis, `##` sections, a `##` Bibliography), reusing
+ * the same three claims every other case carries so a test can assert the
+ * claim list opened from behind the disclosure is the identical fixture
+ * `paper.spec.ts` already asserts against directly. Every other case omits
+ * `essay` entirely -- the pre-existing shape, and the one `paper.spec.ts`
+ * (unedited by this issue) still exercises.
  */
 
 import { createServer } from "node:http";
@@ -226,7 +235,38 @@ function paperFor(job) {
     },
   };
 
-  return { record, metrics };
+  const payload = { record, metrics };
+  const essay = essayFor(job);
+  if (essay) payload.essay = essay;
+  return payload;
+}
+
+// The essay for `job` (issue #784), or `undefined` for every case but
+// `"Beirut"` -- `undefined` so `JSON.stringify` drops the key rather than
+// sending it `null`, matching the real service's "absent, not null" rule.
+function essayFor(job) {
+  if (job.case !== "Beirut") return undefined;
+  return [
+    "# Mandate recruitment set the pattern the Ba'th later inherited.",
+    "",
+    "## What the question asks",
+    "",
+    "The question is what the mandate left behind in how power was staffed.",
+    "",
+    "## The mandate's bureaucracy",
+    "",
+    "Batatu records that recruitment into the Troupes Spéciales drew disproportionately from the Alawi highlands (Batatu 1999).",
+    "",
+    "## Reading Batatu against Vignal",
+    "",
+    "Read together, Batatu and Vignal describe the same pattern but disagree on what it explains (Batatu 1999; Vignal 2022).",
+    "",
+    "## Bibliography",
+    "",
+    "- Batatu (1999)",
+    "- Vignal (2022)",
+    "",
+  ].join("\n");
 }
 
 function exportContentFor(job, format) {

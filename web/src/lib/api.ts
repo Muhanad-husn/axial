@@ -272,9 +272,18 @@ export interface Metrics {
   confidence: ConfidenceBlock | null;
 }
 
+/** `essay` is the reader-facing render of the Phase C paper an ask ends in
+ * (issue #784, `axial.paper.reader.render_reader_paper`) -- markdown, a
+ * thesis and its sections in plan order. **Absent, not null**, exactly like
+ * `AnalysisRecord.interrogation.refusal`: a refused ask drafts no paper, and
+ * a drafting failure leaves the analysis standing without one. The server
+ * also sends `paper` (the §7.3 record the essay was built from) beside it;
+ * this client has no use for it yet -- `Paper.tsx` renders the markdown
+ * directly and the claim list it discloses is still `record.claims`. */
 export interface PaperResponse {
   record: AnalysisRecord;
   metrics: Metrics;
+  essay?: string;
 }
 
 export async function getPaper(id: string, signal?: AbortSignal): Promise<PaperResponse> {
