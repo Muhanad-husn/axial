@@ -59,7 +59,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 |---|-------|-----------------|--------|----|
 | 01 | [essay-from-the-ask](01-essay-from-the-ask.md) | A finished ask serves its essay from the API, cost included | ✅ done | [#791](https://github.com/Muhanad-husn/axial/pull/791) |
 | 02 | [essay-is-the-answer](02-essay-is-the-answer.md) | The web client shows the essay; the claim list moves behind disclosure | ✅ done | [#793](https://github.com/Muhanad-husn/axial/pull/793) |
-| 03 | [sections-stream-as-they-draft](03-sections-stream-as-they-draft.md) | Planning and each drafted section reach the walk over SSE | ☐ todo | — |
+| 03 | [sections-stream-as-they-draft](03-sections-stream-as-they-draft.md) | Planning and each drafted section reach the walk over SSE | ✅ done | [#792](https://github.com/Muhanad-husn/axial/pull/792) |
 
 Slices 02 and 03 share no file and may be built concurrently once 01 has
 landed — checked with `independence.mjs`, which reports the pair
