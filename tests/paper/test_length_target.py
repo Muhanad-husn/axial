@@ -282,7 +282,12 @@ def _prose(n_words: int, marker: str) -> str:
 
 
 class StubClient(StubLLMClient):
-    model_by_pass = {"paper_plan": "stub/plan", "paper_draft": "stub/draft", "paper_shape": "stub/shape"}
+    model_by_pass = {
+        "paper_plan": "stub/plan",
+        "paper_draft": "stub/draft",
+        "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
+    }
 
     def __init__(self, plan, drafts, shape=None):
         super().__init__()
@@ -297,6 +302,8 @@ class StubClient(StubLLMClient):
             return json.dumps(self._plan)
         if pass_name == "paper_shape":
             return json.dumps(self._shape)
+        if pass_name == "paper_abstract":
+            return json.dumps({"abstract": "This paper argues its own case."})
         return json.dumps(self._drafts.pop(0))
 
     def model_for_pass(self, pass_name=None):

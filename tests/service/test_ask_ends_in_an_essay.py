@@ -146,6 +146,7 @@ class PaperStubClient(StubLLMClient):
         "paper_plan": "deepseek/deepseek-v4-flash",
         "paper_draft": "deepseek/deepseek-v4-flash",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }
 
     def __init__(self) -> None:
@@ -159,6 +160,8 @@ class PaperStubClient(StubLLMClient):
             return json.dumps(PLAN)
         if pass_name == "paper_shape":
             return json.dumps({"band": "strong", "defects": []})
+        if pass_name == "paper_abstract":
+            return json.dumps({"abstract": "This paper argues its own case."})
         return json.dumps(self._drafts.pop(0))
 
     def model_for_pass(self, pass_name=None):
@@ -293,7 +296,12 @@ def test_the_asks_reported_cost_includes_the_drafting_passes(
     # reported spend is strictly more than that because the drafting passes
     # this ask also made are counted.
     assert usage["month_to_date"]["cost_usd"] > 0.02
-    assert set(paper["cost"]["by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+    assert set(paper["cost"]["by_pass"]) == {
+        "paper_plan",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    }
     assert client_stub.passes.count("paper_draft") == len(PLAN["sections"])
 
 

@@ -24,10 +24,16 @@ than waiting on claims, citations or coverage that have nothing to do with
 its question. It reports a band and any named defects onto the record; it
 never blocks `run_paper`, which is `axial.cli._paper_draft`'s job to act on.
 
+**The abstract pass (§7.18, issue #787) runs immediately after it**, over the
+same two inputs, for the same reason: an abstract summarises the paper that
+exists, not the one that was planned. Unlike the shape check it is caught --
+`AbstractError` leaves `abstract` null and the drafted paper intact, because
+an unusable 200 words is not worth discarding a whole run's drafting calls.
+
 **`cost` and `model_by_pass` are recorded per pass** (issue #591), scoped to
-Phase C's own three passes -- planning, drafting, the shape check -- never
-to `client`'s whole configured mapping, so a paper's spend is attributable
-to planning versus drafting versus the shape check, and so §7.7's vendor
+Phase C's own passes -- planning, drafting, the shape check, the abstract --
+never to `client`'s whole configured mapping, so a paper's spend is
+attributable pass by pass rather than in one figure, and so §7.7's vendor
 guard has something to read when the panel later scores this paper. `cost`
 is computed by `axial.llm.usage_and_cost_by_pass`, the same function
 `axial.answer.record.build_record` uses for its own §7.14 field (promoted
@@ -41,8 +47,8 @@ not a measurement -- only when it did not (issue #740).
 `draft_section` each carry their own bounded retry now, and this is where
 their counts surface -- `plan.retries` directly, and drafting's summed
 across every section's call, since they all share one pass name and one
-budget. Scoped to the same two passes that are actually retried; the shape
-check never is, so it carries no entry.
+budget. Scoped to the same two passes that are actually retried; neither the
+shape check nor the abstract ever is, so neither carries an entry.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from axial.llm import (
+    PAPER_ABSTRACT_PASS_NAME,
     PAPER_DRAFT_PASS_NAME,
     PAPER_PLAN_PASS_NAME,
     PAPER_SHAPE_PASS_NAME,
@@ -60,6 +67,7 @@ from axial.llm import (
     emit_event,
     usage_and_cost_by_pass,
 )
+from axial.paper.abstract import AbstractError, run_abstract
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
 from axial.paper.brief import PaperBrief
 from axial.paper.citations import build_citation_index, markers_in, reduce_to_cited
@@ -275,19 +283,27 @@ def run_paper(
     # never blocks. Reads only the plan's stated intent and the drafted
     # prose -- nothing claims/citations/coverage produce below this point.
     prose_by_section = {draft.section_id: draft.prose for draft in drafts}
-    shape_result = run_shape_check(
-        client,
-        plan.thesis_statement,
-        [
-            {
-                "section_id": section.section_id,
-                "heading": section.heading,
-                "role": section.role,
-                "prose": prose_by_section.get(section.section_id, ""),
-            }
-            for section in plan.sections
-        ],
-    )
+    drafted_sections = [
+        {
+            "section_id": section.section_id,
+            "heading": section.heading,
+            "role": section.role,
+            "prose": prose_by_section.get(section.section_id, ""),
+        }
+        for section in plan.sections
+    ]
+    shape_result = run_shape_check(client, plan.thesis_statement, drafted_sections)
+
+    # The second post-draft pass (§7.18, issue #787 slice 04), over the same
+    # two inputs: an abstract summarises the paper that exists, not the one
+    # that was planned. It reports and never blocks -- an unusable response
+    # leaves `abstract` null rather than turning a fully drafted paper into a
+    # failed run. Only `AbstractError` is caught: a transport failure is not
+    # a fact about this pass and propagates like any other pass's.
+    try:
+        abstract_result = run_abstract(client, plan.thesis_statement, drafted_sections)
+    except AbstractError:
+        abstract_result = None
 
     citations = build_citation_index(
         [{"section_id": draft.section_id, "prose": draft.prose} for draft in drafts],
@@ -310,9 +326,9 @@ def run_paper(
     confidence = overall_confidence(coverage_map, intake.records)
     bibliography = build_bibliography(claims, source_meta_dir=source_meta_dir, vault_dir=vault_dir)
 
-    # Scoped to Phase C's own three passes -- planning, drafting, the shape
-    # check, which (unlike the counter-position pass on the Phase-B side)
-    # always runs exactly once per paper, never conditionally -- rather than
+    # Scoped to Phase C's own passes -- planning, drafting, the shape check
+    # and the abstract, each of which (unlike the counter-position pass on
+    # the Phase-B side) runs exactly once per paper -- rather than
     # `client.model_by_pass`'s whole configured mapping, which would fold
     # every other Phase-B pass into the cost report at zero tokens each
     # (issue #591).
@@ -321,13 +337,19 @@ def run_paper(
         PAPER_DRAFT_PASS_NAME: client.model_for_pass(PAPER_DRAFT_PASS_NAME),
         PAPER_SHAPE_PASS_NAME: shape_result.model,
     }
+    # Named only when the pass produced something. A run whose abstract call
+    # came back unusable has no model to attribute the paper's abstract to,
+    # and naming one anyway would price a pass that contributed nothing.
+    if abstract_result is not None:
+        record_model_by_pass[PAPER_ABSTRACT_PASS_NAME] = abstract_result.model
 
     # Scoped to the two passes issue #598 actually retries -- planning
     # (`plan.retries`, set once by `run_plan`) and drafting (summed across
     # every section's `draft_section` call, since all of them share one
     # pass_name). The shape check is never retried, so it carries no entry
     # here rather than a hardcoded 0: a key that can never be non-zero is
-    # not a fact about this run. Visible in the same place as `cost` and
+    # not a fact about this run. The abstract pass carries none for the same
+    # reason (§7.18). Visible in the same place as `cost` and
     # `model_by_pass` so retry cost is visible alongside run cost (#591/#594).
     retries = {
         PAPER_PLAN_PASS_NAME: plan.retries,
@@ -349,6 +371,7 @@ def run_paper(
         "source_lenses": _source_lenses(intake),
         "source_analyses": list(intake.source_analyses),
         "plan": plan.to_json(),
+        "abstract": abstract_result.text if abstract_result is not None else None,
         "drafts": [{"section_id": draft.section_id, "prose": draft.prose} for draft in drafts],
         "claims": claims,
         "citations": [citation.to_json() for citation in citations],

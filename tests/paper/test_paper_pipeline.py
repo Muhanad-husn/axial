@@ -135,6 +135,7 @@ def lenses_dir(tmp_path: Path) -> Path:
 # for something else: `strong`, no defects -- the check does its own job
 # (issue #578) without perturbing tests that only care about earlier stages.
 SHAPE_RESPONSE = {"band": "strong", "defects": []}
+ABSTRACT_RESPONSE = "This paper argues that organized challengers explain the outcome."
 
 
 class StubClient(StubLLMClient):
@@ -147,13 +148,15 @@ class StubClient(StubLLMClient):
         "paper_plan": "stub/plan",
         "paper_draft": "stub/draft",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }
 
-    def __init__(self, plan, drafts, shape=None):
+    def __init__(self, plan, drafts, shape=None, abstract=ABSTRACT_RESPONSE):
         super().__init__()
         self._plan = plan
         self._drafts = list(drafts)
         self._shape = shape if shape is not None else SHAPE_RESPONSE
+        self._abstract = abstract
         self.prompts: list[tuple[str, str]] = []
 
     def complete(self, prompt, pass_name=None, **_):
@@ -162,6 +165,8 @@ class StubClient(StubLLMClient):
             return json.dumps(self._plan)
         if pass_name == "paper_shape":
             return json.dumps(self._shape)
+        if pass_name == "paper_abstract":
+            return json.dumps({"abstract": self._abstract})
         return json.dumps(self._drafts.pop(0))
 
     def model_for_pass(self, pass_name=None):
@@ -385,8 +390,13 @@ def test_the_shape_check_makes_exactly_one_call_after_every_draft(
     pass_names = [pass_name for pass_name, _ in client.prompts]
     shape_calls = [name for name in pass_names if name == "paper_shape"]
     assert len(shape_calls) == 1
-    # It runs after every draft call, not interleaved with them.
-    assert pass_names.index("paper_shape") == len(pass_names) - 1
+    # It runs after every draft call, not interleaved with them. It is no
+    # longer the LAST call of the run -- the §7.18 abstract pass follows it
+    # (issue #787 slice 04) -- so the bar is stated against drafting, which
+    # is what this criterion is about.
+    assert pass_names.index("paper_shape") > max(
+        index for index, name in enumerate(pass_names) if name == "paper_draft"
+    )
     assert pass_names.count("paper_draft") == len(PLAN["sections"])
 
 
@@ -484,6 +494,7 @@ class CostReportingStubClient(StubClient):
         "paper_plan": "deepseek/deepseek-v4-flash",
         "paper_draft": "deepseek/deepseek-v4-flash",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
         "interrogate": "deepseek/deepseek-v4-flash",
         "retrieve": "deepseek/deepseek-v4-flash",
         "synthesize": "deepseek/deepseek-v4-flash",
@@ -519,10 +530,20 @@ def test_the_cost_field_carries_real_usage_scoped_to_the_papers_own_passes(
 
     # Exactly Phase C's own passes -- not `{}`, and not the client's other
     # (Phase-B) configured passes.
-    assert set(record["model_by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
-    assert set(record["cost"]["by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+    assert set(record["model_by_pass"]) == {
+        "paper_plan",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    }
+    assert set(record["cost"]["by_pass"]) == {
+        "paper_plan",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    }
 
-    for pass_name in ("paper_plan", "paper_draft", "paper_shape"):
+    for pass_name in ("paper_plan", "paper_draft", "paper_shape", "paper_abstract"):
         entry = record["cost"]["by_pass"][pass_name]
         assert entry["prompt_tokens"] == 1000
         assert entry["completion_tokens"] == 500
@@ -551,7 +572,12 @@ def test_the_cost_field_is_never_empty_even_under_a_client_reporting_no_usage(
     never a bare `{}`."""
     record, _ = _run(tmp_path, analyses_dir, lenses_dir)
     assert record["cost"] != {}
-    assert set(record["cost"]["by_pass"]) == {"paper_plan", "paper_draft", "paper_shape"}
+    assert set(record["cost"]["by_pass"]) == {
+        "paper_plan",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    }
     for entry in record["cost"]["by_pass"].values():
         assert entry["prompt_tokens"] == 0
         assert entry["usd"] is None
@@ -829,6 +855,7 @@ def test_run_paper_with_no_on_event_behaves_exactly_as_today(tmp_path, analyses_
         "source_lenses",
         "source_analyses",
         "plan",
+        "abstract",
         "drafts",
         "claims",
         "citations",

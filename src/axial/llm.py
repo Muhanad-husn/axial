@@ -274,6 +274,12 @@ PRODUCTION_PAPER_DRAFT_TIER = "production_paper_draft"
 # PRODUCTION_PAPER_DRAFT_TIER (enforced at run time, not by this naming
 # alone: see PAPER_SHAPE_PASS_NAME's self-grading guard).
 PRODUCTION_PAPER_SHAPE_TIER = "production_paper_shape"
+# The abstract pass's own tier (issue #787 slice 04, specs/PHASE-C.md §7.18),
+# named separately on the same one-tier-per-pass rule as the three above. It
+# carries NO different-model constraint: the shape check grades the drafter's
+# prose and must not be the drafter, but this pass writes, and a writer
+# summarising its own argument is not self-grading.
+PRODUCTION_PAPER_ABSTRACT_TIER = "production_paper_abstract"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -421,6 +427,16 @@ PAPER_DRAFT_PASS_NAME = "paper_draft"
 # from SYNTHESIZE_PASS_NAME to PAPER_DRAFT_PASS_NAME because this check's
 # generating pass is drafting, not synthesis.
 PAPER_SHAPE_PASS_NAME = "paper_shape"
+
+# Pass name the post-draft abstract pass's single per-paper call identifies
+# itself with (see src/axial/paper/abstract.py, issue #787 slice 04,
+# specs/PHASE-C.md §7.18): one call after all section drafts complete, asking
+# for ~200 words summarising the argument the paper actually made. Same
+# out-of-band dispatch convention as CHUNK_PASS_NAME above -- naming this
+# constant is what makes the pass routable through `model_by_pass`. Unlike
+# PAPER_SHAPE_PASS_NAME it carries no self-grading guard: this pass writes
+# rather than grades, so it is free to resolve to the drafting model.
+PAPER_ABSTRACT_PASS_NAME = "paper_abstract"
 
 # Pass name the stage-5 counter-position validator's bounded steelman-quality
 # check identifies itself with (see src/axial/validators/counter_position.py,
@@ -2937,6 +2953,7 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_PAPER_PLAN_TIER: "production_paper_plan",
     PRODUCTION_PAPER_DRAFT_TIER: "production_paper_draft",
     PRODUCTION_PAPER_SHAPE_TIER: "production_paper_shape",
+    PRODUCTION_PAPER_ABSTRACT_TIER: "production_paper_abstract",
 }
 
 

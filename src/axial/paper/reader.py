@@ -9,9 +9,15 @@ the failure -- *"a reader who asked a question should never meet
 other half of that split: what a reader gets.
 
 **What it emits, and nothing else:** the title, the thesis statement, the
-planned sections in plan order with their prose, the counter-position, and
-a bibliography written the way a bibliography is written. No chunk id, no
-coverage band, no shape check, no provenance tag.
+abstract (§7.18, issue #787), the planned sections in plan order with their
+prose, the counter-position, and a bibliography written the way a
+bibliography is written. No chunk id, no coverage band, no shape check, no
+provenance tag.
+
+The abstract is emitted verbatim rather than through `replace_markers`
+below: its own prompt forbids markers and citations, and a stray one that
+slipped through belongs on the page as a visible defect, not silently
+promoted to a citation inside the block that is supposed to carry none.
 
 **In-text markers become citations.** The drafter writes `[pc-001]` after
 the sentence a claim supports; that is the paper's own claim id, as much a
@@ -40,6 +46,7 @@ from typing import Any
 
 from axial.cite import SHORT, format_bibliography_entry, format_citation
 from axial.paper.render import (
+    abstract_lines,
     counter_position_lines,
     drop_restated_heading,
     paper_title,
@@ -154,6 +161,14 @@ def render_reader_paper(record: dict[str, Any]) -> str:
     thesis_statement = plan.get("thesis_statement")
     if thesis_statement and str(thesis_statement) != title:
         lines.extend([str(thesis_statement), ""])
+
+    # Below the thesis line, not above it (§7.18). That line is title matter
+    # -- one sentence naming the paper's claim, emitted because the H1 would
+    # otherwise repeat it -- and putting a 200-word block between an H1 and
+    # the standfirst that exists to complement it separates the two things
+    # the reader reads together. The abstract is the first block of body
+    # prose, which is where a journal puts it.
+    lines.extend(abstract_lines(record))
 
     for section in plan_sections(record):
         heading = section.get("heading")

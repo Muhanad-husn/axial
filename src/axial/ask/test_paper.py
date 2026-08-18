@@ -89,6 +89,7 @@ class _StubClient(StubLLMClient):
         "paper_plan": "deepseek/deepseek-v4-flash",
         "paper_draft": "deepseek/deepseek-v4-flash",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }
 
     def __init__(self) -> None:
@@ -102,6 +103,8 @@ class _StubClient(StubLLMClient):
             return json.dumps(PLAN)
         if pass_name == "paper_shape":
             return json.dumps({"band": "strong", "defects": []})
+        if pass_name == "paper_abstract":
+            return json.dumps({"abstract": "The paper argues the bureaucracy was built."})
         return json.dumps(self._drafts.pop(0))
 
     def model_for_pass(self, pass_name=None):

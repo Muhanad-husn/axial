@@ -256,6 +256,13 @@ llm:
     # enforced at run time by the check's own self-grading guard, not by
     # config alone.
     paper_shape: production_paper_shape
+    # Phase-C's post-draft abstract pass (specs/PHASE-C.md §7.18, issue #787
+    # slice 04): its own tier, on the same one-tier-per-pass rule as the
+    # three above. It carries none of `paper_shape`'s different-model
+    # constraint -- that pass grades the drafter, this one writes -- so it
+    # may point at whatever model writes the best 200 words, including the
+    # drafting model itself.
+    paper_abstract: production_paper_abstract
     # Phase-C stage-2 arc planning (§7.12). Founder direction 2026-08-01:
     # upgraded off the default flash tier to pro, before any measurement
     # rather than after one. The reasoning §7.12 carried -- "it emits
