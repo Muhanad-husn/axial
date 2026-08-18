@@ -47,7 +47,7 @@ from axial.llm import PAPER_DRAFT_PASS_NAME, EventCallback, emit_event
 from axial.model_json import complete_json, parse_model_json
 from axial.paper.claims import MIN_DISTINCT_RECORDS
 from axial.paper.lens import Lens
-from axial.paper.plan import Plan, Section
+from axial.paper.plan import COUNTER_POSITION_ROLE, Plan, Section
 
 # Stable id prefix for a paper claim (§7.4: "stable, deterministic within a
 # run"). Numbered in plan order, so the same plan always numbers the same.
@@ -291,6 +291,20 @@ _ONLY_ONE_RECORD = """This paper stands on ONE analysis record, so a kind "b" cr
 
 _NEW_CLAIMS_IMPOSSIBLE = """This section is assigned no claims, and no earlier section has cited any, so there is nothing here for a new claim to reason from. Introduce NO new claims: return "new_claims" as an empty list. Frame the question in your own sentences, from the thesis statement above -- stating the thesis is what this section is for, and it needs no claim of its own. The paper's verdict belongs in the section whose role is "synthesis"."""
 
+# `compose_plan_prompt` (plan.py:171) already tells the PLANNER to "state the
+# opposing position at its strongest". Nothing told the WRITER what that role
+# obliges -- the section reached it only as the bare interpolated string
+# below, `its role in the argument is "counter-position"`. The first real
+# paper this system drafted end to end came back with the predictable
+# failure: the counter-position introduced already diminished, "as a
+# background condition" rather than at full strength (issue #787). This is
+# the writer's half of the same instruction the planner already carries.
+_COUNTER_POSITION_INSTRUCTION = """This section's role is "counter-position": state the opposing position at its strongest, in its own best terms, before this paper answers it. Present it the way its strongest holders would state it -- do not introduce it already diminished, as a background condition, a caveat, or a concession half-made. Answering it is a later section's job, not this one's."""
+
+
+def _counter_position_block(role: str) -> str:
+    return _COUNTER_POSITION_INSTRUCTION if role == COUNTER_POSITION_ROLE else ""
+
 
 def _new_claims_block(has_visible_claims: bool, cross_source_possible: bool) -> str:
     """What the drafter may introduce, given what this paper actually has.
@@ -339,13 +353,15 @@ def compose_draft_prompt(
     `cross_source_possible` is false when the paper stands on one analysis
     record, where §7.4 makes a (b) claim impossible and (c) the only new claim
     available (issue #597)."""
+    counter_position_block = _counter_position_block(section.role)
+    counter_position_line = f"\n{counter_position_block}\n" if counter_position_block else ""
     return f"""You are the drafting pass of a paper author (specs/PHASE-C.md §7.4). Write ONE section of a paper. You have no tools, no retrieval, and no access to any source: the claims below are the whole world, and you may not assert anything that is not traceable to one of them.
 
 The paper argues: "{thesis_statement}"
 Read through the lens: {lens.for_prompt()}
 
 This section: "{section.heading}" -- its role in the argument is "{section.role}".
-
+{counter_position_line}
 Claims assigned to this section, each with the marker that cites it:
 {section_claims}
 
