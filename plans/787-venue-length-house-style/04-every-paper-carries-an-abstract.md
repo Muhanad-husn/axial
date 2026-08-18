@@ -4,7 +4,7 @@
 - **Slice slug:** every-paper-carries-an-abstract
 - **Branch:** feat/787-venue-length-house-style/04-every-paper-carries-an-abstract
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ◐ built, awaiting measurement
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -89,13 +89,13 @@ depends-on: 03-apa-citations-and-bibliography
 
 ## Inner loop — initial unit test list
 
-- [ ] `compose_abstract_prompt` is given the thesis statement and the drafted section prose, and asks for one paragraph of about 200 words.
-- [ ] The prompt forbids claim markers and citations in the abstract.
-- [ ] `parse_abstract_response` rejects an empty or non-string abstract with a typed error, in the same shape the other parse errors use.
-- [ ] The abstract lands on the persisted record and survives a round trip through `record.py`.
-- [ ] `render_reader_paper` places the abstract after the title and before the first section.
-- [ ] `render_paper` (the audit render) also carries it, since it renders the same record.
-- [ ] A record with no abstract renders exactly as it does today — the field is additive, never a new way for an existing record to fail to render.
+- [x] `compose_abstract_prompt` is given the thesis statement and the drafted section prose, and asks for one paragraph of about 200 words.
+- [x] The prompt forbids claim markers and citations in the abstract.
+- [x] `parse_abstract_response` rejects an empty or non-string abstract with a typed error, in the same shape the other parse errors use.
+- [x] The abstract lands on the persisted record and survives a round trip through `record.py`.
+- [x] `render_reader_paper` places the abstract after the title and before the first section.
+- [x] `render_paper` (the audit render) also carries it, since it renders the same record.
+- [x] A record with no abstract renders exactly as it does today — the field is additive, never a new way for an existing record to fail to render.
 
 ## Measurement (reviewed 2026-08-18, before the slice was built)
 
@@ -140,9 +140,9 @@ harness writes no record, but the copies are what the eye-read is quoted from.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
-- [ ] Refactor pass complete with the bar green.
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
+- [x] Refactor pass complete with the bar green.
 - [ ] Measured per the section below, and the abstracts read by eye. Logged under
       `data/logs/<date>-787-abstract/`.
 - [ ] Slice's tests run in CI (`tdd-ci`).
@@ -151,3 +151,27 @@ harness writes no record, but the copies are what the eye-read is quoted from.
 ## Status / progress log
 
 - 2026-08-18 planned.
+- 2026-08-18 built on `feat/787-venue-length-house-style/04-every-paper-carries-an-abstract`.
+  `uv run pytest` 2,525 passed; `uv run ruff check` clean; `tests/paper`,
+  `tests/analysis`, `tests/service/test_ask_ends_in_an_essay.py` green.
+  Remaining: the founder's measurement over the 10 records in `data/papers/`,
+  then the PR.
+
+  The harness entry point, over one record already on disk (no drafting call,
+  no re-key):
+
+  ```python
+  from axial.paper.abstract import run_abstract
+  from axial.paper.render import plan_sections, prose_by_section
+
+  prose = prose_by_section(record)
+  sections = [
+      {"heading": s["heading"], "prose": prose.get(str(s["section_id"]), "")}
+      for s in plan_sections(record)
+  ]
+  result = run_abstract(client, record["plan"]["thesis_statement"], sections)
+  # result.text, result.model, result.cost
+  ```
+
+  Needs `production_paper_abstract` in `secrets/secrets.toml`; it is set
+  locally to `openai/gpt-5.6-luna`, matching the drafter.
