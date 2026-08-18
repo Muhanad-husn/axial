@@ -896,3 +896,12 @@ def test_a_retried_section_emits_a_retry_event_before_its_completion_event(
     assert retry_index < completion_index
     retry_message = draft_events[retry_index][0]
     assert PLAN["sections"][0]["heading"] in retry_message
+
+    # The sentence an analyst reads carries no internal class name. The
+    # failure's type is a fact for an operator and belongs in `detail`,
+    # beside the attempt counter, not in the walk's own prose -- an
+    # exception class inline in plain English reads as an error surfacing
+    # rather than as work being redone.
+    assert "DraftParseError" not in retry_message
+    assert "Error" not in retry_message
+    assert draft_events[retry_index][1]["reason"] == "DraftParseError"

@@ -504,7 +504,13 @@ def draft_section(
     plain sentence for a walk to show while a retried section is taking
     multiples of a section's usual time. A retried section takes longer, not
     less predictable time, and a walk that says nothing during it reads as a
-    stall rather than as work."""
+    stall rather than as work.
+
+    That sentence names no exception class. The failure's type goes in
+    `detail.reason`, which is operator-facing, because an internal class name
+    inline in plain English reads to an analyst as an error surfacing rather
+    than as work being redone -- the one line in this narration most likely
+    to be misread that way."""
     visible = {claim_ids[key] for key in section.assigned_claims}
     visible.update(str(claim.get("paper_claim_id")) for claim in already_cited)
     base_prompt = compose_draft_prompt(
@@ -528,8 +534,8 @@ def draft_section(
             _log_draft_retry(section.section_id, attempt, exc)
             emit_event(
                 on_event,
-                f"retrying the '{section.heading}' section "
-                f"(attempt {attempt} of {_MAX_ATTEMPTS} failed: {type(exc).__name__})",
+                f"rewriting the '{section.heading}' section -- "
+                f"attempt {attempt} of {_MAX_ATTEMPTS} came back unusable",
                 {
                     "stage": "draft",
                     "event": "retry",
@@ -537,6 +543,7 @@ def draft_section(
                     "heading": section.heading,
                     "attempt": attempt,
                     "max_attempts": _MAX_ATTEMPTS,
+                    "reason": type(exc).__name__,
                 },
             )
             prompt = _draft_retry_prompt(base_prompt, exc, attempt)
