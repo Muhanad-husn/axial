@@ -18,7 +18,7 @@ issue, and both are closed — do not reopen either while executing:
 
 - **Slug:** 787-venue-length-house-style
 - **Created:** 2026-08-18
-- **Status:** in progress — 01, 02, 03 merged; 04 building
+- **Status:** in progress — 01, 02, 03, 04 merged; 05 in PR
 - **New system?** no
 - **Project directory:** .
 
@@ -32,7 +32,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | 02 | [length-is-a-plan-target](02-length-is-a-plan-target.md) | A brief may set a target word count, and the planner allocates sections to it instead of the paper being truncated afterwards | ☑ merged | #799 |
 | 03 | [apa-citations-and-bibliography](03-apa-citations-and-bibliography.md) | The reader-facing paper cites and lists its sources in APA | ☑ merged | #796 |
 | 04 | [every-paper-carries-an-abstract](04-every-paper-carries-an-abstract.md) | A finished paper opens with a ~200-word abstract of the argument it actually made | ☑ measured | — |
-| 05 | [house-style-is-domain-data](05-house-style-is-domain-data.md) | House style reaches the drafter from `config/domains/<domain>/`, as context and never as a gate | ☐ todo | — |
+| 05 | [house-style-is-domain-data](05-house-style-is-domain-data.md) | House style reaches the drafter from `config/domains/<domain>/`, as context and never as a gate | ☑ measured | — |
 
 ## Dependency order
 

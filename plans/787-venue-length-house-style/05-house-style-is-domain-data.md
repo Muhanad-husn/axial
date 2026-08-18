@@ -197,7 +197,8 @@ instruction restated.
 - [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
 - [x] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
 - [x] Refactor pass complete with the bar green.
-- [ ] Measured per the section below. Logged under `data/logs/<date>-787-house-style/`.
+- [x] Measured per the section below. Logged under `data/logs/2026-08-18-787-house-style/` —
+      the opening formula went 10 of 10 to 0 of 10; British spelling moved with it.
 - [ ] Slice's tests run in CI (`tdd-ci`).
 - [ ] Evidence collected and PR opened into `main` (`safe-pr`).
 
@@ -220,3 +221,7 @@ instruction restated.
   APA" convention would fight both; and heading conventions, because headings
   come from the planner, which this block does not reach. The measurement is
   not run -- it is the founder's.
+- 2026-08-18 built green at `087230f`; 2,525 src tests, 221 in `tests/paper`, ruff clean.
+- 2026-08-18 measured: control 10 of 10 on the opening formula, styled 0 of 10,
+  over the same 10 records. `-ise` went 6 tokens to 34, `-ize` 29 to 5. The
+  control reproduced slice 04's finding exactly.
