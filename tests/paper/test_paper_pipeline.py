@@ -233,7 +233,7 @@ def test_contradicting_records_are_never_rejected(analyses_dir: Path):
     assert len(intake.inventory) == 3
 
 
-def _run(tmp_path, analyses_dir, lenses_dir, drafts=None, shape=None):
+def _run(tmp_path, analyses_dir, lenses_dir, drafts=None, shape=None, on_event=None):
     client = StubClient(PLAN, drafts if drafts is not None else DRAFTS, shape=shape)
     brief = PaperBrief(
         paper_brief_id="pb-test",
@@ -248,6 +248,7 @@ def _run(tmp_path, analyses_dir, lenses_dir, drafts=None, shape=None):
         lenses_dir=lenses_dir,
         source_meta_dir=tmp_path / "source_meta",
         papers_dir=tmp_path / "papers",
+        on_event=on_event,
     )
     return record, client
 
@@ -806,3 +807,92 @@ def test_axial_paper_draft_makes_zero_reviewer_calls(tmp_path, analyses_dir, len
     dispatches one."""
     _, client = _run(tmp_path, analyses_dir, lenses_dir)
     assert not any(pass_name.startswith("panel_review") for pass_name, _ in client.prompts)
+
+
+# ---------------------------------------------------------------------------
+# `on_event` narration (issue #784 slice 03, "sections stream as they draft")
+# ---------------------------------------------------------------------------
+
+
+def test_run_paper_with_no_on_event_behaves_exactly_as_today(tmp_path, analyses_dir, lenses_dir):
+    """The regression pin: `run_paper` gains an `on_event` parameter and
+    nothing else (design decision 1). Every caller before this issue passes
+    nothing, so the record it gets back must carry exactly the fields it
+    always has -- no `on_event`-shaped field leaking onto the persisted §7.3
+    record itself."""
+    record, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    assert set(record) == {
+        "paper_brief_id",
+        "paper_brief",
+        "corpus_pin",
+        "lens",
+        "source_lenses",
+        "source_analyses",
+        "plan",
+        "drafts",
+        "claims",
+        "citations",
+        "counter_position",
+        "coverage_map",
+        "confidence",
+        "bibliography",
+        "shape",
+        "paper_markdown_path",
+        "model_by_pass",
+        "cost",
+        "retries",
+    }
+
+
+def test_run_paper_emits_one_plan_event_naming_the_section_count(tmp_path, analyses_dir, lenses_dir):
+    events: list[tuple[str, dict]] = []
+    _run(tmp_path, analyses_dir, lenses_dir, on_event=lambda m, d: events.append((m, d)))
+
+    plan_events = [(m, d) for m, d in events if "section_count" in d]
+    assert len(plan_events) == 1
+    message, detail = plan_events[0]
+    assert detail == {"stage": "draft", "section_count": len(PLAN["sections"])}
+    assert str(len(PLAN["sections"])) in message
+
+
+def test_run_paper_emits_one_event_per_plan_section_in_order_naming_its_heading(
+    tmp_path, analyses_dir, lenses_dir
+):
+    events: list[tuple[str, dict]] = []
+    _run(tmp_path, analyses_dir, lenses_dir, on_event=lambda m, d: events.append((m, d)))
+
+    section_events = [
+        (m, d) for m, d in events if d.get("stage") == "draft" and "heading" in d and "event" not in d
+    ]
+    assert [d["heading"] for _, d in section_events] == [
+        section["heading"] for section in PLAN["sections"]
+    ]
+    for message, detail in section_events:
+        assert detail["heading"] in message
+
+
+def test_a_retried_section_emits_a_retry_event_before_its_completion_event(
+    tmp_path, analyses_dir, lenses_dir
+):
+    malformed = {"new_claims": []}  # no 'prose' -> DraftParseError, retried once
+    drafts = [malformed, DRAFTS[0], DRAFTS[1]]
+    events: list[tuple[str, dict]] = []
+
+    _run(
+        tmp_path,
+        analyses_dir,
+        lenses_dir,
+        drafts=drafts,
+        on_event=lambda m, d: events.append((m, d)),
+    )
+
+    draft_events = [(m, d) for m, d in events if d.get("stage") == "draft"]
+    retry_index = next(i for i, (_, d) in enumerate(draft_events) if d.get("event") == "retry")
+    completion_index = next(
+        i
+        for i, (_, d) in enumerate(draft_events)
+        if d.get("heading") == PLAN["sections"][0]["heading"] and d.get("event") != "retry"
+    )
+    assert retry_index < completion_index
+    retry_message = draft_events[retry_index][0]
+    assert PLAN["sections"][0]["heading"] in retry_message

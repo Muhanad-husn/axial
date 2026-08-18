@@ -2,7 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { WalkState } from "@/lib/events";
+import type { WalkEvent, WalkState } from "@/lib/events";
+
+/** The one phase badge this slice adds (issue #784 slice 03): a `draft`-
+ * stage event -- the arc planned, a section as it finishes, the paper
+ * written -- gets its own small label, so a reader scanning the walk can
+ * tell "drafting the essay" from "reading the corpus" at a glance without
+ * parsing the sentence. `null` for every other stage: nothing else on the
+ * walk carries a badge today, and adding one for a stage nobody asked to
+ * distinguish would be decoration, not information. */
+export function stageBadge(detail: WalkEvent["detail"]): string | null {
+  return detail.stage === "draft" ? "Drafting" : null;
+}
 
 function elapsedLabel(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
@@ -68,6 +79,7 @@ export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number |
       >
         {walk.events.map((event, index) => {
           const live = running && index === walk.events.length - 1;
+          const badge = stageBadge(event.detail);
           return (
             <li
               key={event.seq ?? `final-${index}`}
@@ -82,6 +94,11 @@ export function Walk({ walk, startedAt }: { walk: WalkState; startedAt: number |
               >
                 {live ? "→" : "✓"}
               </span>
+              {badge && (
+                <span className="flex-none rounded-full border border-rule px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-ink3">
+                  {badge}
+                </span>
+              )}
               {/* The running line reads as running: `.shim` (`globals.css`,
                   issue #770) is a left-to-right wash in `--concluded` --
                   the same marker as the arrow and the pulse dot above,

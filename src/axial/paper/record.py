@@ -56,6 +56,8 @@ from axial.llm import (
     PAPER_DRAFT_PASS_NAME,
     PAPER_PLAN_PASS_NAME,
     PAPER_SHAPE_PASS_NAME,
+    EventCallback,
+    emit_event,
     usage_and_cost_by_pass,
 )
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
@@ -189,14 +191,32 @@ def run_paper(
     source_meta_dir: Path | None = None,
     vault_dir: Path | None = None,
     papers_dir: Path | None = None,
+    on_event: EventCallback | None = None,
 ) -> dict[str, Any]:
-    """Stages 1-5, end to end, returning the persisted §7.3 record."""
+    """Stages 1-5, end to end, returning the persisted §7.3 record.
+
+    `on_event` (issue #784 slice 03) narrates the two passes that take
+    perceptible time -- planning and drafting -- through the same
+    `EventCallback` the ask engine already takes: one event naming the
+    planned arc and its section count, one per section as that section's
+    call RETURNS (never before it starts -- a promise of work not yet done
+    is worse than silence, DEC-65), and one when the paper is written.
+    `None` (every caller before this parameter existed) falls through to
+    `axial.llm.emit_event`'s own stderr fallback, so `axial paper draft` and
+    `axial ask` gain the narration for free and no caller is forced to pass
+    anything. The shape check and the citation index emit nothing -- both
+    are deterministic stages that take no perceptible time (§7.16)."""
     papers_dir = Path(papers_dir) if papers_dir is not None else PAPERS_DIR
 
     intake = run_intake(paper_brief.analysis_ids, analyses_dir=analyses_dir or ANALYSES_DIR)
 
     lens = resolve_lens(paper_brief.lens, lenses_dir=lenses_dir)
     plan = run_plan(client, paper_brief.thesis, lens, intake)
+    emit_event(
+        on_event,
+        f"planned the paper's arc -- {len(plan.sections)} section(s)",
+        {"stage": "draft", "section_count": len(plan.sections)},
+    )
 
     claim_ids = assign_claim_ids(plan)
     claims = build_claims(plan, intake)
@@ -214,6 +234,7 @@ def run_paper(
             by_id,
             cited_so_far,
             cross_source_possible=len(intake.source_analyses) >= MIN_DISTINCT_RECORDS,
+            on_event=on_event,
         )
 
         # Allocate a stable id per new claim BEFORE remapping, so the prose's
@@ -238,6 +259,16 @@ def run_paper(
         # offered and passed over is not part of the argument so far.
         cited = {marker for earlier in drafts for marker in markers_in(earlier.prose)}
         cited_so_far = [claim for claim in claims if claim["paper_claim_id"] in cited]
+
+        # AFTER the section's call returns, never before (design decision 3,
+        # issue #784 slice 03): an event promising work that has not
+        # happened is worse than silence -- it makes a stall look like
+        # progress.
+        emit_event(
+            on_event,
+            f"drafted the '{section.heading}' section",
+            {"stage": "draft", "section_id": section.section_id, "heading": section.heading},
+        )
 
     # A barrier after drafting, exactly once regardless of section count
     # (§7.16, issue #578): reports the paper's own conformance to its plan,
@@ -332,6 +363,7 @@ def run_paper(
     }
 
     persist_paper(record, papers_dir=papers_dir)
+    emit_event(on_event, "wrote the paper", {"stage": "draft"})
     return record
 
 

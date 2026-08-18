@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from axial.llm import LLMError
+from axial.llm import EventCallback, LLMError
 from axial.model_json import ModelJsonError
 from axial.paper.biblio import BibliographyError
 from axial.paper.brief import PaperBriefContent, build_paper_brief
@@ -72,11 +72,21 @@ def paper_brief_for(question: str, brief_id: str):
     return build_paper_brief(PaperBriefContent(thesis=question, analysis_ids=(brief_id,)))
 
 
-def draft_paper_for_turn(client: Any, turn: Any, **directories: Any) -> dict[str, Any] | None:
+def draft_paper_for_turn(
+    client: Any, turn: Any, *, on_event: EventCallback | None = None, **directories: Any
+) -> dict[str, Any] | None:
     """`draft_paper` for a caller holding a finished `Turn` -- the CLI, and
-    the worker on a fresh generation."""
+    the worker on a fresh generation.
+
+    `on_event` (issue #784 slice 03) threads straight through to `run_paper`,
+    the same `EventCallback` the ask engine already narrates itself through."""
     return draft_paper(
-        client, turn.question, turn.brief.brief_id, turn.result.record, **directories
+        client,
+        turn.question,
+        turn.brief.brief_id,
+        turn.result.record,
+        on_event=on_event,
+        **directories,
     )
 
 
@@ -86,6 +96,7 @@ def draft_paper(
     brief_id: str,
     record: dict[str, Any],
     *,
+    on_event: EventCallback | None = None,
     analyses_dir: Path | None = None,
     papers_dir: Path | None = None,
     lenses_dir: Path | None = None,
@@ -127,4 +138,5 @@ def draft_paper(
         source_meta_dir=source_meta_dir,
         vault_dir=vault_dir,
         papers_dir=papers_dir,
+        on_event=on_event,
     )

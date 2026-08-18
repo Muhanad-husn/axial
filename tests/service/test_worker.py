@@ -192,6 +192,57 @@ def test_run_ask_job_wires_on_event_to_the_store(monkeypatch, job_store: JobStor
     assert events[0]["detail"] == {"stage": "interrogate"}
 
 
+def test_run_ask_job_wires_paper_events_to_the_store_continuing_the_same_seq(
+    monkeypatch, job_store: JobStore
+):
+    """Issue #784 slice 03: the events a drafted essay narrates land under
+    the SAME job id as the analysis events, continuing the same monotonic
+    `seq` `store.append_event` already assigns -- proving `on_event` reaches
+    `draft_paper_for_turn` through `_draft_the_essay`, not a second, disjoint
+    stream. This test wires `draft_paper_for_turn` itself (rather than
+    letting `_no_paper`'s stub run), the only place in this file that does."""
+
+    def fake_ask(question, case, *, client, session_id=None, on_event=None, **kwargs):
+        on_event("interrogating the question", {"stage": "interrogate"})
+        brief = Brief(brief_id="b1", case=case, request=question)
+        result = BriefRunResult(
+            record={"corpus_pin": "sim-2026-08-10"},
+            path=Path("data/analyses/b1.json"),
+            markdown_path=Path("data/analyses/b1.md"),
+            report={},
+            report_path=Path("data/runs/b1.json"),
+        )
+        return Turn(
+            session_id="s1", turn_index=1, question=question, case=case, brief=brief, result=result
+        )
+
+    def fake_draft_paper_for_turn(client, turn, *, on_event=None, **kwargs):
+        on_event(
+            "planned the paper's arc -- 1 section(s)", {"stage": "draft", "section_count": 1}
+        )
+        on_event("drafted the 'Setup' section", {"stage": "draft", "heading": "Setup"})
+        return {"paper_brief_id": "b1"}
+
+    monkeypatch.setattr(worker_mod, "run_ask", fake_ask)
+    monkeypatch.setattr(worker_mod, "draft_paper_for_turn", fake_draft_paper_for_turn)
+
+    job_id = job_store.enqueue(
+        kind="ask", principal="analyst-1", payload={"question": "Q", "case": "Syria"}
+    )
+    job = job_store.claim()
+    run_ask_job(
+        job, client=object(), store=job_store, snapshot=_SNAPSHOT, work_dir=Path("data/work")
+    )
+
+    events = job_store.events_since(job_id)
+    assert [event["message"] for event in events] == [
+        "interrogating the question",
+        "planned the paper's arc -- 1 section(s)",
+        "drafted the 'Setup' section",
+    ]
+    assert [event["seq"] for event in events] == [1, 2, 3]
+
+
 def test_two_principals_asking_against_the_same_worker_get_separate_analyses_dirs(
     monkeypatch, job_store: JobStore
 ):
