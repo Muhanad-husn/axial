@@ -377,7 +377,13 @@ def test_the_rendered_papers_word_count_lands_within_tolerance_of_the_target(
     record, _ = _run(
         tmp_path, analyses_dir, lenses_dir, plan=_plan_with_budgets(), target_words=TARGET_WORDS
     )
-    rendered = render_reader_paper(record)
+    # Counted WITHOUT the §7.18 abstract block. `target_words` is a plan
+    # target allocated across sections; the abstract is not a section, carries
+    # no share of the budget, and journals do not count one against a word
+    # limit either. Rendering the same record with `abstract: None` is how the
+    # renderer already drops that block (`axial.paper.render.abstract_lines`),
+    # so this counts the paper the target describes.
+    rendered = render_reader_paper(dict(record, abstract=None))
     actual_words = len(rendered.split())
 
     assert abs(actual_words - TARGET_WORDS) <= _TOLERANCE * TARGET_WORDS, (

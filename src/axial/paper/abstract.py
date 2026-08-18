@@ -4,8 +4,9 @@
 exists rather than the plan that was written.** An abstract summarises the
 paper the run actually produced; composing it from the plan would describe an
 argument the drafter may not have made. So it runs as a barrier after stage 3,
-reading the plan's `thesis_statement` and each section's drafted prose, and
-nothing else.
+reading the plan's `thesis_statement` and each section's heading and drafted
+prose, and nothing else -- no `section_id`, no assigned role, and nothing
+downstream of drafting.
 
 **Unconditionally, on every paper, at 200 words.** Every venue surveyed for
 issue #787 requires an abstract and the lengths converge -- IJMES asks 150

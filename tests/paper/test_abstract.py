@@ -14,7 +14,11 @@ The acceptance criterion (plan `04-every-paper-carries-an-abstract.md`):
     And   the abstract carries no claim markers and no citations
 
 The last clause is a property of the prompt, not of the stub's canned
-response, so it is asserted against the prompt the run actually sent.
+response, so it is asserted against the prompt the run actually sent. So is
+"roughly 200 words": a stub echoes back whatever this file hands it, so
+counting the words of that string would assert nothing about the code. The
+number lives in the prompt (`test_abstract_unit.py`) and in the paid
+measurement over 10 real papers (`data/logs/2026-08-18-787-abstract/`).
 """
 
 from __future__ import annotations
@@ -202,9 +206,20 @@ def _run(tmp_path, analyses_dir, lenses_dir, **client_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def test_the_persisted_record_carries_an_abstract_of_roughly_two_hundred_words(
+def test_the_abstract_the_pass_produced_lands_on_the_persisted_record(
     tmp_path, analyses_dir, lenses_dir
 ):
+    """The record carries what the pass returned, byte for byte, through the
+    JSON round trip.
+
+    It does NOT check the word count. The string here is this test's own
+    constant echoed back by the stub, so counting its words would pass with
+    `ABSTRACT_TARGET_WORDS` shipped as 20. The only part of the length
+    behaviour code controls is what the prompt asks for, pinned by
+    `test_the_prompt_asks_for_one_paragraph_of_about_two_hundred_words` in
+    `test_abstract_unit.py`; the evidence that real responses land near it is
+    the paid measurement in `data/logs/2026-08-18-787-abstract/` -- 202-229
+    words over 10 real papers."""
     record, _, papers_dir = _run(tmp_path, analyses_dir, lenses_dir)
     assert record["abstract"] == ABSTRACT
 
@@ -212,9 +227,6 @@ def test_the_persisted_record_carries_an_abstract_of_roughly_two_hundred_words(
         (papers_dir / f"{record['paper_brief_id']}.json").read_text(encoding="utf-8")
     )
     assert persisted["abstract"] == ABSTRACT
-
-    # "Roughly 200": the same +/-25% band slice 02 uses for its own target.
-    assert 150 <= len(persisted["abstract"].split()) <= 250
 
 
 def test_the_abstract_pass_is_scoped_into_cost_and_model_by_pass_like_the_shape_check(
