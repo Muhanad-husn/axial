@@ -258,6 +258,29 @@ def test_the_abstract_prompt_forbids_claim_markers_and_citations(
     assert "citation" in prompt
 
 
+def test_the_abstract_prompt_forbids_settling_a_question_the_paper_leaves_open(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """A measured failure, on `data/papers/b02d747edc0bb416.json`: the paper's
+    synthesis says the evidence "cannot determine whether the latter created a
+    new trajectory or accelerated an existing one", and its abstract closes by
+    saying the armed actors "accelerated" the hollowing-out. The abstract picked
+    one horn of a disjunction the paper declines to resolve. The existing "do
+    not promise anything the drafted prose did not deliver" bullet already
+    covers it in principle; this spells it out."""
+    _, client, _ = _run(tmp_path, analyses_dir, lenses_dir)
+    prompt = next(p for name, p in client.prompts if name == PAPER_ABSTRACT_PASS_NAME)
+
+    assert "Where the paper leaves a question open, the abstract must leave it open too." in prompt
+    assert "Do not resolve a disjunction the paper declines to resolve" in prompt
+    assert "do not state as settled anything the prose marks as undetermined" in prompt
+
+    # Immediately after the bullet it sharpens, not somewhere else in the list.
+    assert prompt.index("do not promise anything the drafted prose did not deliver") < prompt.index(
+        "Where the paper leaves a question open"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Both renders show it.
 # ---------------------------------------------------------------------------

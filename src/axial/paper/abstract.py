@@ -127,6 +127,7 @@ Write ONE paragraph of about {ABSTRACT_TARGET_WORDS} words that states what THIS
 - State the paper's own position and the verdict it reached, in the paper's own voice. An abstract that describes what the sources say, or lists which scholars are discussed, has failed: the reader wants the argument, not a tour of the literature.
 - Say what the argument rests on and where it commits itself, including where the paper concedes the opposing account has force.
 - Summarise the paper that is actually above. Do not restate the thesis verbatim, and do not promise anything the drafted prose did not deliver.
+- Where the paper leaves a question open, the abstract must leave it open too. Do not resolve a disjunction the paper declines to resolve, and do not state as settled anything the prose marks as undetermined.
 - Write NO citations of any kind: no author names in parentheses, no years, no page or chapter references.
 - Write NO claim markers. The prose above carries bracketed markers such as [pc-001]; those are internal identifiers and must never appear in the abstract.
 - One paragraph. No heading, no bullet list, no sub-sections.
