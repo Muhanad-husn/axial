@@ -1,3 +1,4 @@
+import { Essay } from "@/components/Essay";
 import type { AnalysisRecord, Claim } from "@/lib/api";
 import { LEGEND, accentFor, citationSummary, markerLabel, quotesFor } from "@/lib/paper";
 
@@ -46,8 +47,18 @@ function ClaimRow({ claim }: { claim: Claim }) {
  * the citation -- plus the legend that spells the three markers out. This
  * renders exactly `record.claims` in the record's own order; nothing is
  * re-sorted, re-grouped or computed beyond the counts `src/lib/paper.ts`
- * already documents as counts, not decisions. */
-export function Paper({ record }: { record: AnalysisRecord }) {
+ * already documents as counts, not decisions.
+ *
+ * `essay` is the reader render `GET /asks/{id}/paper` serves alongside the
+ * record (issue #784) -- absent, not null, on a refusal or a drafting
+ * failure. **Present:** the essay is the answer and the claim list moves
+ * behind its own closed disclosure, the same mechanism `MetricsPanel`
+ * already uses, reachable for a reader who wants to check the answer.
+ * **Absent, and not a refusal:** the claim list renders exactly as it did
+ * before this issue -- unwrapped, visible with no click -- behind a plain
+ * line stating the essay is missing, never presented as though the claim
+ * list were the intended answer. */
+export function Paper({ record, essay }: { record: AnalysisRecord; essay?: string }) {
   const disposition = record.interrogation?.disposition;
   const claims = record.claims ?? [];
 
@@ -62,7 +73,7 @@ export function Paper({ record }: { record: AnalysisRecord }) {
     );
   }
 
-  return (
+  const claimList = (
     <>
       <section data-testid="paper" className="pt-1">
         {claims.length === 0 ? (
@@ -87,6 +98,29 @@ export function Paper({ record }: { record: AnalysisRecord }) {
           </div>
         ))}
       </div>
+    </>
+  );
+
+  if (essay) {
+    return (
+      <>
+        <Essay markdown={essay} />
+        <details data-testid="claims-disclosure" className="mt-3 rounded-lg border border-rule bg-panel">
+          <summary className="cursor-pointer px-4 py-2.5 font-mono text-[9.5px] font-semibold tracking-[0.13em] text-ink3 uppercase">
+            Claims
+          </summary>
+          <div className="border-t border-rule2 px-4 py-3.5">{claimList}</div>
+        </details>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p data-testid="no-essay" className="m-0 mb-3 text-[12.5px] leading-[1.5] text-ink2">
+        No essay was drafted for this answer.
+      </p>
+      {claimList}
     </>
   );
 }

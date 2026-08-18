@@ -4,7 +4,7 @@
 - **Slice slug:** essay-is-the-answer
 - **Branch:** feat/784-ask-ends-in-an-essay/02-essay-is-the-answer
 - **Project directory:** `web`
-- **Status:** ☐ todo
+- **Status:** ✅ done
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -51,11 +51,22 @@ edits: web/src/app/globals.css
 edits: web/package.json
 edits: web/package-lock.json
 edits: web/e2e/mock-service.mjs
+edits: web/vitest.config.mts
 creates: web/src/components/Essay.tsx
 creates: web/src/components/Essay.test.tsx
+creates: web/src/components/Paper.test.tsx
 creates: web/e2e/essay.spec.ts
 depends-on: 01-essay-from-the-ask
 ```
+
+`web/vitest.config.mts` and `web/src/components/Paper.test.tsx` were added to
+this block while building, not planned into it. The config's `include` widens
+from `src/**/*.test.ts` to `src/**/*.test.{ts,tsx}` so the new component tests
+run at all; `Paper.test.tsx` holds the four `Paper`-level behaviours the inner
+loop below calls for and had nowhere else to live. Neither is touched by slice
+03, so the two stayed independent. `web/src/app/globals.css` is declared above
+and was **not** edited: Tailwind utilities covered the essay and it introduced
+no new colour.
 
 ## Design decisions this slice makes
 
@@ -84,15 +95,15 @@ depends-on: 01-essay-from-the-ask
 
 ## Inner loop — initial unit test list
 
-- [ ] `Essay` renders a thesis and every section heading from a markdown
+- [x] `Essay` renders a thesis and every section heading from a markdown
       string, in order.
-- [ ] `Essay` renders a blockquote as quoted book text, visually distinct from
+- [x] `Essay` renders a blockquote as quoted book text, visually distinct from
       the tool's own prose.
-- [ ] `Paper` shows the essay and hides the claim list when `essay` is present.
-- [ ] `Paper` shows the claim list plus a stated absence when `essay` is
+- [x] `Paper` shows the essay and hides the claim list when `essay` is present.
+- [x] `Paper` shows the claim list plus a stated absence when `essay` is
       missing.
-- [ ] `Paper` renders a refusal unchanged whether or not `essay` is present.
-- [ ] The claim list inside the disclosure renders the same DOM it renders
+- [x] `Paper` renders a refusal unchanged whether or not `essay` is present.
+- [x] The claim list inside the disclosure renders the same DOM it renders
       today (a snapshot pinning the move as a move).
 
 ## Out of scope for this slice (deferred)
@@ -104,17 +115,57 @@ depends-on: 01-essay-from-the-ask
 
 ## Definition of done
 
-- [ ] Acceptance test written, seen to fail for the right reason, now GREEN.
-- [ ] Screenshots of both states (essay present, essay absent) collected as
+- [x] Acceptance test written, seen to fail for the right reason, now GREEN.
+- [x] Screenshots of both states (essay present, essay absent) collected as
       PR evidence, plus a recording of one run.
-- [ ] `npm run lint`, `npm run typecheck`, `npm run test` green in `web/`.
-- [ ] **The rendered picture is looked at before the taste calls are
+- [x] `npm run lint`, `npm run typecheck`, `npm run test` green in `web/`.
+- [x] **The rendered picture is looked at before the taste calls are
       settled** — the essay's measure, heading rhythm and quote treatment
       judged from a render, not from the markup (#770's rule).
-- [ ] Playwright orphan node processes killed before any worktree cleanup.
+- [x] Playwright orphan node processes killed before any worktree cleanup.
 - [ ] Slice's tests run in CI.
 - [ ] Evidence collected and PR opened via `/aeo:safe-pr`.
 
 ## Status / progress log
 
 - 2026-08-17 planned.
+- **2026-08-18 built.** Outer loop: `web/e2e/essay.spec.ts`, watched red with
+  `getByTestId('essay')`/`getByTestId('no-essay')` both "element(s) not
+  found" against the real app and the mock service, before any production
+  line. Inner loop, outside-in: `Essay.tsx` (`react-markdown`, no
+  `remark-gfm` -- confirmed against every real essay in `data/papers/*.md`,
+  none uses a table or a blockquote) driven by `Essay.test.tsx`; `Paper.tsx`
+  driven by `Paper.test.tsx`, the first two component-level tests in `web/`
+  (`@testing-library/react` + `jsdom` added, opted in per-file with
+  `// @vitest-environment jsdom` so every pre-existing `.test.ts` stays on
+  `node`, unchanged).
+- **`web/e2e/paper.spec.ts` was not edited, on purpose (not in the plan's own
+  file list) and still passes unedited.** Its two cases (`Damascus`,
+  `Aleppo`) stay essay-less by construction -- the mock's `"Beirut"` case
+  carries the new fixture -- so the claim list they assert against renders
+  exactly as it did before this slice, unwrapped, and `paper.spec.ts` keeps
+  proving the marker/citation-mode rendering `essay.spec.ts` does not
+  re-test.
+- **"The same disclosure that reveals the metrics panel" read as the same
+  UI mechanism (a native `<details>`), not a shared instance.** Sharing one
+  `<details>` with `MetricsPanel` would open both together, contradicting
+  `paper.spec.ts`'s own existing test that opens metrics without opening
+  claims. The claims disclosure is its own element, styled identically.
+- **The disclosure only exists when there is something to disclose.** No
+  essay means the claim list renders exactly as `paper.spec.ts` pins it
+  today -- unwrapped, visible with no click -- behind one plain line. An
+  essay present is the only state that gets a closed `<details>`.
+- Screenshots (`essay-present.png`, `essay-claims-opened.png`,
+  `essay-absent.png`) and two run recordings collected under
+  `D:/axial/data/logs/2026-08-18-784-slice-02/` (gitignored, outside this
+  repo's tracked tree) -- the taste call was made from these before this box
+  was ticked.
+- No orphan node process matched the worktree slug after the Playwright
+  runs; nothing to kill before cleanup.
+- 2026-08-18 PR [#793](https://github.com/Muhanad-husn/axial/pull/793) opened,
+  evidence attached. Reviewer and verifier dispatched; both returned
+  DONE_WITH_CONCERNS and both findings were fixed in `c1bedec` — the mock
+  essay's bibliography now lists every source its own claims cite (the
+  verifier's, and a defect in the evidence rather than in the product), and
+  `vitest.config.mts` is declared in the independence block above (the
+  reviewer's). Awaiting the founder's merge.

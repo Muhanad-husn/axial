@@ -134,7 +134,7 @@ function SignedInApp({ onSignOut }: { userId: string; onSignOut: () => void }) {
           <>
             {paperState.paper ? (
               <>
-                <Paper record={paperState.paper.record} />
+                <Paper record={paperState.paper.record} essay={paperState.paper.essay} />
                 <MetricsPanel metrics={paperState.paper.metrics} />
                 <ExportControl askId={activeAskId} />
               </>
