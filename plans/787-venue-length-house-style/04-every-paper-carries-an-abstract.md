@@ -27,6 +27,27 @@ An abstract summarises the paper that exists, not the paper that was planned.
 Composing it from the plan would describe an argument the drafter may not have
 made. This is one cheap call over the drafted sections, after stage 3.
 
+## Why its own pass, and not one more field on the shape check
+
+The obvious cheaper route was rejected deliberately, so do not re-propose it.
+The shape check (`src/axial/paper/shape.py`) already reads the whole drafted
+paper, already runs on a model guaranteed different from the drafter, and
+already returns structured JSON -- and issue #717 already added the paper's
+*title* to it on exactly that "one more field on a call already being made"
+argument.
+
+An abstract is not that. A title is eight words; an abstract is ~200 words of
+generation that would dominate the completion of a call whose response
+*ordering* was measured and calibrated -- issue #600 moved defect detection
+from 8.3% to 50% purely by requiring per-section reviews before the band, and
+that instrument is fragile enough that two of three defect classes still vary
+across replicates. Re-calibrating it costs a measured run. Also the roles
+differ: the shape check grades, and this writes.
+
+So: a separate pass, `paper_abstract`, with its own name in `axial.llm`, its
+own tier in `config/pipeline.yaml`, and its own entries in the record's `cost`
+and `model_by_pass` -- the same shape `paper_shape` has.
+
 ## INVEST check
 
 - **Independent:** depends on slice 03 (both edit `reader.py`); nothing depends
@@ -76,6 +97,39 @@ depends-on: 03-apa-citations-and-bibliography
 - [ ] `render_paper` (the audit render) also carries it, since it renders the same record.
 - [ ] A record with no abstract renders exactly as it does today — the field is additive, never a new way for an existing record to fail to render.
 
+## Measurement (reviewed 2026-08-18, before the slice was built)
+
+The feature README records that the nine dev briefs are the wrong substrate
+for judging writing quality -- `shape.band` came back `strong` on 35 of 35
+drafts across both arms of slice 01. That finding binds this slice, and the
+plan's original bar ("drafted against at least three real dev briefs") walked
+straight into it.
+
+**It does not cost a re-draft to avoid.** The abstract call reads only the
+thesis statement and the drafted section prose, both of which are already
+persisted on every record under `data/papers/`. So the measurement is a
+harness script over the records already on disk -- **no drafting call, no
+retrieval, no re-key** -- one abstract call per record.
+
+- **Substrate: all 10 records in `data/papers/`**, which includes papers
+  drafted from real analyst questions through `axial ask`, not only the dev
+  briefs. That is what makes it a real substrate rather than the easy one.
+- **Cost:** 10 calls of ~200 completion tokens. Pennies, minutes.
+- **The bar is read by eye, and it is a yes/no per abstract:** does it state
+  the paper's own thesis and what it concluded, or does it describe what the
+  sources say? A summary of the sources is the failure this looks for. There
+  is no judged band to invent here and none should be added -- the plan already
+  rules an abstract-quality gate out of scope.
+- **Report the count plainly** (e.g. "8 of 10 state the argument"), name the
+  failures, and quote at least one abstract in full in the PR body so the
+  founder can judge the instrument as well as the result.
+- **Do not read a clean 10 of 10 as proof the prompt is good.** It is the
+  first draw of a judged property; say so.
+
+The 10 records must be copied into the run log before the harness runs
+anyway -- the README's re-drafting hazard is about `paper draft`, and this
+harness writes no record, but the copies are what the eye-read is quoted from.
+
 ## Out of scope for this slice (deferred)
 
 - A keyword list. No venue asks for one that this product serves.
@@ -89,7 +143,8 @@ depends-on: 03-apa-citations-and-bibliography
 - [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
 - [ ] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
 - [ ] Refactor pass complete with the bar green.
-- [ ] Drafted against at least three real dev briefs and the abstracts read by eye — a summary that describes the sources rather than the argument is the failure to look for. Logged under `data/logs/<date>-787-abstract/`.
+- [ ] Measured per the section below, and the abstracts read by eye. Logged under
+      `data/logs/<date>-787-abstract/`.
 - [ ] Slice's tests run in CI (`tdd-ci`).
 - [ ] Evidence collected and PR opened into `main` (`safe-pr`).
 
