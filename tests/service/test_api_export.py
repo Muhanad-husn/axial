@@ -145,8 +145,9 @@ def test_export_md_carries_no_telemetry(job_store: JobStore, tmp_path: Path, aut
     assert CHUNK_ID not in body
     assert "chunk:" not in body
     # ... and cites the book instead: `axial.cite`'s in-text form is the
-    # author's surname and the year ("Author A" -> "A 1999").
-    assert "A 1999" in body
+    # author's surname and the year, APA-style with a comma between them
+    # ("Author A" -> "A, 1999", issue #787 slice 03).
+    assert "A, 1999" in body
 
 
 def test_export_defaults_to_markdown_when_no_format_is_given(
