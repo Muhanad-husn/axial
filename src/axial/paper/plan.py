@@ -439,7 +439,11 @@ def format_plan(plan: Plan) -> str:
     """The inspect-before-spend view (`axial paper examine`, P0-12)."""
     lines = [f"thesis: {plan.thesis_statement}", ""]
     for section in plan.sections:
-        lines.append(f"[{section.role}] {section.heading} ({section.section_id})")
+        # The allocated share belongs in this view specifically: a length
+        # target is decided here, before any drafting call, and inspecting
+        # it afterwards costs the spend this view exists to avoid.
+        budget = f" -- {section.word_budget} words" if section.word_budget is not None else ""
+        lines.append(f"[{section.role}] {section.heading} ({section.section_id}){budget}")
         for brief_id, claim_id in section.assigned_claims:
             lines.append(f"    {brief_id} / {claim_id}")
         if not section.assigned_claims:

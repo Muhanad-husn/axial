@@ -59,7 +59,13 @@ def run_paper_examine(
     intake = run_intake(paper_brief.analysis_ids, analyses_dir=analyses_dir or ANALYSES_DIR)
 
     lens = resolve_lens(paper_brief.lens, lenses_dir=lenses_dir)
-    plan = run_plan(client, paper_brief.thesis, lens, intake)
+    # The brief's own length target reaches the planner here too, not only on
+    # the drafting path (issue #787 slice 02): a target is allocated in the
+    # plan, and this is the view that exists to inspect the plan before any
+    # drafting call is paid for.
+    plan = run_plan(
+        client, paper_brief.thesis, lens, intake, target_words=paper_brief.target_words
+    )
 
     return PaperExamineResult(intake=intake, lens=lens, plan=plan)
 

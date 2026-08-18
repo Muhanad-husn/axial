@@ -17,6 +17,7 @@ from axial.paper.plan import (
     PlanParseError,
     Section,
     compose_plan_prompt,
+    format_plan,
     parse_plan_response,
 )
 
@@ -153,3 +154,33 @@ def test_section_to_json_omits_word_budget_when_none():
 def test_section_to_json_carries_word_budget_when_set():
     section = Section(section_id="s1", heading="h", role="setup", word_budget=400)
     assert section.to_json()["word_budget"] == 400
+
+
+def test_examine_shows_each_section_its_allocated_budget():
+    """`axial paper examine` is the inspect-before-spend view (P0-12), and
+    the whole point of a length target is that it is allocated BEFORE a
+    drafting dollar is spent. An operator who cannot see the allocation in
+    that view cannot inspect the one decision this slice added."""
+    sections = [
+        _section("s1", "Setup", "setup", CLAIM_A, word_budget=1000),
+        _section("s2", "The other account", COUNTER_POSITION_ROLE, CLAIM_B, word_budget=2000),
+    ]
+    plan = parse_plan_response(_plan_json(sections), _intake(), target_words=3000)
+
+    rendered = format_plan(plan)
+
+    assert "1000" in rendered
+    assert "2000" in rendered
+
+
+def test_examine_says_nothing_about_length_when_no_target_was_set():
+    """A brief with no target renders exactly as it did before this slice."""
+    sections = [
+        _section("s1", "Setup", "setup", CLAIM_A),
+        _section("s2", "The other account", COUNTER_POSITION_ROLE, CLAIM_B),
+    ]
+    plan = parse_plan_response(_plan_json(sections), _intake())
+
+    rendered = format_plan(plan)
+
+    assert "word" not in rendered.casefold()

@@ -172,3 +172,12 @@ in before the first arm.
   (2525 passed) and `tests/paper/` (all green) and `uv run ruff check` all
   clean. Real-corpus measurement intentionally left to a later, explicitly
   authorized run in the main checkout.
+- 2026-08-18 review: `axial paper examine` never passed `target_words` to
+  `run_plan`, so the inspect-before-spend view ignored the brief's own length
+  target entirely, and `format_plan` did not render a share even when one
+  existed. Both fixed test-first. Validated against the real planner:
+  `deepseek-v4-pro` allocated 300/500/600/400/550/350/300 over seven sections
+  for a 3000-word target -- exact to the word, zero retries across four
+  planning calls -- and the counter-position floor held (350 against a 300
+  minimum elsewhere). The exact-sum rule was the risk worth probing and it
+  costs nothing in practice.
