@@ -99,7 +99,7 @@ def test_the_case_titles_the_document_and_the_question_sits_under_it():
 
     assert markdown.startswith("# Syria\n")
     assert "**The question:** Who led the uprising?" in markdown
-    assert "**[stated]** Control shapes collaboration. (Kalyvas 2006)" in markdown
+    assert "**[stated]** Control shapes collaboration. (Kalyvas, 2006)" in markdown
 
 
 def test_a_claim_with_no_grounds_says_so():

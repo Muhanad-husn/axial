@@ -1,4 +1,5 @@
-"""How a citation reads on a page (issue #783, folding in #786).
+"""How a citation reads on a page (issue #783, folding in #786; APA house
+style, issue #787 slice 03).
 
 One module, one answer to "what does a citation look like", for every
 surface: the reader-facing markdown renders (`axial.paper.reader`,
@@ -15,8 +16,10 @@ never reads anything.
 
 **Two forms, both from the same fields.** `full` is the footer form and
 carries whatever resolved: `Leila Vignal (2021), Anatomy of a conflict,
-Fragmenting space and society`. `short` is the in-text form and is the
-author and the year, nothing else: `Vignal 2021`.
+Fragmenting space and society`. `short` is the in-text form -- APA's
+author-date parenthetical, surname and year with a comma between them:
+`Vignal, 2021`. A date that did not resolve reads `n.d.`, APA's own word
+for exactly that absence, never a blank.
 
 Neither invents a page number -- there is none anywhere in this system
 (`axial.query.store.note_locator`). And neither labels the locator `ch.`,
@@ -48,6 +51,12 @@ from typing import Any
 # value is never rewritten.
 _AUTHOR_TRAILING_RE = re.compile(r"[\s;,]+$")
 _AUTHOR_ROLE_RE = re.compile(r"\s*\([^)]*\)\s*$")
+
+# A string naming more than one person -- `John A. Hall and Ralph
+# Schroeder`, measured in 3 of 35 real `data/source_meta/` records -- has no
+# single surname to invert. Checked as a whole word so a surname that
+# happens to contain the letters (`Anderson`) is never mistaken for a join.
+_MULTI_AUTHOR_RE = re.compile(r"\band\b", re.IGNORECASE)
 
 FULL = "full"
 SHORT = "short"
@@ -85,12 +94,50 @@ def author_surname(value: Any) -> str:
     return text.split()[-1]
 
 
+def apa_author(value: Any) -> str:
+    """`value` as APA wants an author printed in the bibliography:
+    `Surname, F. M.`
+
+    The surname is picked exactly the way `author_surname` already picks it
+    -- the text before a comma, or the last whitespace token -- so `Michael
+    Mann` and `Mann, Michael` invert to the identical `Mann, M.` regardless
+    of which order the title page printed. Nothing is folded to make that
+    decision: a token's *position* in the string, not its letters, says
+    where the surname is, so `Siniša Malešević` inverts to `Malešević, S.`
+    with its diacritic intact in either metadata order.
+
+    Where the string cannot be confidently inverted, it prints exactly as
+    given -- `biblio.py`'s own never-guess rule. Two cases trigger it: a
+    string naming more than one person (`John A. Hall and Ralph Schroeder`,
+    measured in 3 of 35 real `data/source_meta/` records -- there is no
+    single surname to invert to), and a single bare token (nothing to
+    attach an initial to, and nothing gained by inverting it onto itself).
+    """
+    text = clean_author(value)
+    if not text or _MULTI_AUTHOR_RE.search(text):
+        return text
+    if "," in text:
+        surname, _, given = text.partition(",")
+    else:
+        tokens = text.split()
+        if len(tokens) < 2:
+            return text
+        surname, given = tokens[-1], " ".join(tokens[:-1])
+    surname = surname.strip()
+    if not surname:
+        return text
+    initials = " ".join(f"{token[0].upper()}." for token in given.split() if token[:1].isalpha())
+    return f"{surname}, {initials}" if initials else surname
+
+
 def format_citation(citation: Any, *, form: str = FULL) -> str | None:
     """One resolved citation block rendered for a reader, or `None` when
     `citation` is not a resolved block at all.
 
     `full` names the author with the date in parentheses and appends
-    whatever locator resolved; `short` is the surname and a bare year. A
+    whatever locator resolved; `short` is APA's own in-text shape, the
+    surname and the year with a comma between them (`Vignal, 2021`) -- a
+    date that did not resolve reads `n.d.` rather than dropping silently. A
     block that resolved no author falls back to its `source_id`, which is
     still a real answer to "which book"; one carrying nothing at all
     returns `None`."""
@@ -105,7 +152,7 @@ def format_citation(citation: Any, *, form: str = FULL) -> str | None:
         who = author_surname(author) or (str(source_id) if source_id else "")
         if not who:
             return None
-        return f"{who} {date_text}" if date_text else who
+        return f"{who}, {date_text or 'n.d.'}"
 
     who = author or (str(source_id) if source_id else "")
     if not who:
@@ -159,9 +206,13 @@ def citation_summary(grounds: Any, *, form: str = FULL) -> str:
 
 
 def format_bibliography_entry(entry: Any) -> str:
-    """One `axial.paper.biblio` entry as a bibliography line: `Author.
-    Title. Publisher, Year.` -- each part omitted when it did not resolve,
-    and the `source_id` standing alone when none of the four did."""
+    """One `axial.paper.biblio` entry as an APA bibliography line:
+    `Surname, F. M. (Year). *Title*. Publisher.` -- author inverted through
+    `apa_author`, the year parenthesised and moved forward (`n.d.` when the
+    date alone is absent, APA's own word for that §7.13 absence, never a
+    blank and never a guess), the title italicised, and each part omitted
+    when it did not resolve. The `source_id` stands alone when nothing
+    resolved at all."""
     if not isinstance(entry, dict):
         return str(entry)
 
@@ -171,17 +222,22 @@ def format_bibliography_entry(entry: Any) -> str:
             return ""
         return str(raw.get("value") or "").strip()
 
-    author = clean_author(value("author"))
+    author = apa_author(value("author"))
     title = value("title")
     publisher = value("publisher")
     date = value("date")
 
-    head = ". ".join(part for part in (author, title) if part)
-    tail = ", ".join(part for part in (publisher, date) if part)
-    if head and tail:
-        return f"{head}. {tail}."
-    if head:
-        return f"{head}."
-    if tail:
-        return f"{tail}."
-    return str(entry.get("source_id") or "")
+    if not (author or title or publisher or date):
+        return str(entry.get("source_id") or "")
+
+    # `author` already ends in a period when `apa_author` inverted it to
+    # initials (`Vignal, L.`); an un-invertible name printed as given does
+    # not, so it still needs one before the year.
+    author_part = (author if author.endswith(".") else f"{author}.") if author else ""
+    parts = [
+        author_part,
+        f"({date})." if date else "(n.d.).",
+        f"*{title}*." if title else "",
+        f"{publisher}." if publisher else "",
+    ]
+    return " ".join(part for part in parts if part)

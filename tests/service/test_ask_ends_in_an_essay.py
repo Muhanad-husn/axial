@@ -488,7 +488,7 @@ def test_a_passage_deployment_resolves_the_paper_the_same_way_it_resolves_the_re
     # The essay itself cites book-level in either mode -- it never carries
     # the quoted passage, which is why it stays short.
     assert PASSAGE_TEXT not in payload["essay"]
-    assert "(A 1999)" in payload["essay"]  # `format_citation(form=SHORT)`: surname and year
+    assert "(A, 1999)" in payload["essay"]  # `format_citation(form=SHORT)`: APA surname, year
 
 
 def test_a_hit_whose_entry_has_no_essay_drafts_one_and_repairs_the_entry(
