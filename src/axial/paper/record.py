@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -302,7 +303,19 @@ def run_paper(
     # a fact about this pass and propagates like any other pass's.
     try:
         abstract_result = run_abstract(client, plan.thesis_statement, drafted_sections)
-    except AbstractError:
+    except AbstractError as error:
+        # One structured stderr line, matching `axial.paper.plan._log_plan_retry`
+        # and `axial.llm._log_retry` (bare print; this repo has no logging
+        # framework). Without it the only trace of a failed pass is
+        # `abstract: null`, which a record written before #787 also carries --
+        # so an operator whose abstract model reliably returns the wrong key
+        # would see papers with no abstract and no sign a pass ran at all, and
+        # the failure rate would be unmeasurable (§7.17's own argument).
+        print(
+            f"paper_abstract_failed pass={PAPER_ABSTRACT_PASS_NAME} "
+            f"error={type(error).__name__} reason={str(error)!r}",
+            file=sys.stderr,
+        )
         abstract_result = None
 
     citations = build_citation_index(

@@ -74,7 +74,10 @@ and `defects`, so it cannot displace the section-by-section-before-band
 ordering issue #600 measured. `parse_shape_response` parses it leniently: a
 missing, blank, non-string, or otherwise unusable title yields `None` and
 never raises -- a title is not worth turning a graded paper into a failed
-run. The rendered paper's own title precedence (`axial.paper.render._title`)
+run. `run_shape_check` writes one `paper_shape_no_title` line to stderr when
+that happens: the render falls through to the thesis and reads like a title a
+human chose, so a judge model whose last field never comes back usable is
+otherwise invisible and its rate unmeasurable. The rendered paper's own title precedence (`axial.paper.render._title`)
 tries a brief-supplied override first, this field second, and falls
 through to the thesis when both are absent.
 """
@@ -82,6 +85,7 @@ through to the thesis when both are absent.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -332,6 +336,15 @@ def run_shape_check(
     prompt = compose_shape_prompt(thesis_statement, sections)
     raw = complete_json(client, prompt, pass_name=judge_pass_name)
     band, defects, title = parse_shape_response(raw)
+    if title is None:
+        # Lenient parsing above never raises on a bad title, and the render
+        # falls back to the thesis, which reads like a title a human chose.
+        # So one stderr line here, the same one the abstract pass writes for
+        # its own failure: without it a judge model that never returns a
+        # usable title is invisible, and the rate at which the prompt's last
+        # field fails is unmeasurable. Bare print, matching
+        # `axial.paper.plan._log_plan_retry`.
+        print(f"paper_shape_no_title pass={judge_pass_name} model={judge_model}", file=sys.stderr)
     repetition = compute_repetition(sections)
 
     usage_for_pass = getattr(client, "usage_for_pass", None)

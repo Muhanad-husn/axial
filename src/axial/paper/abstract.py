@@ -48,8 +48,12 @@ the failure stops there. `axial.paper.record.run_paper` catches
 `AbstractError` around this pass's single call and writes `abstract: null`, so
 an unusable response leaves a fully drafted paper drafted rather than turning
 it into a failed run -- the same call `axial.paper.shape` already makes for a
-missing title. A transport failure is not caught and propagates like any other
-pass's, because a network outage is not a fact about this pass.
+missing title. It is not silent about it: that handler writes one
+`paper_abstract_failed` line to stderr, because `abstract: null` is also what
+every record written before this pass existed carries, so without the line a
+pass that ran and failed reads exactly like one that never ran. A transport
+failure is not caught and propagates like any other pass's, because a network
+outage is not a fact about this pass.
 
 **The quality of an abstract is not a gate.** Like the shape check, it is
 written and reported. No gate in §10.1 reads it, and there is no judged band

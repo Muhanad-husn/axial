@@ -373,3 +373,19 @@ def test_an_unusable_abstract_response_is_still_named_and_priced(
 
     assert record["model_by_pass"][PAPER_ABSTRACT_PASS_NAME] == "stub/abstract"
     assert PAPER_ABSTRACT_PASS_NAME in record["cost"]["by_pass"]
+
+
+def test_an_unusable_abstract_response_writes_one_line_to_stderr(
+    tmp_path, analyses_dir, lenses_dir, capsys
+):
+    """A silent failure turns a measured flake rate into an invisible one
+    (§7.17's argument about retries, which holds here too): an operator
+    whose abstract model reliably returns the wrong key would otherwise get
+    papers with no abstract and no sign that a pass ran and failed."""
+    _run(tmp_path, analyses_dir, lenses_dir, abstract_response=json.dumps({"abstract": ""}))
+
+    err = capsys.readouterr().err
+    assert "paper_abstract_failed" in err
+    assert f"pass={PAPER_ABSTRACT_PASS_NAME}" in err
+    assert "error=AbstractParseError" in err
+    assert err.count("paper_abstract_failed") == 1
