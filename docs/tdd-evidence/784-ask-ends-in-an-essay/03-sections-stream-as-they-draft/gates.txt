@@ -1,0 +1,18 @@
+$ uv run ruff check
+All checks passed!
+exit=0
+
+$ npm run test
+
+ RUN  v4.1.10 D:/axial-wt/784-03-sections-stream/web
+
+
+ Test Files  6 passed (6)
+      Tests  41 passed (41)
+   Start at  02:08:57
+   Duration  1.04s (transform 729ms, setup 0ms, import 1.62s, tests 225ms, environment 1ms)
+
+exit=0
+
+$ npm run typecheck
+exit=0
