@@ -120,7 +120,7 @@ def test_the_audit_paper_still_carries_all_of_it():
 def test_a_marker_run_becomes_one_parenthetical_naming_the_books():
     markdown = render_reader_paper(_record())
 
-    assert "War made the state (Vignal 2021; Bayat 2017)." in markdown
+    assert "War made the state (Vignal, 2021; Bayat, 2017)." in markdown
     assert "[pc-001]" not in markdown
     assert "[pc-002]" not in markdown
 
@@ -136,7 +136,7 @@ def test_a_marker_with_no_claim_in_the_record_stays_visible():
 def test_the_bibliography_reads_like_a_bibliography():
     markdown = render_reader_paper(_record())
 
-    assert "- Leila Vignal. War-Torn. C. Hurst, 2021." in markdown
+    assert "- Vignal, L. (2021). *War-Torn*. C. Hurst." in markdown
 
 
 def test_a_record_with_no_citations_resolved_still_renders():

@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\axial\.claude\worktrees\agent-a02291816c695055b
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collected 22 items
+
+tests\paper\test_apa_reader_render.py .......                            [ 31%]
+src\axial\test_cite_apa.py ...............                               [100%]
+
+============================= 22 passed in 10.90s =============================

@@ -16,9 +16,10 @@ coverage band, no shape check, no provenance tag.
 **In-text markers become citations.** The drafter writes `[pc-001]` after
 the sentence a claim supports; that is the paper's own claim id, as much a
 database key on a page as a chunk id is. Each run of markers is replaced by
-one parenthetical naming the sources behind it -- `(Vignal 2021; Bayat
-2017)`. A marker whose claim id is not in the record is left exactly as it
-is: a visible unresolved reference beats a silently deleted one.
+one parenthetical naming the sources behind it, APA-shaped -- `(Vignal,
+2021; Bayat, 2017)`. A marker whose claim id is not in the record is left
+exactly as it is: a visible unresolved reference beats a silently deleted
+one.
 
 The parenthetical names books, not passages (`axial.cite`'s short form),
 so a claim resting on nine chunks of two books cites two. Nothing is

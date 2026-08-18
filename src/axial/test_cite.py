@@ -35,8 +35,9 @@ def test_the_full_form_names_the_author_the_year_and_the_locator():
 def test_the_short_form_is_the_surname_and_the_year_only():
     """An in-text citation names the book, not the passage: the store's
     `chapter` is a full heading, and a heading inside a parenthesis
-    mid-sentence is not a citation a reader can use."""
-    assert format_citation(_VIGNAL, form=SHORT) == "Vignal 2021"
+    mid-sentence is not a citation a reader can use. APA puts a comma
+    between the two."""
+    assert format_citation(_VIGNAL, form=SHORT) == "Vignal, 2021"
 
 
 def test_a_trailing_separator_and_a_role_suffix_are_stripped_for_display():
@@ -68,7 +69,7 @@ def test_two_passages_from_one_book_are_one_in_text_citation():
         {"ref_type": "chunk", "ref_id": "a", "citation": _VIGNAL},
         {"ref_type": "chunk", "ref_id": "b", "citation": dict(_VIGNAL, section="Conclusion")},
     ]
-    assert citation_summary(grounds, form=SHORT) == "Vignal 2021"
+    assert citation_summary(grounds, form=SHORT) == "Vignal, 2021"
 
 
 def test_empty_grounds_say_so_rather_than_rendering_blank():
@@ -84,11 +85,14 @@ def test_a_bibliography_entry_carries_no_provenance_tag():
         "publisher": {"value": "C. Hurst and Company", "provenance": "open_library"},
     }
     assert format_bibliography_entry(entry) == (
-        "Leila Vignal. War-Torn. C. Hurst and Company, 2021."
+        "Vignal, L. (2021). *War-Torn*. C. Hurst and Company."
     )
 
 
 def test_a_bibliography_entry_omits_what_did_not_resolve():
+    """A resolved author with everything else absent still names its own
+    absent date `(n.d.)` -- APA's word for it, not an omission (issue
+    #787)."""
     entry = {
         "source_id": "tilly-1978-aaaa",
         "author": {"value": "Charles Tilly", "provenance": "title page"},
@@ -96,7 +100,7 @@ def test_a_bibliography_entry_omits_what_did_not_resolve():
         "date": {"absent": "not_attempted"},
         "publisher": {"absent": "unavailable"},
     }
-    assert format_bibliography_entry(entry) == "Charles Tilly."
+    assert format_bibliography_entry(entry) == "Tilly, C. (n.d.)."
 
 
 def test_an_all_caps_author_is_cased_but_a_mixed_case_one_is_untouched():
