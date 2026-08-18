@@ -1,0 +1,39 @@
+llm_call_request pass=paper_plan model=deepseek/deepseek-v4-pro prompt_chars=20109
+llm_call_response pass=paper_plan model=deepseek/deepseek-v4-pro outcome=received status=200 elapsed=18.64s finish_reason=stop prompt_tokens=4420 completion_tokens=1702 total_tokens=6122
+planned the paper's arc -- 7 section(s)
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=3874
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=3.28s finish_reason=stop prompt_tokens=845 completion_tokens=214 total_tokens=1059
+drafted the 'The Puzzle of Syrian Survival and Violence' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=6205
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=22.37s finish_reason=stop prompt_tokens=1370 completion_tokens=1903 total_tokens=3273
+drafted the 'Two Explanations, Two Syrias: Fierce-But-Weak and Networks of Privilege' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=8421
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=11.20s finish_reason=stop prompt_tokens=1825 completion_tokens=969 total_tokens=2794
+drafted the 'The Political Economy of Syrian Authoritarian Resilience Before 2011' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=11169
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=15.48s finish_reason=stop prompt_tokens=2412 completion_tokens=1374 total_tokens=3786
+drafted the 'The Limits of the Networks Account: What 2011 Exposed' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=15015
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=25.66s finish_reason=stop prompt_tokens=3245 completion_tokens=2282 total_tokens=5527
+drafted the 'War-Making Without State-Building: What Militias Do to Extraction' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=18627
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=19.47s finish_reason=stop prompt_tokens=4046 completion_tokens=1883 total_tokens=5929
+drafted the 'Syria as the Inverted Bellicist Case: External Rent and Self-Funding Coercion' section
+llm_call_request pass=paper_draft model=openai/gpt-5.6-luna prompt_chars=20296
+llm_call_response pass=paper_draft model=openai/gpt-5.6-luna outcome=received status=200 elapsed=26.96s finish_reason=stop prompt_tokens=4385 completion_tokens=2499 total_tokens=6884
+drafted the 'Paramilitarization as Continuation, Not Departure: A Political-Economy Synthesis' section
+llm_call_request pass=paper_shape model=deepseek/deepseek-v4-pro prompt_chars=21391
+llm_call_response pass=paper_shape model=deepseek/deepseek-v4-pro outcome=received status=200 elapsed=18.14s finish_reason=stop prompt_tokens=4017 completion_tokens=457 total_tokens=4474
+llm_call_request pass=paper_abstract model=openai/gpt-5.6-luna prompt_chars=19288
+llm_call_response pass=paper_abstract model=openai/gpt-5.6-luna outcome=received status=200 elapsed=3.42s finish_reason=stop prompt_tokens=3567 completion_tokens=280 total_tokens=3847
+wrote the paper
+paper_brief_id: b02d747edc0bb416
+corpus_pin: sim-2026-07-30
+lens: political-economy
+sections: 7
+claims cited: 36
+confidence: low
+shape: strong
+cross-section repetition: 0.42%
+persisted: data\papers\b02d747edc0bb416.json
+paper: data\papers\b02d747edc0bb416.md

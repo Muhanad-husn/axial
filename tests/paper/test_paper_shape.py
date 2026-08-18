@@ -248,3 +248,21 @@ def test_a_missing_or_unusable_title_falls_back_to_none_without_raising(raw_titl
     band, defects, title = parse_shape_response(json.dumps(response))
     assert band == "strong"
     assert title is None
+
+
+def test_a_missing_title_writes_one_line_to_stderr(capsys):
+    """Same argument as the abstract pass's own failure line (§7.16,
+    §7.18): the render falls back to the thesis and looks plausible, so a
+    judge model that never returns a usable title is otherwise invisible
+    and its rate unmeasurable."""
+    client = _StubClient(
+        {"paper_draft": "drafter/model", "paper_shape": "judge/model"},
+        {"band": "strong", "defects": []},
+    )
+    result = run_shape_check(client, "thesis", _sections())
+
+    assert result.title is None
+    err = capsys.readouterr().err
+    assert "paper_shape_no_title" in err
+    assert "pass=paper_shape" in err
+    assert err.count("paper_shape_no_title") == 1

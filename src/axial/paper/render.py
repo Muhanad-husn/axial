@@ -4,7 +4,8 @@ Plain markdown, rendered deterministically from the record: the same record
 renders the same markdown, byte for byte. No model call, no clock, no
 randomness, nothing read from disk.
 
-Contents in order: title, thesis statement, the plan's sections in plan order
+Contents in order: title, thesis statement, the abstract (§7.18, issue #787),
+the plan's sections in plan order
 with their prose and in-text markers, the counter-position (or the one-sided
 disclosure), the confidence and coverage disclosure, the shape-check block
 (§7.16, issue #578 -- the band and, below `strong`, the named defects), the
@@ -59,6 +60,25 @@ def paper_title(record: dict[str, Any]) -> str:
         or brief.get("thesis")
         or "Untitled paper"
     )
+
+
+def abstract_lines(record: dict[str, Any]) -> list[str]:
+    """The §7.18 abstract block, or nothing at all.
+
+    Emitted VERBATIM, never through `axial.paper.reader.replace_markers`: the
+    abstract is the one block of the paper the prompt forbids markers and
+    citations in, and a stray `[pc-001]` that slipped through must stay
+    visible rather than be silently promoted to a citation. Absent, null or
+    blank yields no lines, so a record written before this issue -- which is
+    every record in `data/papers/` -- renders exactly as it did before it.
+
+    Both renders share this function because both render the same record and
+    the abstract is not audit material; the shape band and the citation table
+    are what the audit render adds."""
+    abstract = record.get("abstract")
+    if not isinstance(abstract, str) or not abstract.strip():
+        return []
+    return ["## Abstract", "", abstract.strip(), ""]
 
 
 def plan_sections(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -277,6 +297,8 @@ def render_paper(record: dict[str, Any]) -> str:
     thesis_statement = plan.get("thesis_statement")
     if thesis_statement:
         lines.extend([str(thesis_statement), ""])
+
+    lines.extend(abstract_lines(record))
 
     for section in plan_sections(record):
         heading = section.get("heading")

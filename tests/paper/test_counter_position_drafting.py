@@ -151,6 +151,7 @@ class StubClient(StubLLMClient):
         "paper_plan": "stub/plan",
         "paper_draft": "stub/draft",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }}
 
     def __init__(self):
@@ -166,6 +167,8 @@ class StubClient(StubLLMClient):
             return json.dumps(self._drafts.pop(0))
         if pass_name == "paper_shape":
             return json.dumps(SHAPE)
+        if pass_name == "paper_abstract":
+            return json.dumps({{"abstract": "This paper argues its own case."}})
         raise AssertionError("unexpected pass_name: " + str(pass_name))
 
     def model_for_pass(self, pass_name=None):

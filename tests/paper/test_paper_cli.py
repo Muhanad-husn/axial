@@ -203,6 +203,7 @@ class StubClient(StubLLMClient):
         "paper_plan": "stub/plan",
         "paper_draft": "stub/draft",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }}
 
     def __init__(self):
@@ -218,6 +219,8 @@ class StubClient(StubLLMClient):
             return json.dumps(self._drafts.pop(0))
         if pass_name == "paper_shape":
             return json.dumps(SHAPE)
+        if pass_name == "paper_abstract":
+            return json.dumps({{"abstract": "This paper argues its own case."}})
         raise AssertionError("unexpected pass_name: " + str(pass_name))
 
     def model_for_pass(self, pass_name=None):
@@ -274,7 +277,13 @@ def test_draft_writes_the_record_and_the_rendered_paper(root):
     # so compare on the filename rather than the fixture's absolute path.
     assert json_files[0].name in out
     assert md_files[0].name in out
-    assert calls == ["paper_plan", "paper_draft", "paper_draft", "paper_shape"]
+    assert calls == [
+        "paper_plan",
+        "paper_draft",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    ]
     assert record["shape"]["band"] == "strong"
 
 
@@ -530,6 +539,7 @@ class StubClient(StubLLMClient):
         "paper_plan": "stub/plan",
         "paper_draft": "stub/draft",
         "paper_shape": "stub/shape",
+        "paper_abstract": "stub/abstract",
     }}
 
     def __init__(self):
@@ -545,6 +555,8 @@ class StubClient(StubLLMClient):
             return json.dumps(self._drafts.pop(0))
         if pass_name == "paper_shape":
             return json.dumps(SHAPE)
+        if pass_name == "paper_abstract":
+            return json.dumps({{"abstract": "This paper argues its own case."}})
         raise AssertionError("unexpected pass_name: " + str(pass_name))
 
     def model_for_pass(self, pass_name=None):
@@ -595,7 +607,13 @@ def test_ask_ends_in_a_drafted_paper(root):
     )
 
     assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
-    assert calls == ["paper_plan", "paper_draft", "paper_draft", "paper_shape"]
+    assert calls == [
+        "paper_plan",
+        "paper_draft",
+        "paper_draft",
+        "paper_shape",
+        "paper_abstract",
+    ]
 
     json_files = list((root / "data" / "papers").glob("*.json"))
     md_files = [

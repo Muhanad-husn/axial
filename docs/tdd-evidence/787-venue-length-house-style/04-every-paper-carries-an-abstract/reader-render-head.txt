@@ -1,0 +1,10 @@
+$ head -8 data/papers/b02d747edc0bb416.md   # the reader-facing render, from the run above
+
+# Privilege and the Contracted-Out Militia
+
+The Syrian regime's survival and its violence are usually explained by different mechanisms, and they should not be: if networks of privilege are what institutionalised the state, then contracting coercion out to militias is not a departure from that arrangement but its continuation by other means.
+
+## Abstract
+
+This paper argues that the Syrian regime’s survival before and during the civil war rested on a single political economy of networked privilege rather than on mechanisms that separated resilience from violence. Before 2011, patronage networks linked public authority to private economic interests, distributing rents and political access while substituting for broad bureaucratic penetration. The uprising and the regime’s reliance on checkpoints, military force, and propaganda nevertheless expose the limits of this arrangement: privilege could not secure the cooperation of excluded populations under mass mobilization, and coercive control did not amount to durable institutional reach. The paper therefore concedes that the fierce-but-weak account captures an important feature of the Syrian state, particularly its reliance on despotic power where infrastructural capacity was thin. It argues, however, that wartime paramilitarization continued rather than replaced the pre-war order. External assistance from Iran and Russia, together with militias’ self-financing through looting, rent-seeking, and criminal economies, allowed the regime to sustain coercion without developing domestic taxation, bureaucratic expansion, or centralized extraction. Delegated violence thus preserved regime survival while further fragmenting state authority and weakening its extractive apparatus. Syria consequently inverted the classical war-making-to-state-building sequence: coercion remained politically effective, but its organization through connected armed actors accelerated the hollowing-out of infrastructural power.
+
