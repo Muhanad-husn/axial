@@ -1,0 +1,40 @@
+# APA rendering across all 35 real data/source_meta records
+# Zero model calls. Read-only against the main checkout's corpus metadata.
+
+source_id                          raw author (as the title page prints it) APA                              in-text
+-------------------------------------------------------------------------------------------------------------------------------------------------
+agamben-2005-b22edc40e0fc          Giorgio Agamben                        Agamben, G.                      Agamben, 2005
+ayubi-1995-16fd6a2e503f            Ayubi, Nazih N.;                       Ayubi, N. N.                     Ayubi, 1995
+batatu-1999-598624067df3           Hanna Batatu                           Batatu, H.                       Batatu, 1999
+bayat-2017-ce6bb0643cfb            Asef Bayat                             Bayat, A.                        Bayat, 2017
+beshara-2011-8410a9059300          Beshara, Adel;                         Beshara, A.                      Beshara, 2011
+caspersen-2012-fbc0efe4fffc        Caspersen, Nina                        Caspersen, N.                    Caspersen, 2012
+chouliaraki-2024-91e7fc84f05c      Lilie Chouliaraki;                     Chouliaraki, L.                  Chouliaraki, 2024
+elcheroth-2017-78f0cccef5b9        Guy Elcheroth and Stephen Reicher      Elcheroth, G., & Reicher, S.     Elcheroth & Reicher, 2017
+gellner-1981-a8b0206cb566          Gellner, Ernest                        Gellner, E.                      Gellner, 1981
+gelvin-1998-f7e1df5f9b1d           James L. Gelvin                        Gelvin, J. L.                    Gelvin, 1998
+gould-2003-abae3539cf15            Roger V. Gould                         Gould, R. V.                     Gould, 2003
+hall-2006-449559bfe4dc             John A. Hall and Ralph Schroeder       Hall, J. A., & Schroeder, R.     Hall & Schroeder, 2006
+heydemann-2000-66701ffbb36c        Steven Heydemann                       Heydemann, S.                    Heydemann, 2000
+heydemann-2004-72a4a9a9b3b0        Steven Heydemann                       Heydemann, S.                    Heydemann, 2004
+hinnebusch-1990-ac29981e616e       Raymond A. Hinnebusch                  Hinnebusch, R. A.                Hinnebusch, 1990
+jackson-1990-7eb3f39a639f          Robert H. Jackson                      Jackson, R. H.                   Jackson, 1990
+kalyvas-2006-0b5817b2642e          STATHIS N. KALYVAS                     Kalyvas, S. N.                   Kalyvas, 2006
+kandiah-2018-454c87b22e16          Lavan Kandiah                          Kandiah, L.                      Kandiah, 2018
+kao-2025-ab19e646ab7d              Kristen Kao (Editor)                   Kao, K.                          Kao, 2025
+malesevic-2007-323a2518e61b        Siniša Malešević and Mark Haugaard     Malešević, S., & Haugaard, M.    Malešević & Haugaard, 2007
+malesevic-2010-fd2cbe41384f        Malešević, Siniša                   Malešević, S.                  Malešević, 2010
+malesevic-2013-5d3ec1809b12        Malesevic, Sinisa                      Malesevic, S.                    Malesevic, 2013
+malesevic-2026-4faeb528594d        Siniša Malešević                       Malešević, S.                    Malešević, 2026
+mann-v1-2012-5f90ead66c93          Mann, Michael                          Mann, M.                         Mann, 2012
+mann-v2-1993-ec759675dcbd          Michael Mann                           Mann, M.                         Mann, 1993
+mann-v3-2012-3e9f48ff605a          Mann, Michael                          Mann, M.                         Mann, 2012
+mann-v4-2013-1b7e828e0199          Michael Mann                           Mann, M.                         Mann, 2013
+smith-2009-cba7b6f3dfba            Anthony D. Smith                       Smith, A. D.                     Smith, 2009
+tilly-1978-f908c910464c            Tilly, Charles                         Tilly, C.                        Tilly, 1978
+ungor-2020-ae5701dcc706            Uğur Ümit Üngör                        Üngör, U. Ü.                     Üngör, 2020
+vignal-2021-c7005c2bf8ef           Leila Vignal ;                         Vignal, L.                       Vignal, 2021
+wedeen-2019-3ae1f7af318d           Wedeen, Lisa;                          Wedeen, L.                       Wedeen, 2019
+white-2011-5f35a47d9657            White, Benjamin Thomas.                White, B. T.                     White, 2011
+wimmer-2013-a67941b77943           Wimmer, Andreas                        Wimmer, A.                       Wimmer, 2013
+zaum-2007-834d3343aa95             Zaum, Dominik.                         Zaum, D.                         Zaum, 2007
