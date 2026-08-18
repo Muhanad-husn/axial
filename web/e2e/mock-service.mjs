@@ -244,6 +244,13 @@ function paperFor(job) {
 // The essay for `job` (issue #784), or `undefined` for every case but
 // `"Beirut"` -- `undefined` so `JSON.stringify` drops the key rather than
 // sending it `null`, matching the real service's "absent, not null" rule.
+//
+// Its bibliography lists every source the three claims' grounds reach,
+// Hinnebusch included, because that is what the real one does:
+// `axial.paper.biblio.source_ids_for_claims` derives the entry set from the
+// grounds, so a source cited in a claim can never be missing from the list
+// below it. A fixture that dropped one would show a reader a bibliography
+// its own claims contradict.
 function essayFor(job) {
   if (job.case !== "Beirut") return undefined;
   return [
@@ -259,11 +266,12 @@ function essayFor(job) {
     "",
     "## Reading Batatu against Vignal",
     "",
-    "Read together, Batatu and Vignal describe the same pattern but disagree on what it explains (Batatu 1999; Vignal 2022).",
+    "Read together, Batatu and Vignal describe the same pattern but disagree on what it explains, and Hinnebusch reads the same evidence a third way (Batatu 1999; Vignal 2022; Hinnebusch 2001).",
     "",
     "## Bibliography",
     "",
     "- Batatu (1999)",
+    "- Hinnebusch (2001)",
     "- Vignal (2022)",
     "",
   ].join("\n");

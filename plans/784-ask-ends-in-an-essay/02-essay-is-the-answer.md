@@ -51,11 +51,22 @@ edits: web/src/app/globals.css
 edits: web/package.json
 edits: web/package-lock.json
 edits: web/e2e/mock-service.mjs
+edits: web/vitest.config.mts
 creates: web/src/components/Essay.tsx
 creates: web/src/components/Essay.test.tsx
+creates: web/src/components/Paper.test.tsx
 creates: web/e2e/essay.spec.ts
 depends-on: 01-essay-from-the-ask
 ```
+
+`web/vitest.config.mts` and `web/src/components/Paper.test.tsx` were added to
+this block while building, not planned into it. The config's `include` widens
+from `src/**/*.test.ts` to `src/**/*.test.{ts,tsx}` so the new component tests
+run at all; `Paper.test.tsx` holds the four `Paper`-level behaviours the inner
+loop below calls for and had nowhere else to live. Neither is touched by slice
+03, so the two stayed independent. `web/src/app/globals.css` is declared above
+and was **not** edited: Tailwind utilities covered the essay and it introduced
+no new colour.
 
 ## Design decisions this slice makes
 
