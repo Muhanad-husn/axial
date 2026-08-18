@@ -158,6 +158,62 @@ def test_one_shot_ask_answers_and_exits_without_any_prompt(monkeypatch, capsys):
     assert "persisted:" in captured.out
 
 
+def test_one_shot_ask_passes_no_fork_prompt(monkeypatch, capsys):
+    """Issue #790: a one-shot `axial ask "..." --case "..."` must not block
+    on `input()` if a genuine intake fork turns up mid-run. `on_fork=None`
+    is `axial.ask.engine.ask`'s own documented way of saying "no interactive
+    answer is available" -- the fork is recorded unanswered
+    (`intake_fork.answer: null`) and the turn proceeds unconstrained,
+    without ever calling a prompt."""
+    import axial.cli as cli_mod
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_ask(question, case, **kwargs):
+        calls.append({"question": question, "case": case, **kwargs})
+        return _turn("sess-1", 1, question, case)
+
+    def _boom_input(label=""):
+        raise AssertionError("one-shot ask must never prompt")
+
+    monkeypatch.setattr(cli_mod, "ask_question", _fake_ask)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+    monkeypatch.setattr(cli_mod, "input", _boom_input, raising=False)
+
+    exit_code = cli_mod.main(["ask", "Who led the uprising?", "--case", "Syria"])
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["on_fork"] is None
+
+
+def test_interactive_session_still_gets_the_fork_prompt(monkeypatch, capsys):
+    """The one-shot short circuit must not swallow the interactive case: a
+    session missing `question` and/or `case` up front still wires the real
+    `_fork_prompt` through, so a live terminal session is unaffected."""
+    import axial.cli as cli_mod
+
+    calls: list[dict[str, Any]] = []
+    prompts = iter(["Syria", "Where did it start?", ""])
+
+    def _fake_input(label=""):
+        return next(prompts)
+
+    def _fake_ask(question, case, **kwargs):
+        calls.append({"question": question, "case": case, **kwargs})
+        return _turn("sess-1", kwargs["turn_index"], question, case)
+
+    monkeypatch.setattr(cli_mod, "input", _fake_input, raising=False)
+    monkeypatch.setattr(cli_mod, "ask_question", _fake_ask)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(["ask"])
+
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert calls[0]["on_fork"] is cli_mod._fork_prompt
+
+
 def test_one_shot_ask_reports_an_engine_error_and_exits_nonzero(monkeypatch, capsys):
     import axial.cli as cli_mod
     from axial.ask.engine import AskError as AskSessionError
