@@ -53,9 +53,14 @@ _AUTHOR_TRAILING_RE = re.compile(r"[\s;,]+$")
 _AUTHOR_ROLE_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 # A string naming more than one person -- `John A. Hall and Ralph
-# Schroeder`, measured in 3 of 35 real `data/source_meta/` records -- has no
-# single surname to invert. Checked as a whole word so a surname that
-# happens to contain the letters (`Anderson`) is never mistaken for a join.
+# Schroeder`, measured in 3 of 35 real `data/source_meta/` records. Checked
+# as a whole word so a surname that happens to contain the letters
+# (`Anderson`) is never mistaken for a join. Exactly two people joined this
+# way is not ambiguous -- `_two_authors` splits on the same word and
+# inverts both halves; `_MULTI_AUTHOR_RE` is the residual never-guess check
+# for everything that split does not resolve (three or more names, or a
+# half with nothing to invert).
+_AUTHOR_JOIN_SPLIT_RE = re.compile(r"\s+and\s+", re.IGNORECASE)
 _MULTI_AUTHOR_RE = re.compile(r"\band\b", re.IGNORECASE)
 
 FULL = "full"
@@ -85,7 +90,14 @@ def author_surname(value: Any) -> str:
     """The surname to print in an in-text citation. `Beshara, Adel` ->
     `Beshara`; `Uğur Ümit Üngör` -> `Üngör`. A single-token value is
     returned whole, and an empty one stays empty -- the caller decides what
-    to print instead."""
+    to print instead.
+
+    A two-person string returns only the FIRST surname -- this function
+    predates the two-author join below and nothing but a legacy fallback
+    still calls it that way; `format_citation`'s `SHORT` form calls
+    `_two_author_surnames` directly instead, for exactly the reason a
+    reader flagged: dropping the second author silently cites the wrong
+    person."""
     text = clean_author(value)
     if not text:
         return ""
@@ -94,9 +106,50 @@ def author_surname(value: Any) -> str:
     return text.split()[-1]
 
 
+def _invert_one(text: str) -> tuple[str, str] | None:
+    """`(surname, initials)` for `text`, assumed to name exactly one
+    person -- the surname picked the same way `author_surname` already
+    picks it, the text before a comma or the last whitespace token, so
+    nothing is ever folded to find it. `None` when there is nothing to
+    invert: a single bare token has no given name to make an initial
+    from."""
+    if "," in text:
+        surname, _, given = text.partition(",")
+    else:
+        tokens = text.split()
+        if len(tokens) < 2:
+            return None
+        surname, given = tokens[-1], " ".join(tokens[:-1])
+    surname = surname.strip()
+    if not surname:
+        return None
+    initials = " ".join(f"{token[0].upper()}." for token in given.split() if token[:1].isalpha())
+    return surname, initials
+
+
+def _two_authors(text: str) -> tuple[tuple[str, str], tuple[str, str]] | None:
+    """The two `(surname, initials)` pairs in `text`, when it names exactly
+    two people joined by a word-bounded `and` and both halves resolve --
+    `None` for every other shape: one person, three or more, or a half with
+    nothing to invert. A word-bounded `and` join is not a guess -- it is
+    two names -- so this is not the never-guess fallback; three or more
+    names and everything else genuinely ambiguous still falls through to
+    it."""
+    parts = _AUTHOR_JOIN_SPLIT_RE.split(text)
+    if len(parts) != 2:
+        return None
+    first = _invert_one(parts[0].strip())
+    second = _invert_one(parts[1].strip())
+    if first is None or second is None:
+        return None
+    return first, second
+
+
 def apa_author(value: Any) -> str:
     """`value` as APA wants an author printed in the bibliography:
-    `Surname, F. M.`
+    `Surname, F. M.`, or -- for the 3 of 35 real `data/source_meta/`
+    records that name two people (`John A. Hall and Ralph Schroeder`) --
+    `Surname, F. M., & Surname, F. M.`
 
     The surname is picked exactly the way `author_surname` already picks it
     -- the text before a comma, or the last whitespace token -- so `Michael
@@ -106,28 +159,41 @@ def apa_author(value: Any) -> str:
     where the surname is, so `Siniša Malešević` inverts to `Malešević, S.`
     with its diacritic intact in either metadata order.
 
-    Where the string cannot be confidently inverted, it prints exactly as
-    given -- `biblio.py`'s own never-guess rule. Two cases trigger it: a
-    string naming more than one person (`John A. Hall and Ralph Schroeder`,
-    measured in 3 of 35 real `data/source_meta/` records -- there is no
-    single surname to invert to), and a single bare token (nothing to
-    attach an initial to, and nothing gained by inverting it onto itself).
-    """
+    A confidently-split two-person string inverts both halves rather than
+    falling back -- a word-bounded `and` names two people, not an
+    ambiguity, and printing the raw string buried the second author's
+    surname (and every reader's actual search key) mid-sentence. Where the
+    string still cannot be confidently resolved -- three or more names, or
+    a half with nothing to invert -- it prints exactly as given,
+    `biblio.py`'s own never-guess rule."""
     text = clean_author(value)
-    if not text or _MULTI_AUTHOR_RE.search(text):
+    if not text:
         return text
-    if "," in text:
-        surname, _, given = text.partition(",")
-    else:
-        tokens = text.split()
-        if len(tokens) < 2:
-            return text
-        surname, given = tokens[-1], " ".join(tokens[:-1])
-    surname = surname.strip()
-    if not surname:
+    two = _two_authors(text)
+    if two is not None:
+        (surname1, initials1), (surname2, initials2) = two
+        first = f"{surname1}, {initials1}" if initials1 else surname1
+        second = f"{surname2}, {initials2}" if initials2 else surname2
+        return f"{first}, & {second}"
+    if _MULTI_AUTHOR_RE.search(text):
         return text
-    initials = " ".join(f"{token[0].upper()}." for token in given.split() if token[:1].isalpha())
+    inverted = _invert_one(text)
+    if inverted is None:
+        return text
+    surname, initials = inverted
     return f"{surname}, {initials}" if initials else surname
+
+
+def _two_author_surnames(text: str) -> str | None:
+    """`"Hall & Schroeder"` for a confidently-split two-person string --
+    APA's own in-text join, surnames only, no comma before the `&` (the
+    comma before the year is added by the caller). `None` when `text` does
+    not split into exactly two resolvable names."""
+    two = _two_authors(text)
+    if two is None:
+        return None
+    (surname1, _), (surname2, _) = two
+    return f"{surname1} & {surname2}"
 
 
 def format_citation(citation: Any, *, form: str = FULL) -> str | None:
@@ -138,9 +204,12 @@ def format_citation(citation: Any, *, form: str = FULL) -> str | None:
     whatever locator resolved; `short` is APA's own in-text shape, the
     surname and the year with a comma between them (`Vignal, 2021`) -- a
     date that did not resolve reads `n.d.` rather than dropping silently. A
-    block that resolved no author falls back to its `source_id`, which is
-    still a real answer to "which book"; one carrying nothing at all
-    returns `None`."""
+    two-author source cites both surnames, `Hall & Schroeder` -- naming
+    only the first would silently cite the wrong person, and no `,`
+    precedes the `&`, matching APA's own in-text join. A block that
+    resolved no author falls back to its `source_id`, which is still a
+    real answer to "which book"; one carrying nothing at all returns
+    `None`."""
     if not isinstance(citation, dict):
         return None
     source_id = citation.get("source_id")
@@ -149,7 +218,11 @@ def format_citation(citation: Any, *, form: str = FULL) -> str | None:
     date_text = str(date).strip() if date not in (None, "") else ""
 
     if form == SHORT:
-        who = author_surname(author) or (str(source_id) if source_id else "")
+        who = (
+            _two_author_surnames(author)
+            or author_surname(author)
+            or (str(source_id) if source_id else "")
+        )
         if not who:
             return None
         return f"{who}, {date_text or 'n.d.'}"

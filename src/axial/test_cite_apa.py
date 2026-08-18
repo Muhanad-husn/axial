@@ -4,9 +4,11 @@ The house style is APA, applied everywhere the reader-facing render cites a
 source. The one real risk is inverting a full name to `Surname, F. M.` --
 `apa_author` picks the surname the same way `author_surname` already does
 (the text before a comma, or the last whitespace token), so it never needs
-to fold a diacritic to decide where the surname is; only a string naming
-more than one person is genuinely unresolvable, and that prints as given
-rather than guessed at.
+to fold a diacritic to decide where the surname is. A word-bounded `and`
+joining exactly two people (measured: 3 of 35 real `data/source_meta/`
+records) is not ambiguous either -- both halves invert. Only three or more
+names, or a half with nothing to invert, is genuinely unresolvable, and
+that prints as given rather than guessed at.
 """
 
 from __future__ import annotations
@@ -37,12 +39,34 @@ def test_a_diacritic_survives_inversion_in_either_metadata_order():
     assert apa_author("Malešević, Siniša") == "Malešević, S."
 
 
-def test_a_two_person_string_prints_as_given_rather_than_guessed_at():
+def test_a_two_person_string_inverts_both_halves_not_just_the_first():
     """`John A. Hall and Ralph Schroeder` (measured: 3 of 35 real
-    `data/source_meta/` records join two people this way) has no single
-    surname to invert to. `biblio.py`'s never-guess rule: print it exactly
-    as the record carries it."""
-    assert apa_author("John A. Hall and Ralph Schroeder") == "John A. Hall and Ralph Schroeder"
+    `data/source_meta/` records join two people this way) is not ambiguous
+    -- a word-bounded `and` names two people, and printing the raw string
+    buried the second author's own surname mid-sentence, unfindable under
+    its own letter in a sorted bibliography. Both halves invert."""
+    assert apa_author("John A. Hall and Ralph Schroeder") == "Hall, J. A., & Schroeder, R."
+
+
+def test_three_or_more_names_still_print_as_given():
+    """The never-guess fallback still governs what does not cleanly split
+    into exactly two names -- a second `and` means the string names three
+    people, not two, and `_two_authors` only ever resolves an exact
+    two-way split."""
+    text = "Guy Elcheroth and Stephen Reicher and Djordje Elcheroth"
+    assert apa_author(text) == text
+
+
+def test_in_text_short_form_joins_two_authors_with_an_ampersand_no_comma():
+    """APA's own in-text join for two authors: both surnames, `&` between
+    them with no comma before it -- the comma the caller adds is only
+    between the whole name and the year."""
+    citation = {
+        "source_id": "hall-2006",
+        "author": "John A. Hall and Ralph Schroeder",
+        "date": "2006",
+    }
+    assert format_citation(citation, form=SHORT) == "Hall & Schroeder, 2006"
 
 
 def test_all_caps_and_role_and_trailing_punctuation_are_still_cleaned_first():
@@ -82,7 +106,7 @@ def test_a_fully_resolved_entry_reads_surname_initials_year_title_publisher():
     )
 
 
-def test_a_two_person_author_is_not_inverted_in_the_bibliography_either():
+def test_a_two_person_author_inverts_both_halves_in_the_bibliography_too():
     entry = _entry(
         author="John A. Hall and Ralph Schroeder",
         title="The Anatomy of Power",
@@ -90,7 +114,7 @@ def test_a_two_person_author_is_not_inverted_in_the_bibliography_either():
         publisher="Cambridge University Press",
     )
     assert format_bibliography_entry(entry) == (
-        "John A. Hall and Ralph Schroeder. (2006). *The Anatomy of Power*. "
+        "Hall, J. A., & Schroeder, R. (2006). *The Anatomy of Power*. "
         "Cambridge University Press."
     )
 

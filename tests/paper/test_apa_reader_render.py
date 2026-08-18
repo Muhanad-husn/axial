@@ -166,11 +166,15 @@ def test_every_in_text_citation_carries_a_comma_before_the_year():
 
     assert "(Vignal, 2021; Mann, 2013)" in markdown
     assert "(Mann, 2012)" in markdown
-    # The never-guess fallback is `biblio.py`'s own rule for the
-    # bibliography's full name inversion; the in-text short form never
-    # inverts anything, so a two-author source still cites its last
-    # whitespace token here -- unchanged, out of this slice's scope.
-    assert "(Schroeder, n.d.)" in markdown
+
+
+def test_a_two_author_source_cites_both_surnames_in_text():
+    """Naming only the first author (the old last-whitespace-token
+    fallback) silently cited the wrong person -- `Hall & Schroeder` is
+    APA's own two-author in-text join, no comma before the `&`."""
+    markdown = render_reader_paper(_record())
+
+    assert "(Hall & Schroeder, n.d.)" in markdown
 
 
 def test_the_same_author_in_both_metadata_orders_renders_identically():
@@ -186,11 +190,14 @@ def test_a_diacritic_survives_bibliography_inversion():
     assert "- Malešević, S. (2010). *The Sociology of War and Violence*. Polity." in markdown
 
 
-def test_a_two_person_string_prints_as_given_in_the_bibliography():
+def test_a_two_person_string_inverts_both_surnames_in_the_bibliography():
+    """A reader handed `Hall & Schroeder` in text must find that entry
+    filed under H, not buried mid-string under a raw `John A. Hall and
+    Ralph Schroeder` line."""
     markdown = render_reader_paper(_record())
 
     assert (
-        "- John A. Hall and Ralph Schroeder. (n.d.). *An Anatomy of Power*. "
+        "- Hall, J. A., & Schroeder, R. (n.d.). *An Anatomy of Power*. "
         "Cambridge University Press." in markdown
     )
 
