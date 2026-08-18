@@ -4,7 +4,7 @@
 - **Slice slug:** house-style-is-domain-data
 - **Branch:** feat/787-venue-length-house-style/05-house-style-is-domain-data
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☐ built, awaiting the measurement
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -120,12 +120,12 @@ callers live, and the block has to reach them from somewhere.
 
 ## Inner loop — initial unit test list
 
-- [ ] The loader reads `house_style.yaml` from a domain *directory* and exposes it without any country- or corpus-specific handling.
-- [ ] `compose_draft_prompt` carries the block when the frame declares one.
-- [ ] `compose_abstract_prompt` carries the same block, on the same terms.
-- [ ] A domain with no `house_style.yaml` composes both prompts byte-identical to what they are on `main` at `5a34d45`. This is the regression that matters most: four slices' worth of measured prompt behaviour sits behind it.
-- [ ] A malformed block fails loudly at load with a typed error, rather than being silently dropped into a prompt.
-- [ ] The block is context only — nothing anywhere validates, scores or rejects prose against it.
+- [x] The loader reads `house_style.yaml` from a domain *directory* and exposes it without any country- or corpus-specific handling.
+- [x] `compose_draft_prompt` carries the block when the frame declares one.
+- [x] `compose_abstract_prompt` carries the same block, on the same terms.
+- [x] A domain with no `house_style.yaml` composes both prompts byte-identical to what they are on `main` at `5a34d45`. This is the regression that matters most: four slices' worth of measured prompt behaviour sits behind it. Pinned against goldens composed on that commit, in `tests/paper/golden/`.
+- [x] A malformed block fails loudly at load with a typed error, rather than being silently dropped into a prompt.
+- [x] The block is context only — nothing anywhere validates, scores or rejects prose against it.
 
 ## Measurement (reviewed 2026-08-18, before the slice was built)
 
@@ -194,9 +194,9 @@ instruction restated.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
-- [ ] Refactor pass complete with the bar green.
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
+- [x] Refactor pass complete with the bar green.
 - [ ] Measured per the section below. Logged under `data/logs/<date>-787-house-style/`.
 - [ ] Slice's tests run in CI (`tdd-ci`).
 - [ ] Evidence collected and PR opened into `main` (`safe-pr`).
@@ -207,3 +207,16 @@ instruction restated.
 - 2026-08-18 revised before building: reaches the abstract as well as the
   drafter; lives in its own `house_style.yaml` rather than `schema.yaml`; the
   measurement rewritten around the one countable signal slice 04 turned up.
+- 2026-08-18 built. `src/axial/paper/house_style.py` loads the block;
+  `run_paper` resolves it once, beside the lens, and passes it to
+  `compose_draft_prompt` and `compose_abstract_prompt` through one shared
+  `prompt_block`. `config/domains/syria/house_style.yaml` carries nine
+  conventions, none of which names a string the measurement counts. Byte
+  identity with `main` at 5a34d45 is pinned against goldens in
+  `tests/paper/golden/`, composed from that tree before a line changed. Two
+  things the plan's framing implied were left out deliberately: citation
+  style, because a finished paper's citations are rendered mechanically from
+  markers and the abstract prompt forbids citations outright, so a "cite in
+  APA" convention would fight both; and heading conventions, because headings
+  come from the planner, which this block does not reach. The measurement is
+  not run -- it is the founder's.

@@ -46,6 +46,7 @@ from typing import Any
 from axial.llm import PAPER_DRAFT_PASS_NAME, EventCallback, emit_event
 from axial.model_json import complete_json, parse_model_json
 from axial.paper.claims import MIN_DISTINCT_RECORDS
+from axial.paper.house_style import HouseStyle, prompt_block
 from axial.paper.lens import Lens
 from axial.paper.plan import COUNTER_POSITION_ROLE, Plan, Section
 
@@ -358,6 +359,7 @@ def compose_draft_prompt(
     has_visible_claims: bool = True,
     cross_source_possible: bool = True,
     word_budget: int | None = None,
+    house_style: HouseStyle | None = None,
 ) -> str:
     """The stage-3 prompt for one section.
 
@@ -375,10 +377,15 @@ def compose_draft_prompt(
     `word_budget` (issue #787 slice 02) is this section's own share of a
     brief's `target_words`, `None` on every brief that declares no length
     target -- the prompt is then unchanged from before this parameter
-    existed, byte for byte."""
+    existed, byte for byte.
+
+    `house_style` (issue #787 slice 05) is the domain frame's prose
+    conventions, `None` on a domain that declares none -- and `None` composes
+    the identical prompt, on the same terms as `word_budget` above."""
     counter_position_block = _counter_position_block(section.role)
     counter_position_line = f"\n{counter_position_block}\n" if counter_position_block else ""
     word_budget_line = _word_budget_line(word_budget)
+    house_style_block = prompt_block(house_style)
     return f"""You are the drafting pass of a paper author (specs/PHASE-C.md §7.4). Write ONE section of a paper. You have no tools, no retrieval, and no access to any source: the claims below are the whole world, and you may not assert anything that is not traceable to one of them.
 
 The paper argues: "{thesis_statement}"
@@ -404,7 +411,7 @@ THE ARGUMENT LEADS AND THE SOURCES SUPPORT IT. This is the single thing that dec
 
 Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. A claim marked "c" is this paper's OWN verdict -- your judgment, never a source's -- and must be voiced the same honest way, as this paper's own conclusion. Write either in your own register, and do not launder either into "scholars have shown".
 
-{_new_claims_block(has_visible_claims, cross_source_possible)}
+{house_style_block}{_new_claims_block(has_visible_claims, cross_source_possible)}
 
 Return JSON only:
 {{"prose": "...", "new_claims": {_new_claims_example(has_visible_claims, cross_source_possible)}}}"""
@@ -531,12 +538,19 @@ def draft_section(
     claims_by_id: dict[str, dict[str, Any]],
     already_cited: list[dict[str, Any]],
     cross_source_possible: bool = True,
+    house_style: HouseStyle | None = None,
     on_event: EventCallback | None = None,
 ) -> SectionDraft:
     """One section, with a bounded retry (issue #598) on `DraftError` --
     `DraftParseError`, the new-claim validation errors, and the §7.4 span
     check on a proposed (b) claim (issue #616), which used to run only after
     this function returned and was fatal on the first occurrence.
+
+    `house_style` (issue #787 slice 05) is the domain frame's prose
+    conventions, resolved once by `axial.paper.record.run_paper` and passed
+    down the same way the lens is. Unlike `section.word_budget` it is not a
+    fact about the section, so it is taken as a parameter rather than read
+    off one.
 
     `section.word_budget` (issue #787 slice 02) reaches the prompt through
     `compose_draft_prompt` unchanged -- this function reads it off the
@@ -568,6 +582,7 @@ def draft_section(
         has_visible_claims=bool(visible),
         cross_source_possible=cross_source_possible,
         word_budget=section.word_budget,
+        house_style=house_style,
     )
     prompt = base_prompt
     for attempt in range(1, _MAX_ATTEMPTS + 1):
