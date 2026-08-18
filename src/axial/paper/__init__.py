@@ -26,6 +26,7 @@ from __future__ import annotations
 from axial.paper.brief import (
     AnalysisIdsError,
     EmptyPaperBriefFieldError,
+    InvalidTargetWordsError,
     MalformedPaperBriefError,
     MissingPaperBriefFieldError,
     MissingPaperBriefFileError,
@@ -138,6 +139,7 @@ __all__ = [
     "EmptyPaperBriefFieldError",
     "EmptySectionError",
     "InvalidNewClaimKindError",
+    "InvalidTargetWordsError",
     "InventoryClaim",
     "Lens",
     "LensError",

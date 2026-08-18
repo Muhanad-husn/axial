@@ -32,7 +32,11 @@ from axial.yaml_loader import SAFE_LOADER
 # The only top-level keys a paper brief may declare (§7.1 minus
 # `paper_brief_id`, which is computed, never read from the file). An
 # unrecognised key is rejected rather than silently dropped.
-KNOWN_KEYS = {"thesis", "analysis_ids", "lens", "title"}
+#
+# `target_words` (issue #787 slice 02): an optional total the arc planner
+# allocates a per-section share of. Length is an input the analyst sets, not
+# a constant derived anywhere in this module.
+KNOWN_KEYS = {"thesis", "analysis_ids", "lens", "title", "target_words"}
 
 # Truncation length, matching `axial.brief.intake._BRIEF_ID_LENGTH`: long
 # enough to be effectively collision-free at this corpus's scale, short enough
@@ -116,6 +120,22 @@ class NonStringPaperBriefFieldError(PaperBriefError):
         )
 
 
+class InvalidTargetWordsError(PaperBriefError):
+    """Raised when `target_words` is present but not a positive integer.
+
+    Same typed-error shape as the other single-field rejections in this
+    module: names the path and the offending value, never coerces."""
+
+    def __init__(self, path: Path, value: Any):
+        self.path = path
+        self.field = "target_words"
+        self.value = value
+        super().__init__(
+            f"paper brief at {path} has an invalid 'target_words': {value!r} "
+            "(expected a positive integer)"
+        )
+
+
 class AnalysisIdsError(PaperBriefError):
     """Raised when `analysis_ids` is not a non-empty list of distinct,
     non-empty strings. §7.1 requires it present and non-empty; a duplicate id
@@ -139,6 +159,7 @@ class PaperBriefContent:
     analysis_ids: tuple[str, ...]
     lens: str | None = None
     title: str | None = None
+    target_words: int | None = None
 
 
 @dataclass(frozen=True)
@@ -150,6 +171,7 @@ class PaperBrief:
     analysis_ids: tuple[str, ...]
     lens: str | None = None
     title: str | None = None
+    target_words: int | None = None
 
 
 def compute_paper_brief_id(content: PaperBriefContent) -> str:
@@ -158,18 +180,25 @@ def compute_paper_brief_id(content: PaperBriefContent) -> str:
 
     `analysis_ids` is hashed in the ORDER THE BRIEF DECLARED, not sorted: §7.3
     persists `source_analyses` "in brief order", so the order is content the
-    operator chose and re-ordering it is a different paper brief."""
-    canonical = json.dumps(
-        {
-            "thesis": content.thesis,
-            "analysis_ids": list(content.analysis_ids),
-            "lens": content.lens,
-            "title": content.title,
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    operator chose and re-ordering it is a different paper brief.
+
+    `target_words` is hashed only when the brief actually declares one
+    (issue #787 slice 02). A different target length is genuinely a
+    different paper, so including it is correct -- but the four-key dict
+    below is exactly what every id on disk before this slice was computed
+    over, and adding a fifth key unconditionally, even as `null`, would
+    change every one of them. Omitting the key when there is no target
+    keeps a brief that never mentions length hashing to its original id."""
+    canonical: dict[str, Any] = {
+        "thesis": content.thesis,
+        "analysis_ids": list(content.analysis_ids),
+        "lens": content.lens,
+        "title": content.title,
+    }
+    if content.target_words is not None:
+        canonical["target_words"] = content.target_words
+    canonical_json = json.dumps(canonical, sort_keys=True, ensure_ascii=True)
+    digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     return digest[:_PAPER_BRIEF_ID_LENGTH]
 
 
@@ -203,6 +232,20 @@ def _optional_nonblank(path: Path, raw: dict[str, Any], field_name: str) -> str 
     if not stripped:
         raise EmptyPaperBriefFieldError(path, field_name)
     return stripped
+
+
+def _validate_target_words(path: Path, raw: dict[str, Any]) -> int | None:
+    """`target_words` is optional (§7.1 slice 02): absent or `null` means the
+    paper carries no length target, exactly as it did before this field
+    existed. A present value must be a positive integer -- `bool` is
+    rejected explicitly because Python's `bool` is an `int` subclass, and
+    `True`/`False` are not word counts."""
+    if "target_words" not in raw or raw["target_words"] is None:
+        return None
+    value = raw["target_words"]
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise InvalidTargetWordsError(path, value)
+    return value
 
 
 def _validate_analysis_ids(path: Path, raw: dict[str, Any]) -> tuple[str, ...]:
@@ -244,8 +287,15 @@ def _validate_paper_brief_dict(path: Path, raw: Any) -> PaperBriefContent:
     analysis_ids = _validate_analysis_ids(path, raw)
     lens = _optional_nonblank(path, raw, "lens")
     title = _optional_nonblank(path, raw, "title")
+    target_words = _validate_target_words(path, raw)
 
-    return PaperBriefContent(thesis=thesis, analysis_ids=analysis_ids, lens=lens, title=title)
+    return PaperBriefContent(
+        thesis=thesis,
+        analysis_ids=analysis_ids,
+        lens=lens,
+        title=title,
+        target_words=target_words,
+    )
 
 
 def build_paper_brief(content: PaperBriefContent) -> PaperBrief:
@@ -262,6 +312,7 @@ def build_paper_brief(content: PaperBriefContent) -> PaperBrief:
         analysis_ids=content.analysis_ids,
         lens=content.lens,
         title=content.title,
+        target_words=content.target_words,
     )
 
 

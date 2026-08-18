@@ -4,7 +4,7 @@
 - **Slice slug:** length-is-a-plan-target
 - **Branch:** feat/787-venue-length-house-style/02-length-is-a-plan-target
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ built (branch pushed, PR not opened -- see progress log)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -83,13 +83,13 @@ depends-on: 01-counter-position-at-its-strongest
 
 ## Inner loop — initial unit test list
 
-- [ ] A brief with no `target_words` computes the same `paper_brief_id` it computes today (pinned against a known existing id).
-- [ ] A brief declaring `target_words` computes a different id from the same brief without it.
-- [ ] `target_words` is rejected when it is not a positive integer, with the same typed-error shape the other brief fields use.
-- [ ] `compose_plan_prompt` states the total target and asks the planner to allocate a per-section share.
-- [ ] The parsed `Plan` carries each section's allocated word budget, and the allocations sum to the target.
-- [ ] `compose_draft_prompt` states that one section's own budget; with no target set, the prompt is byte-identical to slice 01's.
-- [ ] The counter-position section is never allocated the smallest share by construction — a floor, or the allocation is the planner's with the instruction that the counter-position is not the section to squeeze.
+- [x] A brief with no `target_words` computes the same `paper_brief_id` it computes today (pinned against a known existing id).
+- [x] A brief declaring `target_words` computes a different id from the same brief without it.
+- [x] `target_words` is rejected when it is not a positive integer, with the same typed-error shape the other brief fields use.
+- [x] `compose_plan_prompt` states the total target and asks the planner to allocate a per-section share.
+- [x] The parsed `Plan` carries each section's allocated word budget, and the allocations sum to the target.
+- [x] `compose_draft_prompt` states that one section's own budget; with no target set, the prompt is byte-identical to slice 01's.
+- [x] The counter-position section is never allocated the smallest share by construction — a floor, or the allocation is the planner's with the instruction that the counter-position is not the section to squeeze.
 
 ## The measurement that closes the slice
 
@@ -136,13 +136,48 @@ in before the first arm.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Real-corpus measurement run complete and logged, showing the length lands and slice 01's gain holds.
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; `uv run pytest` and `uv run ruff check` green locally.
+- [x] Refactor pass complete with the bar green.
+- [ ] Real-corpus measurement run complete and logged, showing the length lands and slice 01's gain holds. **Deliberately not run by this builder** -- it is a paid run in the main checkout, out of scope per the brief that dispatched this slice.
 - [ ] Slice's tests run in CI (`tdd-ci`).
 - [ ] Evidence collected and PR opened into `main` (`safe-pr`).
 
 ## Status / progress log
 
 - 2026-08-18 planned.
+- 2026-08-18 built (slice 02, red-green-refactor, no PR opened): `target_words`
+  added to `PaperBriefContent`/`PaperBrief` and `KNOWN_KEYS`, validated as a
+  positive integer (`InvalidTargetWordsError`), and hashed into
+  `compute_paper_brief_id` **only when present** -- pinned against all 10 real
+  records in `data/papers/` plus the plan's own worked example
+  (`273aea05df54e2df`), all of which still compute their original id.
+  `compose_plan_prompt`/`parse_plan_response`/`run_plan` gained an optional
+  `target_words` that states the total, asks for a per-section `word_budget`
+  summing to it, and enforces a relative floor: a counter-position section's
+  budget may never fall below the smallest share any other section carries
+  (`_check_word_budgets`, `PlanParseError` on violation -- retried like any
+  other malformed plan response, no new error class). `compose_draft_prompt`
+  gained an optional `word_budget` stated as a target, never a cap; `None`
+  leaves the prompt byte-identical to slice 01's. `run_paper` threads
+  `paper_brief.target_words` into `run_plan`; `record.py`'s persisted
+  `paper_brief` block carries the field. No post-hoc truncation anywhere --
+  nothing downstream of drafting reads `word_budget` again.
+  New tests: `tests/paper/test_length_target.py` (brief-id pinning,
+  `target_words` validation, draft-prompt regression, and the acceptance
+  criterion end to end against a stub client -- rendered word count landed at
+  421 against a 400-word target, 5.25% off, well inside the chosen ±25%
+  tolerance) and `tests/paper/test_plan_length_allocation.py` (prompt content,
+  parsing, sum-to-target, and the counter-position floor). `uv run pytest`
+  (2525 passed) and `tests/paper/` (all green) and `uv run ruff check` all
+  clean. Real-corpus measurement intentionally left to a later, explicitly
+  authorized run in the main checkout.
+- 2026-08-18 review: `axial paper examine` never passed `target_words` to
+  `run_plan`, so the inspect-before-spend view ignored the brief's own length
+  target entirely, and `format_plan` did not render a share even when one
+  existed. Both fixed test-first. Validated against the real planner:
+  `deepseek-v4-pro` allocated 300/500/600/400/550/350/300 over seven sections
+  for a 3000-word target -- exact to the word, zero retries across four
+  planning calls -- and the counter-position floor held (350 against a 300
+  minimum elsewhere). The exact-sum rule was the risk worth probing and it
+  costs nothing in practice.

@@ -1,0 +1,27 @@
+# The allocation, from the real planner -- zero drafting calls
+
+$ uv run axial paper examine <a dev brief with target_words: 3000>
+
+paper_brief_id: 536a169a7665ecf8
+lens: "political-economy" - Reads the evidence for how material interests, resource control, and distributive conflict shape political outcomes: who controls what economic base, who bears the cost of a given arrangement, and how economic structure constrains or enables the political actors the evidence describes.
+thesis: The Syrian regime's survival and its violence are usually explained by different mechanisms, and they should not be: if networks of privilege are what institutionalized the state, then contracting coercion out to self-funding militias is not a departure from that arrangement but its continuation by other means.
+[setup] Two Explanations, One Regime (s1) -- 350 words
+[claim] The Fierce-but-Weak Baseline and Its Limits (s2) -- 400 words
+[evidence] Networks of Privilege as Institutional Substance (s3) -- 550 words
+[counter-position] The Bellicist Counter-Position: War Makes States (s4) -- 500 words
+[claim] External Rent and Outsourced Coercion (s5) -- 500 words
+[synthesis] The Syrian Synthesis: Continuation by Other Means (s6) -- 700 words
+
+# Model: deepseek/deepseek-v4-pro. One paper_plan call, no retries.
+#
+# 350 + 400 + 550 + 500 + 500 + 700 = 3000, exact to the word. The parser
+# refuses anything else rather than silently rebalancing.
+#
+# The counter-position section (s4) carries 500 against a 350 minimum
+# elsewhere, so the relative floor holds: a counter-position share may never
+# fall below the smallest share any other section carries.
+#
+# Across four planning calls during review, on two different plans, every one
+# summed exactly on the first attempt. The exact-sum rule was the risk worth
+# probing -- models are poor at arithmetic and a retry storm would be paid for
+# on every real run -- and it costs nothing in practice.

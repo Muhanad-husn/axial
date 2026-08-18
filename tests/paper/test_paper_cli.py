@@ -125,9 +125,12 @@ def _write_paper_brief(
     analysis_ids,
     thesis="Which account explains the outcome?",
     lens="state-formation",
+    target_words=None,
 ) -> Path:
     path = root / "paper_brief.yaml"
     content = {"thesis": thesis, "analysis_ids": list(analysis_ids), "lens": lens}
+    if target_words is not None:
+        content["target_words"] = target_words
     path.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8")
     return path
 
@@ -147,6 +150,14 @@ PLAN = {
             "role": "counter-position",
             "assigned_claims": [{"brief_id": "brief-b", "claim_id": "b1"}],
         },
+    ],
+}
+
+PLAN_WITH_BUDGETS = {
+    "thesis_statement": PLAN["thesis_statement"],
+    "sections": [
+        {**PLAN["sections"][0], "word_budget": 1200},
+        {**PLAN["sections"][1], "word_budget": 1800},
     ],
 }
 
@@ -324,6 +335,27 @@ def test_examine_makes_zero_drafting_calls(root):
         "brief-a / a1"
         in out.split("[claim] The bellicist account")[1].split("[counter-position]")[0]
     )
+
+
+def test_examine_shows_the_length_allocation_before_any_drafting_spend(root):
+    """A brief declaring `target_words` must reach the planner through the
+    examine path too (issue #787 slice 02). `examine` is the
+    inspect-before-spend view, and a length target is decided in the plan --
+    seeing it only after a paid draft costs exactly the spend this view
+    exists to avoid."""
+    brief_path = _write_paper_brief(
+        root, analysis_ids=["brief-a", "brief-b"], target_words=3000
+    )
+
+    exit_code, out, err, calls = _run_paper_cli(
+        root, ["paper", "examine", str(brief_path)], plan=PLAN_WITH_BUDGETS
+    )
+
+    assert exit_code == 0, f"stdout: {out!r}\nstderr: {err!r}"
+    assert calls == ["paper_plan"], "still zero drafting calls"
+    # The stub plan's own shares, rendered in the per-section view.
+    assert "1200 words" in out
+    assert "1800 words" in out
 
 
 def test_draft_rejects_an_unresolvable_analysis_id(root):
