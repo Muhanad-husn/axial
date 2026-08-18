@@ -1,0 +1,11 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\axial
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collected 7 items
+
+tests\paper\test_draft_counter_position.py .....                         [ 71%]
+tests\paper\test_counter_position_drafting.py ..                         [100%]
+
+============================= 7 passed in 17.83s ==============================
