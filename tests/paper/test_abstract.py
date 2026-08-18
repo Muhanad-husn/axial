@@ -356,3 +356,20 @@ def test_a_malformed_abstract_response_leaves_the_paper_drafted_and_the_field_nu
 
     rendered = (papers_dir / f"{record['paper_brief_id']}.md").read_text(encoding="utf-8")
     assert "Abstract" not in rendered
+
+
+def test_an_unusable_abstract_response_is_still_named_and_priced(
+    tmp_path, analyses_dir, lenses_dir
+):
+    """The call went out and its tokens were spent whether or not the
+    response came back usable. `model_by_pass` is the key set `cost` is
+    priced against (§7.3), so a pass missing from it is spend missing from
+    `total_usd` -- a field the spec calls a priced ceiling."""
+    record, client, _ = _run(
+        tmp_path, analyses_dir, lenses_dir, abstract_response=json.dumps({"abstract": ""})
+    )
+    assert record["abstract"] is None
+    assert [name for name, _ in client.prompts].count(PAPER_ABSTRACT_PASS_NAME) == 1
+
+    assert record["model_by_pass"][PAPER_ABSTRACT_PASS_NAME] == "stub/abstract"
+    assert PAPER_ABSTRACT_PASS_NAME in record["cost"]["by_pass"]

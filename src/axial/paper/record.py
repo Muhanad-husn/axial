@@ -336,12 +336,14 @@ def run_paper(
         PAPER_PLAN_PASS_NAME: client.model_for_pass(PAPER_PLAN_PASS_NAME),
         PAPER_DRAFT_PASS_NAME: client.model_for_pass(PAPER_DRAFT_PASS_NAME),
         PAPER_SHAPE_PASS_NAME: shape_result.model,
+        # Named on every run, including one whose response came back
+        # unusable: the call was made and its tokens were spent either way,
+        # and `model_by_pass` is the key set `cost` is priced against. A
+        # missing key here is missing spend in `total_usd`. What the run got
+        # for the money is `abstract`'s own business, and `abstract: null`
+        # already says it.
+        PAPER_ABSTRACT_PASS_NAME: client.model_for_pass(PAPER_ABSTRACT_PASS_NAME),
     }
-    # Named only when the pass produced something. A run whose abstract call
-    # came back unusable has no model to attribute the paper's abstract to,
-    # and naming one anyway would price a pass that contributed nothing.
-    if abstract_result is not None:
-        record_model_by_pass[PAPER_ABSTRACT_PASS_NAME] = abstract_result.model
 
     # Scoped to the two passes issue #598 actually retries -- planning
     # (`plan.retries`, set once by `run_plan`) and drafting (summed across
