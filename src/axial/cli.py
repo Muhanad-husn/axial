@@ -2514,7 +2514,13 @@ def _ask(
                 previous=previous,
                 weights=weights,
                 on_event=_print_event,
-                on_fork=_fork_prompt,
+                # One-shot (both `question` and `case` given up front) is
+                # this docstring's own promise of "no prompts": `on_fork=
+                # None` is `ask()`'s documented way of declining an
+                # interactive answer, so a genuine fork is recorded
+                # unanswered (`intake_fork.answer: null`) instead of
+                # blocking on `input()` with no stdin to read (#790).
+                on_fork=None if one_shot else _fork_prompt,
             )
         except _ASK_ERRORS as exc:
             print(f"error: {exc}", file=sys.stderr)
