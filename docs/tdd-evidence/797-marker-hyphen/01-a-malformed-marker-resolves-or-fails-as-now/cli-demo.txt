@@ -1,0 +1,26 @@
+planned the paper's arc -- 2 section(s)
+drafted the 'The bellicist account' section
+drafted the 'The case against' section
+paper_shape_no_title pass=paper_shape model=stub/shape
+wrote the paper
+planned the paper's arc -- 2 section(s)
+drafted the 'The bellicist account' section
+drafted the 'The case against' section
+paper_shape_no_title pass=paper_shape model=stub/shape
+== normalise_markers, against the claim ids the record carries ==
+  'Extraction followed [pc002].'               -> 'Extraction followed [pc-002].'
+  'Extraction followed [PC_002].'              -> 'Extraction followed [pc-002].'
+  'Both [pc002][pc-003].'                      -> 'Both [pc-002][pc-003].'
+  'Extraction followed [pc-099].'              -> 'Extraction followed [pc-099].'
+  'And so [n1].'                               -> 'And so [n1].'
+
+== ambiguity never corrects ==
+  known={'pc-002', 'PC002'}  '[pc 002]' -> '[pc 002]'
+
+== the whole pipeline, with the recorded slip in section s1 ==
+  drafter emitted: 'War made the state [pc-001]. Extraction followed [pc002].'
+  citation index:  ['pc-001', 'pc-002', 'pc-003']
+  reader render:   'War made the state (Tilly, 1978). Extraction followed (Tilly, 1978).'
+
+  drafter emitted: 'War made the state [pc-001]. Extraction followed [pc-099].'
+  still refused:   citation marker [pc-099] in section 's1' (sentence 1) names no claim in the record; every marker must resolve to a paper_claim_id (§7.5)
