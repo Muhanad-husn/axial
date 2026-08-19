@@ -64,7 +64,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import yaml
 
@@ -1459,6 +1459,32 @@ def find_names(
 # ---------------------------------------------------------------------------
 
 
+def source_covering_limit(source_ids: Iterable[str | None], limit: int) -> int:
+    """`limit`, raised to the number of distinct sources when it is smaller
+    (issue #802).
+
+    A rotation that emits one member per source is only a spread across books
+    while the window is wide enough to hold the first full rotation. Cut below
+    that, the window is one note from each of the alphabetically first `limit`
+    books and nothing at all from the rest -- which is the defect the rotation
+    was introduced to remove (issue #562), one rung up.
+
+    Measured on the live corpus before this existed: the `Charles Tilly` page
+    draws on 20 sources, `tilly-1978` sorts 16th, and the book the papers
+    argue against reached zero of 19 analysis records. Every source sorting in
+    the alphabetical first ten was cut on 0.0% of pages; late-sorting ones on
+    up to 9.8% (`data/logs/2026-08-19-802-tilly-retrieval/`).
+
+    A member with no `source_id` groups under `""` in the rotation, so it
+    occupies a slot and is counted here as one source.
+
+    **Bounded by the corpus**, since a page cannot draw on more sources than
+    exist: 35 today, against a default limit of 10, and 0.6% of pages are
+    affected at all. There is deliberately no maximum -- a cap would be a
+    number nobody chose. At 100+ sources this wants re-asking."""
+    return max(limit, len({source_id or "" for source_id in source_ids}))
+
+
 def _round_robin_by_source(members: list[NameMember]) -> list[NameMember]:
     """`members` regrouped by `source_id`, each group keeping its own
     relative order, then interleaved one member per group in rotation -- a
@@ -1552,8 +1578,12 @@ def _name_page_from_store(
                 claim=text,
             )
         )
+    # The window covers every source on the page, whatever `limit` asked for
+    # (issue #802): a rotation cut mid-first-round is not a spread across
+    # books, it is the alphabetically first `limit` books.
+    window = source_covering_limit((member.source_id for member in all_members), limit)
     members = (
-        all_members if limit >= len(all_members) else _round_robin_by_source(all_members)[:limit]
+        all_members if window >= len(all_members) else _round_robin_by_source(all_members)[:window]
     )
     return NamePage(
         canonical=canonical,
@@ -1611,6 +1641,12 @@ def get_name(
     or hash-suffixed is still reachable by its real name (§7.5: the `name`
     frontmatter is the sole authoritative id, never the filename).
 
+    **`limit` is a FLOOR on the window, not a ceiling** (issue #802). Every
+    source on the page contributes at least one note, so a call asking for 3
+    over a 20-source page returns 20. `total` is unaffected -- it is still
+    the true pre-cap count. The window is still bounded: one rotation, never
+    more, so a 962-member page never comes back whole.
+
     **Answered as a join over the note store when the vault has one**
     (`_name_page_from_store`, DEC-62) -- byte-identical to the page read
     below, which still answers for a vault materialized before the store
@@ -1632,8 +1668,12 @@ def get_name(
     all_members, disagreement = _parse_name_page_body(body)
     member_count = frontmatter.get("member_count")
     aliases = [alias for alias in (frontmatter.get("aliases") or []) if isinstance(alias, str)]
+    # The window covers every source on the page, whatever `limit` asked for
+    # (issue #802): a rotation cut mid-first-round is not a spread across
+    # books, it is the alphabetically first `limit` books.
+    window = source_covering_limit((member.source_id for member in all_members), limit)
     members = (
-        all_members if limit >= len(all_members) else _round_robin_by_source(all_members)[:limit]
+        all_members if window >= len(all_members) else _round_robin_by_source(all_members)[:window]
     )
     return NamePage(
         canonical=frontmatter.get("name") or canonical,

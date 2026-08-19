@@ -91,6 +91,7 @@ from axial.query.names import (
     NameHit,
     canonical_name_for_surface,
     find_names,
+    source_covering_limit,
 )
 
 
@@ -267,6 +268,12 @@ def find_notes(
     resolution, because with no store to match against none was attempted,
     which is a different fact from a phrase that resolved to nothing.
 
+    **`limit` is a FLOOR on the window, not a ceiling** (issue #802). Every
+    source on the page contributes at least one note, so a call asking for 3
+    over a 20-source page returns 20. `total` is unaffected -- it is still
+    the true pre-cap count. The window is still bounded: one rotation, never
+    more, so a 962-member page never comes back whole.
+
     **A back-matter note is never returned (issue #661)**: the join to
     `notes` filters `back_matter = 0`, so an acknowledgments or endnotes
     page can never come back as a note this tool hands a retrieval loop as
@@ -303,7 +310,11 @@ def find_notes(
     finally:
         connection.close()
     spread = _spread_by_source([(row.source_id or "", row) for row in rows])
-    return spread[:limit], len(rows), resolution
+    # Every source on the page contributes, whatever `limit` asked for
+    # (issue #802). `total` is unaffected -- it is still the true pre-cap
+    # count, which is what tells a retrieval model there is more to reach.
+    window = source_covering_limit((row.source_id for row in rows), limit)
+    return spread[:window], len(rows), resolution
 
 
 def names_arguing_against(

@@ -148,13 +148,19 @@ def test_find_notes_filters_a_concept_by_publication_year(vault: Path):
     assert [row.chunk_id for row in window] == [HALL_STATE_NOTE]
 
 
-def test_find_notes_spreads_a_truncated_window_across_sources(vault: Path):
+def test_find_notes_spreads_the_window_across_every_source(vault: Path):
     """The §7.5 rotation rule: `chunk_id` ascending IS alphabetical by
-    source, so a `limit` of 2 over three sources must reach two different
-    books, never two notes of whichever book sorts first."""
+    source, so a small `limit` must never collapse onto whichever book sorts
+    first.
+
+    Since issue #802 the window is also raised to cover every source rather
+    than stopping mid-rotation: a `limit` of 2 over three sources returns
+    three notes, one per book, not two books and one silently dropped. That
+    is the same rule this test always asserted -- the cut it tolerated was
+    the defect."""
     rows, total, _ = relations.find_notes("the state", 2, vault_dir=vault)
     assert total == 3
-    assert len({row.source_id for row in rows}) == 2
+    assert len({row.source_id for row in rows}) == 3
     # Deterministic: same query, same pinned store, same ids in the same order.
     again, _total, _resolution = relations.find_notes("the state", 2, vault_dir=vault)
     assert [row.chunk_id for row in rows] == [row.chunk_id for row in again]

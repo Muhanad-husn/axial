@@ -716,13 +716,27 @@ def test_get_name_on_an_unknown_canonical_raises_naming_it(fixture_layer: tuple[
     assert UNHELD_QUERY in str(exc_info.value)
 
 
-def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_total(
+def test_get_name_covers_every_source_and_member_count_stays_the_true_total(
     fixture_layer: tuple[Path, Path],
 ):
     """issue #505: `get_name` had no `limit` at all before this -- one call
     on `Syria` (962 members) is what flooded a real retrieval-loop prompt.
-    `Charles Tilly`'s fixture page has 2 members; `limit=1` returns the head
-    of the page's own written order, and `member_count` is unaffected."""
+    `member_count` stays the true total whatever the window returns.
+
+    `Charles Tilly`'s fixture page has 2 members from 2 different books, so
+    since issue #802 `limit=1` returns both: a window cannot cut below one
+    member per source without dropping a book, and here the book it used to
+    drop was Tilly's own. That is the live defect in miniature.
+
+    **This fixture can no longer demonstrate truncation**, which is why the
+    name changed: 2 members over 2 sources means the coverage floor already
+    covers the page. #505's other half -- that the window is still BOUNDED,
+    and a 962-member page does not come back whole -- is pinned by
+    `tests/analysis/test_window_covers_every_source.py::test_the_window_is_still_bounded`
+    (24 members over 12 sources at `limit=10` returns 12) and by
+    `src/axial/query/test_names.py::test_get_name_small_window_places_an_unparsed_member_first_and_does_not_crash`.
+    Adding a third member here to keep both halves in one test would move a
+    fixture four other locked tests read."""
     from axial.query import get_name
 
     vault_dir, names_dir = fixture_layer
@@ -730,7 +744,11 @@ def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_tot
     uncapped = get_name(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
     capped = get_name(TILLY, 1, vault_dir=vault_dir, names_dir=names_dir)
 
-    assert [m.chunk_id for m in capped.members] == [uncapped.members[0].chunk_id]
+    # One member from each of the two books, not two from whichever
+    # `source_id` sorts first. The fixture ids are `agambenfix` and
+    # `tillyfix`, which is how the real corpus lost `tilly-1978`.
+    assert [m.chunk_id for m in capped.members] == [m.chunk_id for m in uncapped.members]
+    assert len({m.source_id for m in capped.members}) == 2
     assert capped.member_count == uncapped.member_count == 2
 
     default = get_name(TILLY, vault_dir=vault_dir, names_dir=names_dir)

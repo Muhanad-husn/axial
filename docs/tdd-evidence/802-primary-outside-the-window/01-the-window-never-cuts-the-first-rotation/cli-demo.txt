@@ -1,0 +1,36 @@
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial brief examine config/briefs/smoke/S-01.yaml
+  (the retrieval loop's own narration, on the brief behind data/papers/a1039fad4da31320.md)
+
+looking for what the corpus says about 'Charles Tilly' -- found 20 passages (of 133 total)
+
+  Twenty, where every prior run of this brief found ten. The Charles Tilly page
+  draws on 20 sources; tilly-1978 sorts 16th alphabetically and was cut.
+
+  tilly-1978-f908c910464c_110_general_001 | claim: The author argues that the term
+  'political disturbance' is misleading and should be replaced with 'violent event'
+  or 'collective action producing violence,' because the former presumes a political
+  context and implies abnormality that evidence contradicts.
+
+
+$ uv run python data/logs/2026-08-19-802-window-fix/probe802f.py
+
+find_notes('Charles Tilly') at the DEFAULT limit
+  total=133  returned=20  distinct sources=20
+  tilly-1978 present: True
+
+
+$ uv run python data/logs/2026-08-19-802-window-fix/cmp802.py
+  (every name page, main's query layer against this branch's)
+
+CONTROL: 400 pages at or under the limit
+  changed in any way: 0
+
+OVER-LIMIT: 257 pages
+  `total` (the true pre-cap count) changed on: 0
+  gained at least one source: 257
+  LOST a source that was there before: 0
+  now exactly one note per source: 257 of 257
+  the old window survives as an exact PREFIX of the new one: 257 of 257
+
+  notes returned across those pages: 2570 -> 4159  (1.62x)
+  notes returned across the control:  761 -> 761
