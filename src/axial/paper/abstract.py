@@ -69,6 +69,7 @@ from typing import Any
 from axial.llm import PAPER_ABSTRACT_PASS_NAME
 from axial.llm import estimate_cost as _estimate_cost
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
+from axial.paper.house_style import HouseStyle, prompt_block
 
 # The one length this pass has. Not configurable and not venue-conditional:
 # see the module docstring on why the venues converge here.
@@ -106,13 +107,24 @@ def _section_block(heading: str, prose: str) -> str:
     return f"### {heading}\n{prose}\n"
 
 
-def compose_abstract_prompt(thesis_statement: str, sections: list[dict[str, str]]) -> str:
+def compose_abstract_prompt(
+    thesis_statement: str,
+    sections: list[dict[str, str]],
+    house_style: HouseStyle | None = None,
+) -> str:
     """The §7.18 prompt: the paper's thesis, then the prose that argued it.
 
     `sections` is `[{heading, prose}, ...]` in plan order; extra keys
     (`section_id`, `role`) are ignored, so the same list `run_shape_check`
     takes works here unchanged and this composes directly over a persisted
-    paper record."""
+    paper record.
+
+    `house_style` (issue #787 slice 05) is the domain frame's prose
+    conventions; `None` composes the identical prompt. The abstract takes the
+    same block as the sections, not one of its own: it is the first prose a
+    reader reads, so a house style governing the sections but not the abstract
+    would leave the most-read paragraph outside the style the paper
+    declares."""
     sections_text = "\n".join(
         _section_block(str(s.get("heading") or ""), str(s.get("prose") or "")) for s in sections
     )
@@ -132,7 +144,7 @@ Write ONE paragraph of about {ABSTRACT_TARGET_WORDS} words that states what THIS
 - Write NO claim markers. The prose above carries bracketed markers such as [pc-001]; those are internal identifiers and must never appear in the abstract.
 - One paragraph. No heading, no bullet list, no sub-sections.
 
-Return JSON only:
+{prompt_block(house_style)}Return JSON only:
 {{"abstract": "..."}}"""
 
 
@@ -152,7 +164,10 @@ def parse_abstract_response(raw: str) -> str:
 
 
 def run_abstract(
-    client: Any, thesis_statement: str, sections: list[dict[str, str]]
+    client: Any,
+    thesis_statement: str,
+    sections: list[dict[str, str]],
+    house_style: HouseStyle | None = None,
 ) -> AbstractResult:
     """One call, over the whole paper regardless of section count.
 
@@ -165,7 +180,7 @@ def run_abstract(
     usable abstract; both are subclasses of `AbstractError`, so one `except`
     in the caller keeps this pass non-blocking."""
     model = client.model_for_pass(PAPER_ABSTRACT_PASS_NAME)
-    prompt = compose_abstract_prompt(thesis_statement, sections)
+    prompt = compose_abstract_prompt(thesis_statement, sections, house_style)
     try:
         raw = complete_json(client, prompt, pass_name=PAPER_ABSTRACT_PASS_NAME)
     except ModelJsonError as exc:

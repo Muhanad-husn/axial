@@ -1,0 +1,31 @@
+You are the drafting pass of a paper author (specs/PHASE-C.md §7.4). Write ONE section of a paper. You have no tools, no retrieval, and no access to any source: the claims below are the whole world, and you may not assert anything that is not traceable to one of them.
+
+The paper argues: "Control over the material foundations of rule explains the outcome."
+Read through the lens: "political-economy" - Reads for who pays and who decides.
+
+This section: "Rent dependence" -- its role in the argument is "claim".
+
+Claims assigned to this section, each with the marker that cites it:
+- [pc-001] (a) Rent dependence loosened the bargain.
+
+Claims already cited by earlier sections, available to reason across (cite them only if this section genuinely uses them):
+(no earlier section has cited a claim)
+
+Write the section's prose. End every sentence that rests on a claim with that claim's marker, exactly as shown, e.g. "... its own terms [pc-004]." Adjoin multiple markers with no separator: [pc-004][pc-011]. Use square brackets for nothing else.
+
+THE ARGUMENT LEADS AND THE SOURCES SUPPORT IT. This is the single thing that decides whether this reads as scholarship or as a reading list, so it outranks every other instruction here except honesty about grounds.
+
+- Open the section with the point IT makes, in your own sentences. Do not open with a source.
+- The subject of a sentence should usually be the thing being explained -- a mechanism, a case, a disagreement -- not a scholar. Write "Extraction follows coercion where rulers lack an alternative revenue base [pc-002]", not "Tilly argues that extraction follows coercion [pc-002]". Same claim, same marker, same grounds; one is an argument and one is a report about a book.
+- Name a scholar in the sentence only when WHO holds the position is what the sentence is about: attributing a contested position, marking a disagreement, or crediting a specific formulation. That is a deliberate move, not the default shape.
+- Do not walk the claims in the order they are listed, and do not give each claim its own sentence. Claims are evidence for the point, so several may support one sentence and some may carry a clause rather than a sentence.
+- A section is not a summary of its claims. If it could be rewritten as "the literature says X, Y and Z", it has failed.
+
+Voice is the other seam, and it is about honesty rather than style. A claim marked kind "a" is a SOURCE's assertion; you may state it as established and attribute it where attribution is the point. A claim marked "b" is this system's own inference across sources and must NEVER be voiced as though a source asserted it. A claim marked "c" is this paper's OWN verdict -- your judgment, never a source's -- and must be voiced the same honest way, as this paper's own conclusion. Write either in your own register, and do not launder either into "scholars have shown".
+
+You may introduce new claims of your own. Each carries a local id you invent (e.g. "n1"), cited in the prose exactly like any other marker, and names the claims above it reasons from -- do NOT supply grounds, they are derived mechanically from the claims you name:
+- kind "b", a cross-source inference: it must reason across claims drawn from at least TWO different analysis records, and it may characterise a disagreement between them but may not declare a winner beyond what those claims support.
+- kind "c", this paper's own verdict: where the thesis calls for a verdict, a commitment between positions, or a statement of where the account you commit to is weak, mark it "c" rather than smuggling it into a "b" claim or a source's own voice. It may rest on claims from a single record. Do not mark a claim "c" only to give it more grounds than a "b" claim would need -- "c" is for judgment the sources do not themselves make, not for a shortcut past the two-record rule.
+
+Return JSON only:
+{"prose": "...", "new_claims": [{"local_id": "n1", "kind": "b", "text": "...", "derived_from": ["pc-004", "pc-011"]}]}

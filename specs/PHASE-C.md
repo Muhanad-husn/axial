@@ -634,6 +634,18 @@ The predicate is the disjunction of the four arms, evaluated in the order above,
 
 **The quality of an abstract is not a gate, and no band is invented for it.** Like the shape check, it is written and reported. No gate in §10.1 reads it. Whether an abstract states the paper's own argument or merely describes what the sources say is read by eye, on the records already on disk, and reported as a plain count — the failure this looks for is a summary of the sources.
 
+### 7.19 House style (domain data, context only) **[NEW 2026-08-18, issue #787]**
+
+**The prose conventions a paper is written to are domain content, not prompt text.** They live in `config/domains/<domain>/house_style.yaml`, load at runtime, and reach the model as context — the same rule the reading side has always held for `schema.yaml` and `codebook.yaml` (PRODUCT §7.1). No convention exists anywhere in `src/` as a literal or a branch, so changing how this system's papers read is an edit to a data file by the analyst who owns the domain, not a code change.
+
+**What house style means here is consistency, not conformity.** The venue survey behind this feature found that what the format-free journals actually enforce is one citation style throughout, uniform headings, one spelling convention, one register — a short block of prose conventions, not a mechanism. The block states conventions at the level a style guide states them. A rule naming the exact wording of one sentence would be an instruction to a model rather than a house style, and would make any measurement of the block's effect a measurement of instruction-following on that one string.
+
+**It reaches both prose-writing prompts, on identical terms.** `compose_draft_prompt` (§7.4) and `compose_abstract_prompt` (§7.18) each take the block and each render it once, as a bulleted block introduced by one line saying that it governs how the prose reads and never what it argues, and that it overrides no instruction about grounds, markers or honesty. The disclaimer is deliberately unscoped rather than saying "above": the two prompts site the block differently -- `compose_draft_prompt` places it before the new-claims rules, `compose_abstract_prompt` places it last -- and a disclaimer scoped to what precedes the block would exclude the grounds-and-markers rules in the drafter, which are the ones it exists to protect. The abstract is included because it is the first prose a reader reads and the block a reader who was sent the essay actually uses; a house style governing the sections but not the abstract would leave the most-read paragraph outside the style the paper declares.
+
+**A domain that declares no house style composes both prompts byte-identically.** The loader returns nothing when the file is absent, both prompt helpers return an empty string for nothing, and the prompts are then exactly what they were before this existed — pinned against goldens composed at the commit this shipped from (`tests/paper/test_draft_house_style.py`). A file that exists but cannot be read as a non-empty list of conventions is a typed error at load, not a silent drop: the alternative is a domain frame the analyst edited and a paper that quietly ignored it.
+
+**There is no style checker and no gate.** Nothing validates, scores or rejects prose against the block, and no gate in §10.1 reads it. Whether house style changed anything is measured on the finished papers, not enforced during the run — and the one countable signal this system has for it is the abstract's opening formula, which ran at 10 of 10 identical openings on the records `data/papers/` held when §7.18 shipped.
+
 ### Must-Have (P0)
 
 **P0-1 Paper-brief intake and the claim inventory (charter Principle II).**

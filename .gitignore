@@ -48,6 +48,11 @@ data/**
 !data/logs/**/
 !data/logs/**/summary.md
 !data/logs/**/run.jsonl
+# A run with more than one arm writes one event stream per arm
+# (`run.control.jsonl`, `run.styled.jsonl` -- issue #787 slice 05). Same
+# record, same reason to keep it; still narrow enough to leave `*-before.jsonl`
+# and the other corpus snapshots below ignored.
+!data/logs/**/run.*.jsonl
 !data/logs/**/*.py
 !data/logs/**/*.sh
 # `.ps1` for the same reason as `.sh`: this is the box the runs happen on, and

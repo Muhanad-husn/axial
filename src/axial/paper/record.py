@@ -81,6 +81,7 @@ from axial.paper.claims import (
 )
 from axial.paper.coverage import build_coverage_map, overall_confidence
 from axial.paper.draft import assign_claim_ids, draft_section, remap_local_ids
+from axial.paper.house_style import load_house_style
 from axial.paper.intake import PaperIntake, run_intake
 from axial.paper.lens import resolve_lens
 from axial.paper.plan import Plan, run_plan
@@ -197,6 +198,7 @@ def run_paper(
     *,
     analyses_dir: Path | None = None,
     lenses_dir: Path | None = None,
+    domain_dir: Path | None = None,
     source_meta_dir: Path | None = None,
     vault_dir: Path | None = None,
     papers_dir: Path | None = None,
@@ -214,12 +216,20 @@ def run_paper(
     `axial.llm.emit_event`'s own stderr fallback, so `axial paper draft` and
     `axial ask` gain the narration for free and no caller is forced to pass
     anything. The shape check and the citation index emit nothing -- both
-    are deterministic stages that take no perceptible time (§7.16)."""
+    are deterministic stages that take no perceptible time (§7.16).
+
+    `domain_dir` (issue #787 slice 05) is the domain frame the paper is
+    written in. It is resolved ONCE here, like the lens, and threaded into
+    both prose-writing prompts -- the drafter and the abstract -- as context.
+    `None`, every caller before this parameter existed, resolves the
+    configured domain directory; a frame that declares no house style leaves
+    both prompts byte-identical to what they were."""
     papers_dir = Path(papers_dir) if papers_dir is not None else PAPERS_DIR
 
     intake = run_intake(paper_brief.analysis_ids, analyses_dir=analyses_dir or ANALYSES_DIR)
 
     lens = resolve_lens(paper_brief.lens, lenses_dir=lenses_dir)
+    house_style = load_house_style(domain_dir)
     plan = run_plan(client, paper_brief.thesis, lens, intake, target_words=paper_brief.target_words)
     emit_event(
         on_event,
@@ -243,6 +253,7 @@ def run_paper(
             by_id,
             cited_so_far,
             cross_source_possible=len(intake.source_analyses) >= MIN_DISTINCT_RECORDS,
+            house_style=house_style,
             on_event=on_event,
         )
 
@@ -302,7 +313,9 @@ def run_paper(
     # failed run. Only `AbstractError` is caught: a transport failure is not
     # a fact about this pass and propagates like any other pass's.
     try:
-        abstract_result = run_abstract(client, plan.thesis_statement, drafted_sections)
+        abstract_result = run_abstract(
+            client, plan.thesis_statement, drafted_sections, house_style
+        )
     except AbstractError as error:
         # One structured stderr line, matching `axial.paper.plan._log_plan_retry`
         # and `axial.llm._log_retry` (bare print; this repo has no logging

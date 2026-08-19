@@ -66,7 +66,7 @@ Each is excluded deliberately; documenting them prevents scope creep and protect
 
 **Mechanism-general, domain-portable-by-frame, single-operator.**
 
-The pipeline stages carry no country-specific logic. What changes between domains is content that reaches the model as **context and examples**, and two files hold it: `config/domains/<domain>/schema.yaml` and `config/domains/<domain>/codebook.yaml`. Porting to another country means writing a new frame; the pipeline code is untouched.
+The pipeline stages carry no country-specific logic. What changes between domains is content that reaches the model as **context and examples**, and two files hold it on the reading side: `config/domains/<domain>/schema.yaml` and `config/domains/<domain>/codebook.yaml`. A third, `house_style.yaml`, holds the same kind of content for the writing side — the prose conventions Phase C's papers are written to (PHASE-C §7.19). Porting to another country means writing a new frame; the pipeline code is untouched.
 
 **The frame is not a rulebook (D9).** This is the load-bearing change from v0, and it inverts what the schema was for. v0 treated the schema as a controlled vocabulary with enforcement behind it: an off-list value triggered a bounded correction re-ask, and a value still off-list quarantined the chunk. That machinery existed to keep the tagger inside the lists, and the lists are what produced bins instead of edges (§1). In v1:
 
@@ -132,6 +132,7 @@ axial/
         schema.yaml            # the domain frame: fields and example lists (Appendix G)
         codebook.yaml          # example -> definition -> +/- example (prompt context)
         polity_canonical.yaml  # canonical spelling map; seeds Reconcile's alias map (D9)
+        house_style.yaml       # prose conventions Phase C writes to (context, never a gate)
   src/axial/
     __init__.py
     schema/                    # domain-frame loader (examples, no validation gate)
@@ -189,6 +190,7 @@ Loader contract:
 - **The nearest-example field is the model's own, and is marked.** Where a question carries examples, the record has a second, clearly separate field naming the nearest example and how well it fits (§7.15). Code never derives it, never normalizes a free answer into it, and never rewrites either.
 - The frame carries a `version` field; every note records the frame version it was interrogated under, so a later frame change is detectable per note.
 - `polity_canonical.yaml` is loaded by Reconcile only (§7.16), as a seed for the alias map. It is a cleanup aid. An unmapped name always passes through.
+- `house_style.yaml` is loaded by Phase C only (PHASE-C §7.19), and reaches the two prose-writing prompts as context. It is not part of this frame's version, nothing on the reading side loads it, and no prose is ever checked against it. A domain that declares none writes exactly as it did before the file existed.
 - Swapping domains = pointing the loader at a different `domains/<name>/` directory. No code path branches on country.
 
 ### 7.2 Note, artifact and name-page metadata

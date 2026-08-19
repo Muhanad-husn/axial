@@ -1,0 +1,5 @@
+$ # Same brief, same corpus, before and after house style: section prose only.
+$ # "before" is the copy taken in slice 04 run log; "after" is the run in s05-cli-demo.txt.
+
+before: 5 sections, 1128 words, -ise/-isation 0, -ize/-ization 6, shape strong
+after : 5 sections, 1003 words, -ise/-isation 11, -ize/-ization 0, shape strong

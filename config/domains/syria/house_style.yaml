@@ -1,0 +1,66 @@
+# House style for this domain frame (issue #787 slice 05).
+#
+# The prose conventions every paper written in this domain is written to.
+# They reach the two prose-writing prompts -- the section drafter and the
+# abstract -- as context. Nothing checks a paper against them and nothing
+# rejects one for breaking a convention: this is a style guide the analyst
+# who owns the domain edits, not a gate.
+#
+# What house style means here is consistency rather than conformity -- one
+# register, one set of terms, one convention for numbers and dates, held from
+# the first sentence to the last. That is what the format-free journals
+# actually enforce.
+#
+# Two things deliberately absent:
+#
+# - Citation style. APA is the house style, but a finished paper's citations
+#   are rendered mechanically from claim markers (`axial.paper.reader`), and
+#   the abstract carries none by design. A convention telling a writer how to
+#   cite would fight both.
+# - Section headings. They come from the planner, not from these two prompts,
+#   so a heading convention stated here would reach nobody who could act on
+#   it.
+#
+# Add conventions here as prose conventions, at the level a style guide states
+# one. A rule naming the exact wording of one sentence is an instruction to a
+# model, not a house style.
+
+conventions:
+  - >-
+    Consistency before elegance. Hold one register, one set of terms and one
+    set of conventions from the first sentence to the last; where two
+    defensible choices exist, the paper picks one and keeps it rather than
+    alternating.
+  - >-
+    Open with substance. A paragraph begins with the point it makes about the
+    subject, not with an announcement of what is about to be done, and not
+    with a formula about the paper or the argument as an object. A stock frame
+    applied to the subject is still a formula: open on the particular thing
+    being said here, not on a shape that would fit any paragraph about this
+    topic. Where consecutive passages share a subject, they must not share an
+    opening shape.
+  - >-
+    Plain scholarly register throughout. No rhetorical questions, no
+    exclamation, no hedges stacked on hedges, and no drift into journalistic
+    or promotional phrasing.
+  - >-
+    Prefer the plain word and the active voice. Use the passive where the
+    actor is unknown or genuinely beside the point, never to avoid naming one.
+  - >-
+    Name a thing the same way every time. The first mention gives the full
+    form of a person, place, party or institution; every later mention uses
+    one short form and keeps it.
+  - >-
+    Where a name has several accepted transliterations from Arabic, use one
+    throughout and prefer the form the domain's canonical name list gives.
+    Do not alternate between variants of the same name.
+  - >-
+    Gloss a technical term in a clause at first use, then use it consistently.
+    An unglossed term of art is a cost the reader pays.
+  - >-
+    Spelling and punctuation follow British convention (-ise, organisation,
+    judgement), with double quotation marks for quoted matter.
+  - >-
+    Numbers and dates follow one convention: words for quantities under ten in
+    running prose and figures at ten and above, dates as "12 March 1963", and
+    a span written in full ("1963 to 1970", not "1963-70").
