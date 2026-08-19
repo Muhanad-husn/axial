@@ -589,9 +589,12 @@ def test_the_same_query_over_the_same_vault_returns_the_same_ids_in_the_same_ord
     assert [entry["result_ids"] for entry in first.trajectory] == [
         entry["result_ids"] for entry in second.trajectory
     ]
-    # A capped window still spans both sources rather than collapsing onto
-    # whichever source_id sorts first.
-    assert len({chunk_id.split("_")[0] for chunk_id in first.trajectory[0]["result_ids"]}) == 2
+    # A capped window spans every source rather than collapsing onto
+    # whichever source_id sorts first. Since issue #802 that means all three
+    # books here, not two: `limit=2` over three sources used to drop the
+    # alphabetically last one silently, which is how `tilly-1978` reached
+    # zero of 19 analysis records on the live corpus.
+    assert len({chunk_id.split("_")[0] for chunk_id in first.trajectory[0]["result_ids"]}) == 3
 
 
 # ---------------------------------------------------------------------------

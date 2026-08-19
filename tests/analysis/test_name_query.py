@@ -721,8 +721,14 @@ def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_tot
 ):
     """issue #505: `get_name` had no `limit` at all before this -- one call
     on `Syria` (962 members) is what flooded a real retrieval-loop prompt.
-    `Charles Tilly`'s fixture page has 2 members; `limit=1` returns the head
-    of the page's own written order, and `member_count` is unaffected."""
+    `member_count` stays the true total whatever the window returns.
+
+    `Charles Tilly`'s fixture page has 2 members from 2 different books, so
+    since issue #802 `limit=1` returns both: a window cannot cut below one
+    member per source without dropping a book, and here the book it used to
+    drop was Tilly's own. That is the live defect in miniature -- the fixture
+    ids are `agambenfix` and `tillyfix`, and alphabetical is exactly how the
+    real corpus lost `tilly-1978`."""
     from axial.query import get_name
 
     vault_dir, names_dir = fixture_layer
@@ -730,7 +736,8 @@ def test_get_name_truncates_members_at_limit_but_member_count_stays_the_true_tot
     uncapped = get_name(TILLY, 10, vault_dir=vault_dir, names_dir=names_dir)
     capped = get_name(TILLY, 1, vault_dir=vault_dir, names_dir=names_dir)
 
-    assert [m.chunk_id for m in capped.members] == [uncapped.members[0].chunk_id]
+    assert [m.chunk_id for m in capped.members] == [m.chunk_id for m in uncapped.members]
+    assert len({m.source_id for m in capped.members}) == 2
     assert capped.member_count == uncapped.member_count == 2
 
     default = get_name(TILLY, vault_dir=vault_dir, names_dir=names_dir)

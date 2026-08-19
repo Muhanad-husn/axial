@@ -658,13 +658,19 @@ def test_get_name_truncated_window_is_deterministic_across_repeated_calls(tmp_pa
     ]
 
 
-def test_get_name_truncated_window_places_an_unparsed_member_first_and_does_not_crash(tmp_path):
+def test_get_name_small_window_places_an_unparsed_member_first_and_does_not_crash(tmp_path):
     """A member whose `chunk_id` does not parse (`_parse_name_page_body`)
     has `source_id=None`. It is grouped under the empty string, which sorts
     before any real `source_id` -- the same placement `where_names_meet`'s
     own round-robin already gives an unparsed member (issue #517) -- so it
     is reachable in a small window rather than dropped, and grouping it
-    never raises."""
+    never raises.
+
+    Three groups here (the unparsed one, `aaa-src`, `bbb-src`), so since
+    issue #802 a `limit` of 2 returns one member from each rather than
+    stopping after two: `bbb-src`'s SECOND note is what the window still
+    excludes, which is a rotation doing its job rather than a book being
+    dropped."""
     vault_dir = tmp_path / "vault"
     chunk_ids = ["not-a-real-chunk-id", "aaa-src_1_a_001", "bbb-src_1_a_001", "bbb-src_1_a_002"]
     _write_name_page(
@@ -673,7 +679,11 @@ def test_get_name_truncated_window_places_an_unparsed_member_first_and_does_not_
 
     page = get_name("a concept", 2, vault_dir=vault_dir)
 
-    assert [m.chunk_id for m in page.members] == ["not-a-real-chunk-id", "aaa-src_1_a_001"]
+    assert [m.chunk_id for m in page.members] == [
+        "not-a-real-chunk-id",
+        "aaa-src_1_a_001",
+        "bbb-src_1_a_001",
+    ]
     assert page.members[0].source_id is None
 
 
@@ -1571,3 +1581,32 @@ def test_the_default_encoder_is_built_once_per_model_and_never_reaches_the_hub(m
     assert [model for model, _kwargs in constructions] == ["fake-model", "another-fake-model"]
     assert all(kwargs.get("local_files_only") is True for _model, kwargs in constructions)
     assert first(["a query"]) == [[0.0, 0.0, 0.0]]
+
+
+# --- issue #802: the window never cuts the first rotation -------------------
+
+
+def test_source_covering_limit_leaves_a_limit_that_already_covers_alone():
+    from axial.query.names import source_covering_limit
+
+    assert source_covering_limit(["a", "b", "c"], 10) == 10
+
+
+def test_source_covering_limit_raises_a_limit_below_the_source_count():
+    from axial.query.names import source_covering_limit
+
+    assert source_covering_limit([f"s{index}" for index in range(12)], 10) == 12
+
+
+def test_source_covering_limit_counts_distinct_sources_not_members():
+    from axial.query.names import source_covering_limit
+
+    assert source_covering_limit(["a", "a", "a", "b"], 1) == 2
+
+
+def test_source_covering_limit_counts_a_missing_source_as_one():
+    """A member whose `chunk_id` did not parse groups under `""` in the
+    rotation, so it occupies a slot there and must be counted here."""
+    from axial.query.names import source_covering_limit
+
+    assert source_covering_limit(["a", None, None], 1) == 2

@@ -91,6 +91,7 @@ from axial.query.names import (
     NameHit,
     canonical_name_for_surface,
     find_names,
+    source_covering_limit,
 )
 
 
@@ -303,7 +304,11 @@ def find_notes(
     finally:
         connection.close()
     spread = _spread_by_source([(row.source_id or "", row) for row in rows])
-    return spread[:limit], len(rows), resolution
+    # Every source on the page contributes, whatever `limit` asked for
+    # (issue #802). `total` is unaffected -- it is still the true pre-cap
+    # count, which is what tells a retrieval model there is more to reach.
+    window = source_covering_limit((row.source_id for row in rows), limit)
+    return spread[:window], len(rows), resolution
 
 
 def names_arguing_against(
