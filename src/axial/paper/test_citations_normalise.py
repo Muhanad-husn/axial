@@ -52,3 +52,14 @@ def test_a_local_id_the_drafter_left_behind_is_untouched():
     """`[n1]` keys to nothing in the claim set, so it stays as written and
     fails at the index exactly as it does today."""
     assert normalise_markers("And so [n1].", KNOWN) == "And so [n1]."
+
+
+def test_a_padded_but_valid_marker_is_tightened():
+    """`[ pc-002 ]` resolves at the index -- `markers_in` strips -- but
+    `axial.paper.reader`'s run regex does not match a leading space, so
+    left as written it reaches the reader as a raw bracket token with no
+    error raised anywhere. Rewriting it is the same lookup, not a new
+    behaviour: the stripped form is already a claim id the record carries."""
+    assert normalise_markers("Extraction followed [ pc-002 ].", KNOWN) == (
+        "Extraction followed [pc-002]."
+    )

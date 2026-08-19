@@ -153,7 +153,11 @@ def normalise_markers(prose: str, known_claim_ids: set[str]) -> str:
     def _replace(match: re.Match[str]) -> str:
         marker = match.group(1).strip()
         if marker in known_claim_ids:
-            return match.group(0)
+            # Rewritten, not passed through: `[ pc-002 ]` resolves here and at
+            # the index -- both strip -- but `axial.paper.reader`'s run regex
+            # does not match a leading space, so padding left in place reaches
+            # the reader as a raw bracket token with nothing raised anywhere.
+            return f"[{marker}]"
         corrected = corrections.get(_key(marker))
         return f"[{corrected}]" if corrected is not None else match.group(0)
 

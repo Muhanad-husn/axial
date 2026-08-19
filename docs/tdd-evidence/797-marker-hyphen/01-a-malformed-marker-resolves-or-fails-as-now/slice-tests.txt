@@ -4,7 +4,7 @@ rootdir: D:\axial
 configfile: pyproject.toml
 plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
 created: 8/8 workers
-8 workers [10 items]
+8 workers [11 items]
 
-..........                                                               [100%]
-============================= 10 passed in 6.07s ==============================
+...........                                                              [100%]
+============================= 11 passed in 12.36s =============================
