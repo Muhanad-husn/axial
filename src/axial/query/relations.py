@@ -268,6 +268,12 @@ def find_notes(
     resolution, because with no store to match against none was attempted,
     which is a different fact from a phrase that resolved to nothing.
 
+    **`limit` is a FLOOR on the window, not a ceiling** (issue #802). Every
+    source on the page contributes at least one note, so a call asking for 3
+    over a 20-source page returns 20. `total` is unaffected -- it is still
+    the true pre-cap count. The window is still bounded: one rotation, never
+    more, so a 962-member page never comes back whole.
+
     **A back-matter note is never returned (issue #661)**: the join to
     `notes` filters `back_matter = 0`, so an acknowledgments or endnotes
     page can never come back as a note this tool hands a retrieval loop as

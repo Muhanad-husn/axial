@@ -1641,6 +1641,12 @@ def get_name(
     or hash-suffixed is still reachable by its real name (§7.5: the `name`
     frontmatter is the sole authoritative id, never the filename).
 
+    **`limit` is a FLOOR on the window, not a ceiling** (issue #802). Every
+    source on the page contributes at least one note, so a call asking for 3
+    over a 20-source page returns 20. `total` is unaffected -- it is still
+    the true pre-cap count. The window is still bounded: one rotation, never
+    more, so a 962-member page never comes back whole.
+
     **Answered as a join over the note store when the vault has one**
     (`_name_page_from_store`, DEC-62) -- byte-identical to the page read
     below, which still answers for a vault materialized before the store

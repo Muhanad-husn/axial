@@ -209,3 +209,43 @@ def test_get_name_leaves_a_page_inside_the_limit_alone(vault: Path):
         note["chunk_id"] for note in NOTES if QUIET in note["names"]
     ]
     assert len(page.members) == 6 <= DEFAULT_LIMIT
+
+
+def test_the_window_is_still_bounded(vault: Path):
+    """The floor is a floor, not the removal of the limit (issue #505).
+
+    Twelve sources with two notes each is 24 members. A `limit` of 10 raises
+    the window to 12 -- one per source -- and stops there. The 962-member
+    page that made `limit` necessary still does not come back whole."""
+    page = get_name(CROWDED, DEFAULT_LIMIT, vault_dir=vault, names_dir=vault)
+
+    assert len(page.members) == len(SOURCES) == 12
+    assert page.member_count == len(NOTES) == 24
+
+    rows, total, _ = find_notes(CROWDED, DEFAULT_LIMIT, vault_dir=vault, names_dir=vault)
+    assert len(rows) == 12
+    assert total == 24
+
+
+def test_a_limit_of_zero_still_covers_every_source(vault: Path):
+    """`limit=0` is the boundary the floor changes most: it used to return
+    nothing, and now returns one note per source. Pinned rather than left to
+    be discovered -- a caller using `limit=0` as a cheap way to read `total`
+    alone now materialises rows."""
+    rows, total, _ = find_notes(CROWDED, 0, vault_dir=vault, names_dir=vault)
+
+    assert total == len(NOTES)
+    assert len(rows) == len(SOURCES)
+
+
+def test_a_page_of_one_book_is_still_cut_at_the_limit(vault: Path):
+    """The floor is per SOURCE, never per note. One book's notes are still
+    truncated normally -- otherwise `limit` would mean nothing on the pages
+    that most need it."""
+    single = [note for note in NOTES if note["source_id"] == SOURCES[0]]
+    assert len(single) == 2
+    rows, _, _ = find_notes(QUIET, 1, vault_dir=vault, names_dir=vault)
+
+    # Three sources on the quiet page, so the floor is 3 -- not 6.
+    assert len(rows) == 3
+    assert len({row.source_id for row in rows}) == 3
