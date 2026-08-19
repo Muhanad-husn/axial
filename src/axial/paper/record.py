@@ -57,6 +57,7 @@ import copy
 import json
 import sys
 from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
 from axial.llm import (
@@ -71,7 +72,12 @@ from axial.llm import (
 from axial.paper.abstract import AbstractError, run_abstract
 from axial.paper.biblio import build_bibliography, source_ids_for_claims
 from axial.paper.brief import PaperBrief
-from axial.paper.citations import build_citation_index, markers_in, reduce_to_cited
+from axial.paper.citations import (
+    build_citation_index,
+    markers_in,
+    normalise_markers,
+    reduce_to_cited,
+)
 from axial.paper.claims import (
     MIN_DISTINCT_RECORDS,
     assert_ceilings,
@@ -265,6 +271,17 @@ def run_paper(
             for index, proposed in enumerate(draft.new_claims)
         }
         draft = remap_local_ids(draft, assigned)
+
+        # A punctuation slip in a marker is corrected here, once, against the
+        # claim ids known at this point -- the carried set plus this section's
+        # own new ids (issue #797). Sited on the prose rather than inside the
+        # citation index because every later stage reads the prose: the
+        # `cited_so_far` carry below, the shape check, the abstract, and both
+        # renders, whose marker regex matches only `[pc-...]`. A marker that
+        # corrects to nothing is left as written and still fails at the index.
+        draft = replace(
+            draft, prose=normalise_markers(draft.prose, set(by_id) | set(assigned.values()))
+        )
         drafts.append(draft)
 
         for proposed in draft.new_claims:

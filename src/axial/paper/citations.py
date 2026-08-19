@@ -117,6 +117,53 @@ def markers_in(prose: str) -> list[str]:
     return [match.group(1).strip() for match in _MARKER.finditer(prose)]
 
 
+def _key(claim_id: str) -> str:
+    """A marker id reduced to what a punctuation slip cannot change: letters
+    and digits, case-folded. `pc010`, `PC-010` and `pc_010` all key to
+    `pc010`, which is the key `pc-010` carries."""
+    return re.sub(r"[^0-9a-z]", "", claim_id.lower())
+
+
+def _corrections(known_claim_ids: set[str]) -> dict[str, str]:
+    """Key -> the single claim id that carries it. A key two known ids share
+    is absent: an ambiguous marker is a choice, and a correction that chooses
+    is a guess."""
+    by_key: dict[str, list[str]] = {}
+    for claim_id in known_claim_ids:
+        by_key.setdefault(_key(claim_id), []).append(claim_id)
+    return {key: ids[0] for key, ids in by_key.items() if len(ids) == 1}
+
+
+def normalise_markers(prose: str, known_claim_ids: set[str]) -> str:
+    """`prose` with every marker that differs from a real `paper_claim_id`
+    only in punctuation or case rewritten to that id (issue #797).
+
+    Strictly a lookup: the corrected form must already be a claim id the
+    record carries, and must be the only one its key matches. A marker that
+    corrects to nothing is left exactly as written, so `build_citation_index`
+    refuses it under §7.5 and names the token the drafter actually emitted.
+
+    Applied to the drafted prose rather than inside the index because
+    `axial.paper.reader`'s marker regex matches only `[pc-...]`: a correction
+    confined to the index would resolve the citation and still leave a raw
+    `[pc010]` in the reader-facing paper -- the broken reference this whole
+    apparatus exists to prevent, arriving quietly instead of loudly."""
+    corrections = _corrections(known_claim_ids)
+
+    def _replace(match: re.Match[str]) -> str:
+        marker = match.group(1).strip()
+        if marker in known_claim_ids:
+            # Rewritten, not passed through: `[ pc-002 ]` resolves here and at
+            # the index -- both strip -- but `axial.paper.reader`'s run regex
+            # does not match a leading space, so padding left in place reaches
+            # the reader as a raw bracket token with nothing raised anywhere.
+            return f"[{marker}]"
+        corrected = corrections.get(_key(marker))
+        return f"[{corrected}]" if corrected is not None else match.group(0)
+
+    return _MARKER.sub(_replace, prose)
+
+
 def build_citation_index(
     sections: Iterable[dict[str, Any]], known_claim_ids: set[str]
 ) -> list[Citation]:

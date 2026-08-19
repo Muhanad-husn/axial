@@ -55,6 +55,7 @@ from axial.paper.citations import (
     build_citation_index,
     cited_claim_ids,
     markers_in,
+    normalise_markers,
     reduce_to_cited,
 )
 from axial.paper.coverage import (
@@ -196,6 +197,7 @@ __all__ = [
     "format_plan",
     "load_paper_brief",
     "markers_in",
+    "normalise_markers",
     "new_b_claim",
     "new_c_claim",
     "overall_confidence",
