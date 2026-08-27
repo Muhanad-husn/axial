@@ -765,6 +765,67 @@ def test_build_parser_recognises_vocabulary_build_subcommand(tmp_path):
     assert args.force is True
 
 
+def test_main_vocabulary_build_exits_non_zero_when_a_value_is_left_unanswered(
+    tmp_path, capsys, monkeypatch
+):
+    """`specs/PHASE-B.md` §7.18: an unanswered value is a failed run, not a
+    result, and the command "reports it and exits non-zero". That exit code
+    is the whole contract for anything wrapping this command, and nothing
+    asserted it -- the report is prose, the code is the machine-readable
+    half. Drives `main` so the return value, not just `stats.complete`, is
+    what is checked."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, _unrelated = _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+    vocabulary_dir = tmp_path / "vocabulary"
+
+    real_assign_all = vocabulary_mod._assign_all
+
+    def _lossy(client, pass_name, scheme_text, sample, workers=1):
+        assignments = real_assign_all(client, pass_name, scheme_text, sample, workers)
+        assignments.pop(1, None)
+        return assignments
+
+    monkeypatch.setattr(vocabulary_mod, "_assign_all", _lossy)
+    monkeypatch.setattr(
+        vocabulary_mod,
+        "get_client",
+        lambda *a, **kw: _FakeVocabBuildClient(
+            {value: "war and state formation" for value in repeated}
+        ),
+    )
+
+    assert main(
+        [
+            "vocabulary",
+            "build",
+            "--columns",
+            "mechanism",
+            "--answers-dir",
+            str(answers_dir),
+            "--scheme-path",
+            str(scheme_path),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+        ]
+    ) == 1
+    captured = capsys.readouterr()
+
+    assert "1 unanswered" in captured.out
+    assert "INCOMPLETE" in captured.out
+    manifest = json.loads(
+        (vocabulary_dir / "mechanism" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["complete"] is False
+    assert manifest["unanswered_count"] == 1
+
+
 def test_main_vocabulary_build_force_re_assigns_after_a_scheme_edit(tmp_path, capsys, monkeypatch):
     """Refusing a scheme-version mismatch by default is right and stays.
     Without a flag, though, the operator's only remedy is moving a

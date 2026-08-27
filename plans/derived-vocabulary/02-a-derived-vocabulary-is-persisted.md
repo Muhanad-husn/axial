@@ -170,7 +170,7 @@ depends-on: 01-the-sentence-columns-are-counted
       (`out_of_scheme_count`) for the same reason.
 - [x] A completed build has zero unanswered values. An unanswered value is a
       failed run, not a result, and the build says so rather than persisting a
-      hole.
+      hole -- in the report, and in the command's non-zero exit code.
 - [x] The artifact records the scheme version it was built against.
 - [x] A build whose scheme version differs from the artifact's refuses, naming
       both versions, rather than mixing two schemes in one file, and `--force`
