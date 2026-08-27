@@ -170,12 +170,20 @@ issue.
    `defines` 15, `citations` 4, `uses` 2. Thirty-eight records. Slice 01
    excludes them from its population, so the census is unaffected. The records
    are still wrong.
-2. **[#779](https://github.com/Muhanad-husn/axial/issues/779), extraction
-   damage inside stored values.** A `●` glyph inside names and mojibake inside
-   `comparison` values. The glyph sits in the passage text rather than only in
-   the name, so it corrupts every answer drawn from that passage, including the
-   sentences this feature clusters. It matters more under this direction, not
-   less.
+2. **[#779](https://github.com/Muhanad-husn/axial/issues/779), a PDF glyph the
+   extractor lets through.** Measured on 2026-08-27, after this feature was
+   planned: `●` sits in 384 chunks across 2 of 35 sources, and only
+   `batatu-1999`'s 209 are damage. It stands in there for an Arabic underdot
+   consonant mid-word. `heydemann-2004`'s 175 are a legitimate running-header
+   divider and must not be touched. Five answer records reproduce the glyph
+   verbatim, all in `names`. The passage text is wrong for all 209 chunks, so
+   the sentences this feature clusters were read from damaged text; the stored
+   answers themselves largely are not affected.
+
+   **A mojibake claim in an earlier draft of this README is withdrawn.** A
+   corpus-wide scan for U+FFFD, double-encoded UTF-8 and control characters
+   returned zero hits. The value that looked like mojibake was a correct
+   em-dash, misread from terminal output.
 
 ## Disposition of #779: rewritten, not closed
 
