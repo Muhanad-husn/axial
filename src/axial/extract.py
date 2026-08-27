@@ -228,6 +228,111 @@ _FONT_INTERNAL_CODE_PATTERN = re.compile(r"\bH\d{3,4}\b|\bQ\d{2}\b")
 
 _DOTLESS_I = "ı"  # ı
 
+# Underdot-glyph repair (issue #779): docling's font-glyph decode leaks
+# U+25CF (`●`) two ways -- mid-word, standing in for an Arabic-translit-
+# eration underdot consonant, or as a genuine running-header divider
+# (`6 ● Steven Heydemann`). The rule is about the glyph's immediate
+# neighbours, never the source it came from: `●` is damage when a directly
+# touching character (a letter or a hyphen) sits against it, or when a
+# single space separates it from a short, lowercase-initial letter run --
+# the signature of a word broken at the point of one dropped consonant. It
+# is legitimate, and left untouched, when neither neighbour looks like a
+# fragment.
+_UNDERDOT_GLYPH = "●"
+# Longest measured damage-side fragment ("hmad") is 4 characters; capped at
+# 5 so an ordinary lowercase word next to a legitimate `●` (not seen in
+# either measured source, but not ruled out for one not yet seen) doesn't
+# get misread as a fragment.
+_UNDERDOT_FRAGMENT_MAX_LEN = 5
+
+
+def _is_underdot_fragment(token: str) -> bool:
+    """A one-space-separated neighbour reads as a fragment when it's a bare
+    letter run, short, and either a single character or lowercase-initial --
+    a capitalized or numeric token is a complete word/marker on its own."""
+    if not token or not token.isalpha() or len(token) > _UNDERDOT_FRAGMENT_MAX_LEN:
+        return False
+    return len(token) == 1 or token[0].islower()
+
+
+def _left_word_run(chars: list[str]) -> str:
+    """The run of letters/hyphens at the end of an already-built output
+    buffer -- the token immediately before a single space, if any."""
+    j = len(chars)
+    while j > 0 and (chars[j - 1].isalpha() or chars[j - 1] == "-"):
+        j -= 1
+    return "".join(chars[j:])
+
+
+def _right_word_run(text: str, start: int) -> str:
+    """The run of letters/hyphens starting at `start` -- the token
+    immediately after a single space, if any."""
+    j = start
+    n = len(text)
+    while j < n and (text[j].isalpha() or text[j] == "-"):
+        j += 1
+    return text[start:j]
+
+
+def _repair_underdot_glyph(text: str) -> str:
+    """Tier 2: drop a damaging `●` and close the gap(s) it leaves, leaving a
+    legitimate one -- whitespace-isolated with no adjacent fragment on
+    either side -- exactly as it stands. No-op when absent (§7.4)."""
+    if _UNDERDOT_GLYPH not in text:
+        return text
+
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch != _UNDERDOT_GLYPH:
+            out.append(ch)
+            i += 1
+            continue
+
+        # Left context: what's already in `out`.
+        left_is_space = bool(out) and out[-1].isspace()
+        left_multispace = left_is_space and len(out) >= 2 and out[-2].isspace()
+        if left_multispace:
+            left_fragment = False
+        elif left_is_space:
+            left_fragment = _is_underdot_fragment(_left_word_run(out[:-1]))
+        elif out:
+            touch = out[-1]
+            left_fragment = touch.isalpha() or touch == "-"
+        else:
+            left_fragment = False
+
+        # Right context: what's ahead in `text`.
+        right_is_space = i + 1 < n and text[i + 1].isspace()
+        right_multispace = right_is_space and i + 2 < n and text[i + 2].isspace()
+        if right_multispace:
+            right_fragment = False
+        elif right_is_space:
+            right_fragment = _is_underdot_fragment(_right_word_run(text, i + 2))
+        elif i + 1 < n:
+            touch = text[i + 1]
+            right_fragment = touch.isalpha() or touch == "-"
+        else:
+            right_fragment = False
+
+        if not left_fragment and not right_fragment:
+            # Legitimate: leave the glyph exactly as it stands.
+            out.append(ch)
+            i += 1
+            continue
+
+        # Damage: drop the glyph and close each side that read as a
+        # fragment; a non-fragment side's spacing is left alone.
+        if left_is_space and not left_multispace and left_fragment:
+            out.pop()
+        i += 1  # skip the glyph itself
+        if right_is_space and not right_multispace and right_fragment:
+            i += 1  # also skip the closing space on the right
+
+    return "".join(out)
+
 _SPACE_BEFORE_PUNCT_PATTERN = re.compile(r"[ \t]+([,.;:!?])")
 _WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
 
@@ -305,6 +410,7 @@ def normalize_text(text: str) -> str:
     text = _decode_pua_offset_glyphs(text)
     text = _remove_detached_sk_marks(text)
     text = _repair_glyph_names(text)
+    text = _repair_underdot_glyph(text)
     text = _normalize_dotless_i(text)
     text = _collapse_whitespace(text)
     return text
