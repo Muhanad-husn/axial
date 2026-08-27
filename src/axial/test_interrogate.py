@@ -183,6 +183,43 @@ def test_an_empty_list_is_an_answer_on_a_list_valued_field_not_a_blank():
     assert abstention_rates(records)["names"] == 0.0
 
 
+def test_a_list_valued_field_whose_whole_value_is_the_string_empty_brackets_reads_as_empty():
+    """The model sometimes writes the JSON for an empty list, as a string,
+    where the whole field value belongs -- `"[]"` rather than `[]` -- and
+    #810 found 38 of these across the corpus (measured over
+    `data/answers/*.jsonl`: `arguing_against` 17, `defines` 15, `citations` 4,
+    `uses` 2). It must resolve exactly like the model had written `[]`
+    directly, not sail through as a one-character-longer real answer
+    (`_is_blank`'s `not value.strip()` check is False on `"[]"`, so today it
+    passes untouched)."""
+    for field in sorted(LIST_VALUED_FIELDS):
+        parsed = parse_answer_response(json.dumps(_answers(**{field: "[]"})), EXAMPLES)
+        assert parsed[field] == [], field
+        # Whitespace inside the brackets is the same statement.
+        parsed = parse_answer_response(json.dumps(_answers(**{field: "[ ]"})), EXAMPLES)
+        assert parsed[field] == [], field
+    # Never normalised onto the abstention -- it is a read, not a refusal.
+    records = [{"answers": _answers(names="[]")}]
+    assert abstention_rates(records)["names"] == 0.0
+
+
+def test_a_string_answer_merely_containing_empty_brackets_is_untouched():
+    """`"[]"` alone is shape noise; a longer string answer that mentions `[]`
+    as part of real content -- quoting a notation, say -- is a genuine
+    answer and must survive verbatim."""
+    value = "the passage glosses the empty set as []"
+    parsed = parse_answer_response(json.dumps(_answers(arguing_against=value)), EXAMPLES)
+    assert parsed["arguing_against"] == value
+
+
+def test_the_empty_brackets_string_normalisation_is_scoped_to_list_valued_fields():
+    """On a scalar field like `mechanism`, a literal `"[]"` answer is not the
+    JSON of an empty list written as text -- it is just a two-character
+    string -- so it must not become `[]`. It stays a real answer."""
+    parsed = parse_answer_response(json.dumps(_answers(mechanism="[]")), EXAMPLES)
+    assert parsed["mechanism"] == "[]"
+
+
 # --- #431: joined kind vocabulary offered for `names` -----------------------
 
 
