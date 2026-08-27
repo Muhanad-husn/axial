@@ -163,9 +163,11 @@ depends-on: 01-the-sentence-columns-are-counted
       a list-valued answer. Slice 01's `PopulationEntry` already carries the
       value, the `chunk_id` and the `source_id`.
 - [x] A refusal is persisted as a refusal, distinct from a value that was never
-      asked about. Slice 01 split `refused_count` from `unanswered_count` after
+      asked about, and distinct again from an answer naming no committed
+      category. Slice 01 split `refused_count` from `unanswered_count` after
       review found the two lumped together; the artifact keeps that distinction
-      rather than collapsing it again.
+      rather than collapsing it again, and PR #817's review added the third
+      (`out_of_scheme_count`) for the same reason.
 - [x] A completed build has zero unanswered values. An unanswered value is a
       failed run, not a result, and the build says so rather than persisting a
       hole.

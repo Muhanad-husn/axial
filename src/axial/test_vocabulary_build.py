@@ -434,6 +434,108 @@ def test_build_assigns_every_answered_value_and_records_a_refusal_as_a_refusal(t
     assert result.complete is True
 
 
+def test_an_out_of_scheme_name_is_recorded_apart_from_a_refusal(tmp_path):
+    """A model that answers with a string naming no committed category has
+    not refused: it has answered wrongly, and the two must not read the
+    same. A refusal is a fact about how well the scheme fits the corpus,
+    which is a thing a person decides about; an unrecognised name is a
+    defect -- a wrong case, a truncation, a hallucination -- and it is paid
+    for once and then frozen, because a persisted record satisfies the next
+    run's reuse check whatever it holds."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    lookup = {value: WAR_AND_STATE for value in EXTRACTION}
+    # The right words, the wrong case: no committed category carries this
+    # name, and the other two one-offs come back as the prompt's own "none".
+    lookup[ONE_OFFS[0]] = "War and state formation"
+    client = _ScriptedAssignClient(lookup)
+
+    stats = _build(tmp_path, client)
+
+    by_chunk = {record["chunk_id"]: record for record in _read_assignments(tmp_path / "vocabulary")}
+    unrecognised = by_chunk["alpha-2020_3"]
+    assert unrecognised["category_id"] is None
+    assert unrecognised["refused"] is False
+    assert unrecognised["out_of_scheme"] == "War and state formation"
+
+    for chunk_id in ("beta-2021_3", "gamma-2022_2"):
+        refusal = by_chunk[chunk_id]
+        assert refusal["category_id"] is None
+        assert refusal["refused"] is True
+        assert "out_of_scheme" not in refusal
+
+    result = stats.columns[0]
+    assert result.assigned_count == 5
+    assert result.refused_count == 2
+    assert result.out_of_scheme_count == 1
+    assert result.out_of_scheme_names == ["War and state formation"]
+    # Every answered value still lands: nothing is dropped by being named
+    # apart.
+    assert result.assigned_count + result.refused_count + result.out_of_scheme_count == 8
+
+
+def test_a_capitalised_refusal_token_is_still_a_refusal(tmp_path):
+    """"None" is the same word the prompt asks for, and reading it as an
+    unrecognised category name would raise a false alarm on the one signal
+    this distinction exists to make trustworthy."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    lookup = {value: WAR_AND_STATE for value in EXTRACTION}
+    lookup[ONE_OFFS[0]] = "None"
+
+    stats = _build(tmp_path, _ScriptedAssignClient(lookup))
+
+    assert stats.columns[0].refused_count == 3
+    assert stats.columns[0].out_of_scheme_count == 0
+    assert stats.columns[0].out_of_scheme_names == []
+
+
+def test_the_manifest_and_the_report_name_the_out_of_scheme_strings(tmp_path):
+    """The count and the strings both go in the manifest, not only in the
+    console: the run that first sees them scrolls away, and every later run
+    reuses the artifact and reports from it."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    lookup = {value: WAR_AND_STATE for value in EXTRACTION}
+    lookup[ONE_OFFS[0]] = "War and state formation"
+    lookup[ONE_OFFS[1]] = "identity construction"
+
+    stats = _build(tmp_path, _ScriptedAssignClient(lookup))
+
+    manifest = _read_manifest(tmp_path / "vocabulary")
+    assert manifest["refused_count"] == 1
+    assert manifest["out_of_scheme_count"] == 2
+    assert manifest["out_of_scheme_names"] == [
+        "War and state formation",
+        "identity construction",
+    ]
+
+    report = format_vocabulary_build_report(stats)
+    assert "2 out-of-scheme" in report
+    assert "War and state formation" in report
+    assert "identity construction" in report
+
+
+def test_a_reused_build_still_reports_the_out_of_scheme_count(tmp_path):
+    """The freezing is the point: a reused artifact makes no call and can
+    never correct itself, so the run that reuses it must keep saying what
+    is in it."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    lookup = {value: WAR_AND_STATE for value in EXTRACTION}
+    lookup[ONE_OFFS[0]] = "War and state formation"
+    _build(tmp_path, _ScriptedAssignClient(lookup))
+
+    second = _ScriptedAssignClient(lookup)
+    stats = _build(tmp_path, second)
+
+    assert second.asked_values == []
+    assert stats.columns[0].reused is True
+    assert stats.columns[0].out_of_scheme_count == 1
+    assert stats.columns[0].out_of_scheme_names == ["War and state formation"]
+    assert "War and state formation" in format_vocabulary_build_report(stats)
+
+
 def test_every_assignment_record_is_keyed_by_chunk_column_element_and_level(tmp_path):
     _write_answers(tmp_path / "answers")
     _write_scheme(tmp_path / "vocabulary.yaml")

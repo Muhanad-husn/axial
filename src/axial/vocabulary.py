@@ -185,6 +185,12 @@ The answers:
 {values}
 """
 
+# The one string the assign prompt below asks for when no category fits.
+# Compared case-folded: "None" is the same word, and reading it as an
+# unrecognised category name would raise a false alarm on the very signal
+# that distinction exists to make trustworthy.
+REFUSAL_TOKEN = "none"
+
 ASSIGN_PROMPT = """Here is a category scheme derived from one column of an
 academic corpus's notes, and {n} further answers from the same column that were
 NOT used to build the scheme.
@@ -1060,6 +1066,8 @@ class ColumnBuildResult:
     excluded_count: int
     assigned_count: int
     refused_count: int
+    out_of_scheme_count: int
+    out_of_scheme_names: list[str]
     unanswered_count: int
     reused_assignment_count: int
     newly_assigned_count: int
@@ -1316,8 +1324,20 @@ def _write_manifest(path: Path, manifest: Mapping[str, Any]) -> None:
     )
 
 
-def _record_for(entry: PopulationEntry, column: str, level: int, category_id: str | None) -> dict[str, Any]:
-    return {
+def _record_for(
+    entry: PopulationEntry,
+    column: str,
+    level: int,
+    category_id: str | None,
+    out_of_scheme: str | None = None,
+) -> dict[str, Any]:
+    """One assignment record. `out_of_scheme` carries the string the model
+    answered with when that string named no committed category and was not
+    `REFUSAL_TOKEN` -- and the key is written ONLY then, so every record
+    that was assigned or genuinely refused keeps the bytes it had before
+    this key existed and an artifact built earlier still round-trips
+    unchanged."""
+    record: dict[str, Any] = {
         "chunk_id": entry.chunk_id,
         "source_id": entry.source_id,
         "column": column,
@@ -1325,8 +1345,11 @@ def _record_for(entry: PopulationEntry, column: str, level: int, category_id: st
         "level": level,
         "value": entry.value,
         "category_id": category_id,
-        "refused": category_id is None,
+        "refused": category_id is None and out_of_scheme is None,
     }
+    if out_of_scheme is not None:
+        record["out_of_scheme"] = out_of_scheme
+    return record
 
 
 def _category_counts(
@@ -1403,6 +1426,8 @@ def _build_column(
             excluded_count=int(manifest.get("excluded_count", 0)),
             assigned_count=int(manifest.get("assigned_count", 0)),
             refused_count=int(manifest.get("refused_count", 0)),
+            out_of_scheme_count=int(manifest.get("out_of_scheme_count", 0)),
+            out_of_scheme_names=[str(name) for name in manifest.get("out_of_scheme_names", [])],
             unanswered_count=int(manifest.get("unanswered_count", 0)),
             reused_assignment_count=int(manifest.get("answered_count", 0)),
             newly_assigned_count=0,
@@ -1451,8 +1476,23 @@ def _build_column(
                 # about it again.
                 unanswered += 1
                 continue
+            answer = assignments[index]
+            category_id = id_by_name.get(answer)
+            # A model that answered with a string naming no committed
+            # category has not refused -- it has answered wrongly, and the
+            # two must not read the same. A refusal says how well the
+            # scheme fits the corpus, which is a thing a person decides
+            # about; an unrecognised name (a wrong case, a truncation, a
+            # hallucination) is a defect, and a persisted record satisfies
+            # the next run's reuse check whatever it holds, so one that
+            # passes as a refusal is paid for once and frozen forever.
+            out_of_scheme = (
+                answer
+                if category_id is None and answer.casefold() != REFUSAL_TOKEN
+                else None
+            )
             new_records.append(
-                _record_for(entry, column, ROOT_LEVEL, id_by_name.get(assignments[index]))
+                _record_for(entry, column, ROOT_LEVEL, category_id, out_of_scheme)
             )
 
     calls = client.calls_for_pass(EXAMINE_PASS_NAME) - calls_before
@@ -1460,7 +1500,11 @@ def _build_column(
 
     out_records = sorted(reused_records + new_records, key=_assignment_key)
     assigned_count = sum(1 for record in out_records if record.get("category_id") is not None)
-    refused_count = len(out_records) - assigned_count
+    out_of_scheme_names = sorted(
+        {str(record["out_of_scheme"]) for record in out_records if record.get("out_of_scheme")}
+    )
+    out_of_scheme_count = sum(1 for record in out_records if record.get("out_of_scheme"))
+    refused_count = len(out_records) - assigned_count - out_of_scheme_count
     categories = _category_counts(scheme, out_records)
 
     _write_assignment_records(assignments_path, out_records)
@@ -1476,6 +1520,8 @@ def _build_column(
             "excluded_count": excluded,
             "assigned_count": assigned_count,
             "refused_count": refused_count,
+            "out_of_scheme_count": out_of_scheme_count,
+            "out_of_scheme_names": out_of_scheme_names,
             "unanswered_count": unanswered,
             "complete": unanswered == 0,
             "categories": [
@@ -1502,6 +1548,8 @@ def _build_column(
         excluded_count=excluded,
         assigned_count=assigned_count,
         refused_count=refused_count,
+        out_of_scheme_count=out_of_scheme_count,
+        out_of_scheme_names=out_of_scheme_names,
         unanswered_count=unanswered,
         reused_assignment_count=len(reused_records),
         newly_assigned_count=len(new_records),
@@ -1605,9 +1653,17 @@ def format_vocabulary_build_report(stats: VocabularyBuildStats) -> str:
             )
         lines.append(
             f"  {column.assigned_count} assigned to a category, "
-            f'{column.refused_count} refused ("none"/out-of-scheme), '
+            f'{column.refused_count} refused ("none"), '
+            f"{column.out_of_scheme_count} out-of-scheme, "
             f"{column.unanswered_count} unanswered (never returned)"
         )
+        if column.out_of_scheme_count:
+            lines.append(
+                f"  OUT OF SCHEME: {column.out_of_scheme_count} value(s) came back under a "
+                "name no committed category carries -- a defect (a wrong case, a truncation, "
+                "a hallucination), not a fact about how well the scheme fits: "
+                + ", ".join(repr(name) for name in column.out_of_scheme_names)
+            )
         if not column.complete:
             lines.append(
                 f"  INCOMPLETE: {column.unanswered_count} value(s) the model never answered "
