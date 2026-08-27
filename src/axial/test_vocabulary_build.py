@@ -29,6 +29,7 @@ import axial.vocabulary as vocabulary_mod
 from axial.vocabulary import (
     ASSIGNMENTS_FILENAME,
     DEFAULT_VOCABULARY_SCHEME_PATH,
+    BUILD_PASS_NAME,
     EXAMINE_PASS_NAME,
     MANIFEST_FILENAME,
     ROOT_LEVEL,
@@ -364,6 +365,40 @@ def test_the_committed_scheme_file_holds_mechanism_at_depth_one():
     assert len({category.name for category in scheme.categories}) == 20
     assert all(category.gloss.strip() for category in scheme.categories)
     assert scheme.version
+
+
+def test_the_build_spends_under_its_own_pass_name(tmp_path):
+    """At seven columns the build is roughly $1 and ~648 calls. Landing
+    that on the examine line -- a 400-value sample pass -- would misprice
+    per-pass cost by an order of magnitude for whoever reads it next."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    client = _extraction_client()
+
+    stats = _build(tmp_path, client)
+
+    assert BUILD_PASS_NAME != EXAMINE_PASS_NAME
+    assert client.calls_for_pass(BUILD_PASS_NAME) == 1
+    assert client.calls_for_pass(EXAMINE_PASS_NAME) == 0
+    # And the figures the report prints are read off the same pass.
+    assert stats.columns[0].calls == 1
+    assert stats.columns[0].cost == pytest.approx(0.001)
+
+
+def test_the_committed_config_pins_the_build_pass_to_the_examine_tier():
+    """Its own pass name, the SAME tier -- pinned, never defaulted. An
+    unnamed pass falls through to whatever `llm_tier` happens to be, which
+    is a routing change wearing a cost-reporting fix's clothes."""
+    from axial.yaml_loader import SAFE_LOADER
+
+    import yaml
+
+    document = yaml.load(
+        Path("config/pipeline.yaml").read_text(encoding="utf-8"), Loader=SAFE_LOADER
+    )
+    model_by_pass = document["llm"]["model_by_pass"]
+
+    assert model_by_pass[BUILD_PASS_NAME] == model_by_pass[EXAMINE_PASS_NAME]
 
 
 # ---------------------------------------------------------------------------
@@ -936,7 +971,7 @@ def test_assignment_batches_at_the_slice_01_batch_size_with_global_numbering(tmp
 
     stats = _build(tmp_path, client, workers=1)
 
-    assert client.calls_for_pass(EXAMINE_PASS_NAME) == 2
+    assert client.calls_for_pass(BUILD_PASS_NAME) == 2
     assert client.asked_values == values
     assert stats.columns[0].assigned_count == len(values)
     assert len(_read_assignments(tmp_path / "vocabulary")) == len(values)
@@ -958,7 +993,7 @@ def test_assignment_across_several_workers_produces_the_same_result_as_one(tmp_p
 
     stats = _build(tmp_path, client, workers=4)
 
-    assert client.calls_for_pass(EXAMINE_PASS_NAME) == 3
+    assert client.calls_for_pass(BUILD_PASS_NAME) == 3
     assert sorted(client.asked_values) == sorted(values)
     assert stats.columns[0].assigned_count == len(values)
     records = _read_assignments(tmp_path / "vocabulary")

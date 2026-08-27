@@ -907,7 +907,7 @@ def test_main_vocabulary_build_writes_then_reuses_then_extends_the_assignment(
     captured = capsys.readouterr()
 
     assert second.asked_values == []
-    assert second.calls_for_pass(vocabulary_mod.EXAMINE_PASS_NAME) == 0
+    assert second.calls_for_pass(vocabulary_mod.BUILD_PASS_NAME) == 0
     assert "reused" in captured.out.lower()
     assert assignments_path.read_bytes() == before_assignments
     assert manifest_path.read_bytes() == before_manifest

@@ -292,6 +292,14 @@ PRODUCTION_PAPER_ABSTRACT_TIER = "production_paper_abstract"
 # NAME`) live with the module that owns the pass, mirroring `axial.argmap.
 # build.PASS_NAME`'s own local convention, and only the tier needs
 # registering centrally here.
+# The build pass (`axial.vocabulary.BUILD_PASS_NAME`, issue #806 slice 02)
+# is the examine tier's second consumer: `config/pipeline.yaml` pins
+# `vocabulary_build` to PRODUCTION_VOCABULARY_EXAMINE_TIER deliberately,
+# since it is the same call against the same kind of scheme. It carries its
+# own pass name for the cost line alone -- a build spends an order of
+# magnitude more than the sample pass it borrows its path from -- so there
+# is no third tier here, and adding one would be a routing change nobody
+# asked for.
 PRODUCTION_VOCABULARY_EXAMINE_TIER = "production_vocabulary_examine"
 PRODUCTION_VOCABULARY_EXAMINE_CHECK_TIER = "production_vocabulary_examine_check"
 DEFAULT_LLM_TIER = BUILDING_TIER

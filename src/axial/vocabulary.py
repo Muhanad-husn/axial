@@ -113,6 +113,15 @@ _EXCLUDED_LITERALS = frozenset({"[]", ""})
 EXAMINE_PASS_NAME = "vocabulary_examine"
 CHECK_PASS_NAME = "vocabulary_examine_check"
 
+# The build's own pass name, routed to the SAME tier the examine pass uses
+# (`config/pipeline.yaml`'s `model_by_pass`) -- pinned there, never left to
+# default, so this buys a cost line and carries no routing change. It needs
+# its own line because the two passes differ by an order of magnitude in
+# what they spend: examine reads a 400-value sample, and a build over seven
+# columns is ~648 calls and roughly $1. Charging that to the examine line
+# would misprice both for whoever reads per-pass cost next.
+BUILD_PASS_NAME = "vocabulary_build"
+
 # Sample sizes measured at $0.026 for one column (the probe, 2026-08-27):
 # 400 to propose a scheme, a disjoint 400 to test it. Arguments, not
 # constants, because the go/no-go bar quantifies over them and an operator
@@ -1425,7 +1434,7 @@ def _build_column(
         column_dir.replace(forced_aside)
 
     manifest = _load_json_or_none(manifest_path)
-    model = client.model_for_pass(EXAMINE_PASS_NAME)
+    model = client.model_for_pass(BUILD_PASS_NAME)
 
     if manifest is not None and manifest.get("scheme_version") != scheme.version:
         raise SchemeVersionMismatchError(
@@ -1470,8 +1479,8 @@ def _build_column(
         else:
             pending.append(entry)
 
-    calls_before = client.calls_for_pass(EXAMINE_PASS_NAME)
-    cost_before = client.cost_for_pass(EXAMINE_PASS_NAME)
+    calls_before = client.calls_for_pass(BUILD_PASS_NAME)
+    cost_before = client.cost_for_pass(BUILD_PASS_NAME)
 
     new_records: list[dict[str, Any]] = []
     unanswered = 0
@@ -1481,7 +1490,7 @@ def _build_column(
             [{"name": category.name, "gloss": category.gloss} for category in level_categories]
         )
         id_by_name = {category.name: category.id for category in level_categories}
-        assignments = _assign_all(client, EXAMINE_PASS_NAME, scheme_text, pending, workers)
+        assignments = _assign_all(client, BUILD_PASS_NAME, scheme_text, pending, workers)
         for index, entry in enumerate(pending, start=1):
             if index not in assignments:
                 # After `_validate_assign_batch_keys` this is unreachable in
@@ -1514,8 +1523,8 @@ def _build_column(
                 _record_for(entry, column, ROOT_LEVEL, category_id, out_of_scheme)
             )
 
-    calls = client.calls_for_pass(EXAMINE_PASS_NAME) - calls_before
-    cost = _cost_delta(cost_before, client.cost_for_pass(EXAMINE_PASS_NAME))
+    calls = client.calls_for_pass(BUILD_PASS_NAME) - calls_before
+    cost = _cost_delta(cost_before, client.cost_for_pass(BUILD_PASS_NAME))
 
     out_records = sorted(reused_records + new_records, key=_assignment_key)
     assigned_count = sum(1 for record in out_records if record.get("category_id") is not None)
@@ -1616,10 +1625,11 @@ def build_vocabulary(
     `client` defaults to `axial.llm.get_client()`, the injection seam
     `examine_vocabulary`, `axial.argmap.build.run_map_build` and
     `axial.gather.run_gather` already expose, so a unit test never makes a
-    network call. Assignment runs under `EXAMINE_PASS_NAME`: it is the same
-    call the examine pass makes, against the same kind of scheme, and
-    routing it to the tier already configured and priced for that pass is
-    what keeps a build at the cost issue #806 budgets."""
+    network call. Assignment runs under `BUILD_PASS_NAME`, pinned in
+    `config/pipeline.yaml` to the same tier the examine pass uses: the same
+    call against the same kind of scheme, so the tier is right, but its own
+    cost line, because a build spends an order of magnitude more than the
+    sample pass it borrows its path from."""
     if columns is None:
         columns = scheme_columns(scheme_path)
 
