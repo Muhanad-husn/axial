@@ -30,7 +30,7 @@ without either slice depending on the other.
   on no other slice and can be built at any point. Not parallel-safe with the
   others, because every slice in this feature touches `src/axial/cli.py`.
 - **Valuable:** on its own it makes the argument-map path measurable with the
-  existing instrument, which is useful whatever the census in slice 01 says.
+  existing instrument, which is useful whatever slice 01 reads.
 - **Small:** an arm name threaded from the parser through `run_sweep` to the
   per-draw brief run, plus the record field. The paths it selects already exist
   and are already tested.

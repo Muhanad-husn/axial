@@ -8,51 +8,88 @@
 - **Status:** ☐ todo
 - **Walking skeleton?** no
 
+> **Rewritten 2026-08-27**, after slice 01 shipped and ran on the real corpus.
+> The earlier version of this plan persisted an embedding *clustering* fit:
+> distance thresholds, medoid labels, an encoder call count. Slice 01 built that
+> instrument, ran it, and rejected it. Clustering measures wording, not meaning,
+> and gave 772 wording groups on `mechanism` where a model reading a sample
+> named 20 categories. What shipped is model categorisation. This plan persists
+> that. Nothing below clusters anything.
+
 ## Goal — the minimum testable behaviour
 
-An operator builds the derived vocabulary once, and it lands on disk: every
-answer in every cleared column carries a group id, every group carries a
-representative sentence as its label, and a second run over an unchanged
-corpus reuses what the first paid for instead of re-clustering.
+A category scheme for one column is frozen in configuration, every answered
+value in that column is assigned against it, and the assignment lands on disk
+where slice 03 can read it. A second run over an unchanged corpus and an
+unchanged scheme re-assigns nothing.
 
 ## Why this slice exists
 
-A grouping that only exists inside a report cannot be joined on. Slice 01
-proves the groups are real; this slice turns them into something the retrieval
-layer in slice 03 can read, and something the founder can browse without
-re-running a clustering pass.
+Slice 01 proves the categories are real: seven columns of twelve clear all five
+conditions, and every category reaching five members draws on more than one
+book, in twelve columns of twelve. It proves it on 400 held-out values per
+column, and it writes nothing. A category a note cannot be looked up by cannot
+be joined on. This slice turns the scheme into an assignment over a whole
+column, and the assignment into a file.
 
-## INVEST check
+## The scheme is frozen, and that is the point
 
-- **Independent:** depends only on slice 01's module. Nothing downstream exists
-  yet, so nothing breaks if the artifact's shape changes later.
-- **Valuable:** the vocabulary becomes inspectable and reusable. On its own, an
-  operator can open the artifact and read what the corpus's forty recurring
-  mechanisms actually are, which is the first time that has been possible.
-- **Small:** one writer, one reader, one reuse check. The clustering is slice
-  01's, unchanged.
-- **Testable:** the artifact is a file; the reuse rule is a pin comparison.
-  Both are exercised with an injected encoder.
+Slice 01 measured the same prompt and the same model producing different
+granularity between runs: `position` 5 categories then 15, `stops_holding` 7
+then 20, `mechanism` 36 then 20. A vocabulary that reshuffles on every build is
+not an index. Worse, reconciling one build's categories against the next one's
+is name merging wearing a new coat, which is the cost this whole feature exists
+to escape.
+
+So stop rebuilding. Per cleared column the scheme is proposed once, read by a
+person, and committed to `config/vocabulary.yaml`. After that the scheme is an
+input, not an output. Assignment runs against it and only against it. A new
+source's answers assign into the categories that already exist, at no cost to
+any assignment already paid for, and no category id changes meaning under a note
+already filed in it.
+
+Changing a scheme becomes a deliberate, versioned act rather than a side effect
+of running a command. The artifact records the scheme version it was built
+against and refuses to serve assignments made against a different one.
+
+## Start with one column
+
+`mechanism` alone. 5,905 values, about 60 model calls, roughly $0.08 and twenty
+minutes at twelve workers.
+
+Assigning all seven cleared columns is 64,744 values, about 648 calls, roughly
+$1 and about four hours. Affordable, but not yet earned: nothing has measured
+whether the derived join improves retrieval at all, and slice 05 is what answers
+that. `mechanism` is the sharpest column slice 01 read — 20 categories, the
+largest holding 8.0%, every category crossing books — and one column is enough
+for slice 03 to demonstrate the join and for slice 05 to compare the arms.
+
+The command takes its column set as an argument, so widening to the other six is
+a run, not a change.
 
 ## Acceptance criterion (outer loop — the failing e2e/integration test)
 
 ```gherkin
-Given  an answer store on disk and no vocabulary artifact yet
-When   an operator runs `uv run axial vocabulary build`
-Then   an artifact is written under `data/vocabulary/` holding, for every
-       cleared column, each answer's group id and each group's label and member
-       count
-And    the artifact records the threshold used per column and the pin of the
-       input it was built from
-When   the operator runs `uv run axial vocabulary build` a second time with the
-       answer store unchanged
-Then   the run reuses the persisted fit, re-encodes nothing, and reports that
-       it reused rather than rebuilt
+Given  a committed category scheme for `mechanism` in `config/vocabulary.yaml`
+       and an answer store on disk with no assignment artifact yet
+When   an operator runs `uv run axial vocabulary build --columns mechanism`
+Then   an artifact is written under `data/vocabulary/` giving, for every
+       answered value in that column, the category it was assigned or a
+       recorded refusal
+And    the artifact records the scheme version, the pin of the answers it was
+       built from, and each category's member and distinct-source counts
+When   the operator runs the same command again with the answers and the scheme
+       both unchanged
+Then   the run re-assigns nothing, makes zero model calls, and reports that it
+       reused rather than rebuilt
+When   the operator runs it again after one further source's answers land
+Then   only the new values are assigned, and every assignment already on disk is
+       byte-identical to what it was
 ```
 
 - **Boundary / endpoint:** CLI — `uv run axial vocabulary build`
 - **e2e test type:** CLI integration test against a temporary data directory
-  with an injected encoder that counts its own calls
+  with a stubbed model client that counts its own calls
 - **e2e test file (planned):** `src/axial/test_cli.py`
 
 ## Files (parallel-safety declaration)
@@ -70,61 +107,69 @@ depends-on: 01-the-sentence-columns-are-counted
 
 ## Inner loop — initial unit test list
 
-- [ ] A built vocabulary maps every population entry to a group id, keyed by
-      the note's `chunk_id`, its column, and the element's index within a
-      list-valued answer.
-- [ ] A group's label is the group's **medoid**, the member with the smallest
-      mean cosine distance to the other members, chosen deterministically,
-      with ties broken by a stated rule rather than by dict order.
-- [ ] A group of one is persisted as a group of one, not dropped. What did not
-      group is evidence about the column and must stay visible.
-- [ ] The artifact records, per column, the threshold used and the population
-      size it was built from.
-- [ ] The pin is content-keyed over the rendered input, matching the
-      convention merge and Gather already use: a change to the answers
-      re-clusters, a change to an unrelated part of the repo does not.
-- [ ] An unchanged pin reuses the persisted fit and calls the encoder zero
-      times.
-- [ ] A changed pin rebuilds and says so, rather than silently serving a stale
-      grouping.
+- [ ] Every population entry lands with a category id or a recorded refusal,
+      keyed by the note's `chunk_id`, its column, and the element's index within
+      a list-valued answer. Slice 01's `PopulationEntry` already carries the
+      value, the `chunk_id` and the `source_id`.
+- [ ] A refusal is persisted as a refusal, distinct from a value that was never
+      asked about. Slice 01 split `refused_count` from `unanswered_count` after
+      review found the two lumped together; the artifact keeps that distinction
+      rather than collapsing it again.
+- [ ] A completed build has zero unanswered values. An unanswered value is a
+      failed run, not a result, and the build says so rather than persisting a
+      hole.
+- [ ] The artifact records the scheme version it was built against.
+- [ ] A build whose scheme version differs from the artifact's refuses, naming
+      both versions, rather than mixing two schemes in one file.
+- [ ] The pin is content-keyed over the rendered input, matching the convention
+      merge and Gather already use: a change to the answers re-assigns, a change
+      to an unrelated part of the repo does not.
+- [ ] An unchanged pin and an unchanged scheme reuse the artifact and call the
+      model zero times.
+- [ ] New values assign incrementally. Assignments already on disk are neither
+      re-asked nor rewritten.
+- [ ] A column with no scheme in `config/vocabulary.yaml` fails naming the
+      column, not with a stack trace and not with an empty success.
 
 ## Design notes for the executor
 
+- **Reuse slice 01's assignment path.** `_assign_all`, `_assign_batch` and
+  `_validate_assign_batch_keys` in `src/axial/vocabulary.py` already batch at
+  100, validate that a response answers about the indexes it was asked about,
+  and re-ask when it does not. That validation exists because its absence
+  silently deflated the first corpus run's coverage — `mechanism` read 50.7%
+  where the truth was 88.5%. Do not write a second assignment loop.
 - **Follow the fit-persistence pattern already in the repo.** `axial.names` has
   `_write_fit_artifact` / `_read_fit_artifact` / `_manifest_reusable`, and
-  `axial.argmap.build` mirrors it for bag state (issue #677). Mirror it a third
-  time rather than inventing a fourth shape.
-- **Content-keyed, like the decision logs.** The recorded finding is that merge
-  and Gather hash the *rendered* input, so a one-byte render change re-asks the
-  corpus and a model change re-asks nothing. Same rule here: the pin is over
-  the answer values that went in, nothing else.
-- **Which columns are "cleared" is an input, not a guess.** Slice 01's run
-  decides which columns have a vocabulary. Carry the cleared set and the
-  per-column threshold as configuration written by a human after reading the
-  census, not as a rule inferred at runtime.
-- **Medoid, not centroid.** The clustering is average-linkage cosine, under
-  which the representative member is the one with the smallest mean distance to
-  the others, not the one nearest the mean vector. The recorded finding from
-  #677B is exactly that a centroid rule over a mean of unit vectors is not the
-  linkage criterion it claims. The label is display only, so the harm would be
-  cosmetic, but there is no reason to repeat the conflation.
-- **The cleared-column configuration needs a home.** The cleared set and the
-  per-column threshold come from a human reading slice 01's census. Put them in
-  a file this slice declares, not in a constant nobody can find; the Files
-  block names it.
-- **`data/vocabulary/` is gitignored like the rest of `data/`.** Build it in
-  the main checkout.
+  `axial.argmap.build` mirrors it for bag state (#677). Mirror it a third time
+  rather than inventing a fourth shape.
+- **Content-keyed, like the decision logs.** Merge and Gather hash the
+  *rendered* input, so a one-byte render change re-asks the corpus and a model
+  change re-asks nothing. Same rule here, with the scheme version carried beside
+  the pin: a scheme edit must re-assign, a model swap must not.
+- **The scheme file is written by a person.** `config/vocabulary.yaml` holds,
+  per cleared column, the category names and glosses taken from slice 01's
+  report, plus a version string. Nothing in it is inferred at runtime. Slice 01
+  prints the scheme; a person reads it and commits it. Which columns count as
+  cleared is the founder's read of slice 01, never a rule in code.
+- **No self-consistency check in this slice.** Slice 01 measured agreement
+  between two models on a subsample, and the go/no-go rested on it. Re-checking
+  every assignment here doubles the spend to re-measure a number already bought.
+- **The label is the category's own name and gloss**, written by the model that
+  proposed the scheme and approved by the person who committed it. There is no
+  representative-member computation, because there is no clustering.
+- **`data/vocabulary/` is gitignored like the rest of `data/`.** Build it in the
+  main checkout. A worktree has no `data/`, so a build launched there would
+  silently operate on nothing.
 
 ## Out of scope for this slice (deferred)
 
 - Any retrieval tool reading the artifact. That is slice 03.
-- Asking a model to name a group. The label is the medoid member sentence,
-  chosen mechanically. A model-written label is a later question and a
-  reproducibility risk this slice does not take on.
-- Incremental fit: placing a new source's answers into an existing grouping
-  without re-clustering. Worth having eventually, the same way `argmap` grew
-  it in #677, but not needed to answer this feature's question.
-- Merging groups across columns.
+- Assigning the other six cleared columns. The command takes them as an
+  argument; running it is a decision, not a code change.
+- Re-proposing a scheme, and any automatic response to a scheme that fits the
+  corpus badly. Slice 01 reports the fit; a person decides what to do about it.
+- Merging categories, within a column or across columns.
 - Rendering any of this into the vault.
 
 ## Definition of done
@@ -135,11 +180,12 @@ depends-on: 01-the-sentence-columns-are-counted
 - [ ] Refactor pass complete with the bar green.
 - [ ] `uv run ruff check` clean.
 - [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] **Built on the real corpus** in `D:/axial`, with the second run observed
-      to reuse rather than rebuild. Log to
-      `data/logs/<YYYY-MM-DD>-vocabulary-build/` with `run.jsonl`,
-      `console.log` and `summary.md`; record the per-column group counts and
-      the reuse observation in the summary.
+- [ ] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
+      run observed to reuse rather than rebuild and a third run after new answers
+      observed to assign only those. Log to
+      `data/logs/<YYYY-MM-DD>-vocabulary-build/` with `run.jsonl`, `console.log`
+      and `summary.md`; record the per-category member counts, the refusal count,
+      the cost and the reuse observation.
 - [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
 
 ## Spec
@@ -148,8 +194,8 @@ This slice introduces a new persisted artifact under `data/vocabulary/` with its
 own content-keyed pin, so it owes a spec section of its own rather than an
 extension of an existing one. Write it in the same branch, beside
 `specs/PHASE-B.md` §7.12, which owns the corpus-pin manifest this pin sits
-alongside. Slice 01 owes none — it may kill the feature, and writing the
-section first is polishing past the bar.
+alongside. The section states that the category scheme is configuration a person
+commits, not a derived artifact, and why.
 
 ## Status / progress log
 
@@ -157,3 +203,7 @@ section first is polishing past the bar.
 - 2026-08-27 revised after review and independent verification: centroid
   corrected to medoid, the cleared-column configuration given a declared home,
   and the owed spec section named.
+- 2026-08-27 rewritten after slice 01 shipped, ran on the real corpus and
+  rejected clustering. Clustering leaves this slice entirely; the scheme is
+  frozen in configuration and assignment runs against it; scope is cut to
+  `mechanism` alone until slice 05 says the join pays.

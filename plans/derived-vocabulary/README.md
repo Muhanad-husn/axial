@@ -9,16 +9,21 @@ joins on them, and the name layer dominates retrieval by default. Names are the
 one column where two passages literally share a string.
 
 This feature makes the values repeat. Not by handing the model a menu of labels
-to pick from, which was tried here and retired, but by grouping the sentences
-the corpus already wrote and letting the groups be the vocabulary. The
-mechanism already exists and already works: `axial.argmap.build` clusters
-passages by the cosine similarity of their `claim` text with a local encoder
-and zero model calls. It runs on one column out of seventeen. Nobody has asked
-whether the 5,905 mechanism sentences fall into forty recurring mechanisms.
+to pick from, which was tried here and retired, but by deriving the categories
+from the sentences the corpus already wrote and letting those be the vocabulary.
+
+**How, decided by measurement on 2026-08-27, not by design.** The first
+instrument clustered the sentences by embedding distance, reusing what
+`axial.argmap.build` already does to `claim` text. Run on the real corpus it
+gave 772 groups on `mechanism`, each a wording variant of its neighbours.
+Embedding distance measures wording; the question here is meaning. It was
+replaced by a model that reads 400 values, names the recurring kinds, and is
+then tested on 400 values it has never seen. That named 20 categories on the
+same column, and 88.5% of the unseen values fell into them.
 
 - **Slug:** derived-vocabulary
 - **Created:** 2026-08-27
-- **Status:** filed and revised — #805, #806, #807, #808, #809
+- **Status:** 01 done (#815 merged); 02 rewritten after 01 ran; 03 aligned; 04 and 05 unchanged
 - **New system?** no
 - **Project directory:** .
 
@@ -72,8 +77,8 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | Issue | Slice | Goal (one line) | Status | PR |
 |-------|-------|-----------------|--------|----|
-| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ built, awaiting the founder's read | [#815](https://github.com/Muhanad-husn/axial/pull/815) |
-| [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | The groups become an artifact on disk with a stable id and a medoid label, so anything downstream can read which group a note's answer belongs to | ☐ todo | — |
+| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ **done**, read 2026-08-27 | [#815](https://github.com/Muhanad-husn/axial/pull/815) |
+| [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | A frozen category scheme in `config/vocabulary.yaml`, every `mechanism` value assigned against it, on disk, and a second run that re-assigns nothing | ☐ todo | — |
 | [#807](https://github.com/Muhanad-husn/axial/issues/807) | [two-notes-meet-at-a-shared-group](03-two-notes-meet-at-a-shared-group.md) | A brief runs through `--arm map+vocab`, and two passages meet at a shared mechanism the way they meet at a shared name today | ☐ todo | — |
 | [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☐ todo | — |
 | [#809](https://github.com/Muhanad-husn/axial/issues/809) | [the-two-arms-are-compared](05-the-two-arms-are-compared.md) | `axial eval layers` reads three sweep directories and reports grounding and sources cited per arm, with each brief's draw spread | ☐ todo | — |
@@ -96,24 +101,33 @@ builds nor anything that used it.
 The second is what this feature exists to answer. Slice 05 prints both
 comparisons in one table and answers neither. The founder does.
 
-**What the comparison costs.** 5 briefs × 3 draws × 3 arms = 45 runs, roughly
-$1.90 and about 2.5 hours at the sweep's default 3 workers. Bounded by
-construction: it is a five-brief measurement, never a pass over the corpus.
-Slice 01 now makes about five model calls per column, roughly a cent each --
-$0.1054 for all twelve, measured. Nothing else in this feature makes a model
-call at all.
+**What the whole feature costs.** Every figure below is measured or derived from
+a measured one, and nothing here is a pass over the corpus.
+
+| Slice | What it spends | Cost | Clock |
+|---|---|---|---|
+| 01 | 75 calls, all twelve columns, twice | $0.21 measured | ~20 min at 12 workers |
+| 02 | assigning `mechanism`'s 5,905 values, ~60 calls | ~$0.08 | ~20 min at 12 workers |
+| 02, widened | all seven cleared columns, 64,744 values, ~648 calls | ~$1 | ~4 hours |
+| 03 | one brief run, plus a human reading categories | ~$0.04 | minutes |
+| 04 | nothing | $0 | — |
+| 05 | 5 briefs × 3 draws × 3 arms = 45 runs | ~$1.90 | ~2.5 h at 3 workers |
+
+Slice 02's widened row is the only figure here that runs for hours, and it is
+deliberately deferred behind slice 05: widening before the comparison says the
+join pays would be buying reach nobody has shown is worth having.
 
 ## Slice 01 is a go/no-go, for slices 02 and 03 only
 
-**Slices 02 and 03 are not committed work until 01's number is read.** If the
-sentence columns do not group, there is no derived vocabulary to build on and
-neither slice happens. That is a real possible outcome, and the plan reaches it
-cheaply: 01 costs machine time and nothing else.
+**Slices 02 and 03 were not committed work until 01's number was read.** If the
+sentence columns had not grouped, there would be no derived vocabulary to build
+on and neither slice would happen. That was a real possible outcome, and the
+plan reached it cheaply: 01 cost $0.21 across two full runs.
 
 **Slice 04 is not gated by it.** It depends on nothing here, and giving the
-sweep an arm selector is useful whatever the census says. On a no-go, 04 and a
-two-arm 05 still run and still answer the first question, which never depended
-on the census.
+sweep an arm selector is useful whatever slice 01 reads. On a no-go, 04 and a
+two-arm 05 would still run and still answer the first question, which never
+depended on it.
 
 The bar is written into slice 01 in advance: five numeric conditions on one
 column, including a floor on cross-source categories, a ceiling on the largest
@@ -123,15 +137,38 @@ of the column's values to land in a large category. A majority test is passed
 by a single blob and failed by forty real recurring mechanisms covering a third
 of the column, which is the outcome this feature is hoping for.
 
-**Read 2026-08-27: six of twelve columns clear all five**
-(`data/logs/2026-08-27-vocabulary-categorise/`), and every category reaching
-five members crosses books in all twelve. The instrument changed on the way --
-embedding clustering measures wording, not meaning, and was replaced by a
-model that reads a sample and names the recurring kinds. Slice 02 inherits one
-open question: the granularity of the scheme is unstable run to run.
+**Read 2026-08-27: seven of twelve columns clear all five**
+(`data/logs/2026-08-27-vocabulary-categorise-v2/`), and every category reaching
+five members crosses books, in twelve columns of twelve, in both runs. That last
+number is what the feature exists for and it is the most stable thing measured
+here.
 
-Anyone executing this plan stops at the end of 01 and shows the founder the
-report.
+Two caveats stay attached to the go:
+
+- `arguing_against` clears the agreement floor by 1.8 points at n=68 and
+  `mechanism` by 1.4 at n=83, where the standard error is about 5.5. Those two
+  passes sit inside their own noise on that one condition. The other five clear
+  every condition with real margin.
+- The granularity of a scheme is unstable run to run: `position` 5 categories
+  then 15, `stops_holding` 7 then 20, `mechanism` 36 then 20. **Slice 02 answers
+  this by freezing the scheme in `config/vocabulary.yaml` rather than deriving
+  it on every build.** Reconciling one build's categories against the next one's
+  would be name merging in a new coat, which is the cost this feature exists to
+  escape.
+
+The first run (`data/logs/2026-08-27-vocabulary-categorise/`) is kept beside the
+corrected one rather than overwritten. It read six of twelve, because a
+silent-failure path in the assign loop counted a value the model never answered
+about as a value the model refused. Both runs together are what says the
+difference was the defect and not variance: `mechanism` 50.7% to 88.5%, `claim`
+75.0% to 99.5%.
+
+**The bar is cleared and the report has been read.** What remains is the
+founder's word to start 02, and one scoping decision already written into that
+slice: it assigns `mechanism` alone, for about $0.08 and twenty minutes, rather
+than all seven cleared columns for about $1 and four hours. Nothing has yet
+measured whether the derived join improves retrieval, so widening before slice
+05 answers that would be paying for reach nobody has shown is worth having.
 
 ## Dependency order
 
@@ -145,7 +182,8 @@ An earlier draft had 03 clear of `cli.py` and therefore parallel-safe with 04.
 That stopped being true when 03 grew a real command boundary, which was the
 right trade: the parallel pair was only usable after 02 merged anyway.
 
-Recommended order: **01 alone, then stop and read its number.**
+Recommended order: 01 alone, then stop and read its number. **Done 2026-08-27.**
+Next is **02 on `mechanism` alone**, then 03, then 04 and 05 together.
 
 ## Out of scope (whole feature)
 

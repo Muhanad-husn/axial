@@ -5,7 +5,7 @@
 - **Slice slug:** the-sentence-columns-are-counted
 - **Branch:** feat/derived-vocabulary/01-the-sentence-columns-are-counted
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ done — merged in #815, report read 2026-08-27
 - **Walking skeleton?** no
 
 > **Rewritten 2026-08-27, founder ruling.** The slice first shipped as a
