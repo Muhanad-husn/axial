@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - repo requires-python >=3.13
@@ -408,3 +410,189 @@ def test_main_names_escalations_survives_non_utf8_stdout_json_and_text(tmp_path,
     exit_code, raw_bytes = run_with_cp1252_stdout([])
     assert exit_code == 0
     assert "an-Nizām" in raw_bytes.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# `axial vocabulary examine` (issue #805, derived-vocabulary slice 01):
+# read-only census over the twelve sentence-valued answer columns
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_recognises_vocabulary_examine_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "vocabulary",
+            "examine",
+            "--columns",
+            "mechanism",
+            "--thresholds",
+            "0.45,0.55",
+            "--answers-dir",
+            str(tmp_path / "answers"),
+        ]
+    )
+
+    assert args.command == "vocabulary"
+    assert args.vocabulary_command == "examine"
+    assert args.columns == "mechanism"
+    assert args.thresholds == "0.45,0.55"
+    assert args.answers_dir == str(tmp_path / "answers")
+
+
+def _write_vocabulary_answers(answers_dir):
+    """A small `mechanism` population: five paraphrases of one recurring
+    mechanism, spread across three sources (so at least one group reaches a
+    second source), plus three one-off, unrelated sentences that must never
+    join any group."""
+    answers_dir.mkdir(parents=True, exist_ok=True)
+
+    repeated = [
+        "Extraction of rural surplus funds the central state's own army.",
+        "The state's army is funded by extracting surplus from the countryside.",
+        "Rural surplus, once extracted, pays for the central army.",
+        "Central military spending draws on surplus taken from rural producers.",
+        "The army is paid for out of surplus the state extracts from villages.",
+    ]
+    unrelated = [
+        "A shared script does not make two nationalisms the same movement.",
+        "Colonial borders were drawn without consulting the tribes they split.",
+        "Print capitalism let a reading public imagine itself as a nation.",
+    ]
+
+    _write_jsonl(
+        answers_dir / "alpha-2020.jsonl",
+        [
+            {"chunk_id": "alpha-2020_1", "source_id": "alpha-2020",
+             "answers": {"mechanism": repeated[0]}},
+            {"chunk_id": "alpha-2020_2", "source_id": "alpha-2020",
+             "answers": {"mechanism": repeated[1]}},
+            {"chunk_id": "alpha-2020_3", "source_id": "alpha-2020",
+             "answers": {"mechanism": unrelated[0]}},
+            # An abstention and the issue #810 literal-"[]" bug: both must
+            # be excluded from the population, not clustered.
+            {"chunk_id": "alpha-2020_4", "source_id": "alpha-2020",
+             "answers": {"mechanism": "not-in-passage"}},
+        ],
+    )
+    _write_jsonl(
+        answers_dir / "beta-2021.jsonl",
+        [
+            {"chunk_id": "beta-2021_1", "source_id": "beta-2021",
+             "answers": {"mechanism": repeated[2]}},
+            {"chunk_id": "beta-2021_2", "source_id": "beta-2021",
+             "answers": {"mechanism": repeated[3]}},
+            {"chunk_id": "beta-2021_3", "source_id": "beta-2021",
+             "answers": {"mechanism": unrelated[1]}},
+            {"chunk_id": "beta-2021_4", "source_id": "beta-2021",
+             "answers": {"mechanism": "[]"}},
+        ],
+    )
+    _write_jsonl(
+        answers_dir / "gamma-2022.jsonl",
+        [
+            {"chunk_id": "gamma-2022_1", "source_id": "gamma-2022",
+             "answers": {"mechanism": repeated[4]}},
+            {"chunk_id": "gamma-2022_2", "source_id": "gamma-2022",
+             "answers": {"mechanism": unrelated[2]}},
+        ],
+    )
+    return repeated, unrelated
+
+
+def _fake_topic_encoder(topic_by_sentence):
+    """A deterministic stand-in for the real MiniLM encoder: every sentence
+    maps to a one-hot vector keyed on which topic it belongs to, so sentences
+    that "say the same thing in different words" land on the identical
+    vector (cosine distance 0) and unrelated sentences land on orthogonal
+    vectors (cosine distance 1) -- no real embedding, no model call, and the
+    clustering that runs on top of it is real."""
+    import numpy as np
+
+    topics = sorted(set(topic_by_sentence.values()))
+    index_by_topic = {topic: index for index, topic in enumerate(topics)}
+    call_count = {"n": 0}
+
+    def encode(texts):
+        call_count["n"] += 1
+        vectors = np.zeros((len(texts), len(topics)))
+        for row, text in enumerate(texts):
+            vectors[row, index_by_topic[topic_by_sentence[text]]] = 1.0
+        return vectors
+
+    encode.call_count = call_count
+    return encode
+
+
+def test_main_vocabulary_examine_reports_the_sweep_and_the_top_groups(tmp_path, capsys, monkeypatch):
+    """The acceptance test (plan's gherkin, verbatim in intent): a store
+    with notes from more than one source, whose `mechanism` answers include
+    several paraphrases of the same mechanism and several unrelated ones.
+    Real clustering runs (scipy, from the `distill` group); only the
+    encoder is a fake, injected by monkeypatching the same seam
+    `axial.argmap.build.bag_passages` already exposes."""
+    pytest.importorskip("scipy")
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, unrelated = _write_vocabulary_answers(answers_dir)
+
+    topic_by_sentence = {sentence: "extraction" for sentence in repeated}
+    for index, sentence in enumerate(unrelated):
+        topic_by_sentence[sentence] = f"unrelated-{index}"
+
+    fake_encode = _fake_topic_encoder(topic_by_sentence)
+    monkeypatch.setattr(vocabulary_mod, "_default_encoder", lambda: fake_encode)
+
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+
+    exit_code = main(
+        [
+            "vocabulary",
+            "examine",
+            "--columns",
+            "mechanism",
+            "--answers-dir",
+            str(answers_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    # Names the column, its answered-value count, and its distinct-string
+    # count.
+    assert "mechanism: 8 answered value(s)" in captured.out
+    assert "8 distinct string(s)" in captured.out
+
+    # Per swept threshold: group count, share in a group of 2+, largest
+    # group size, cross-source group count.
+    assert "threshold=0.35" in captured.out
+    assert "threshold=0.55" in captured.out
+    assert "threshold=0.75" in captured.out
+    assert "group(s)" in captured.out
+    assert "in a group of 2+" in captured.out
+    assert "largest group" in captured.out
+    assert "cross-source group(s)" in captured.out
+
+    # Names the sampling threshold (0.55, the live claim path's own
+    # threshold and the centre of the default sweep), then prints the
+    # largest groups at that threshold as their member sentences -- here
+    # 4 groups exist in total (one group of 5 paraphrases, three unrelated
+    # singletons), all under the ten printed.
+    assert "sampling threshold for the 4 largest group(s): 0.55" in captured.out
+    for sentence in repeated:
+        assert sentence in captured.out
+    for sentence in unrelated:
+        assert sentence in captured.out
+
+    # Zero model calls: the fake encoder was the only thing that produced a
+    # vector.
+    assert fake_encode.call_count["n"] >= 1
+
+    # Writes nothing under the answer store or anywhere else in the tmp
+    # tree -- no pipeline artifact, not even a new empty directory.
+    after = sorted(str(p) for p in tmp_path.rglob("*"))
+    assert after == before

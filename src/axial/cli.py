@@ -179,6 +179,12 @@ from axial.validators.coverage import (
     validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
+from axial.vocabulary import (
+    DEFAULT_VOCABULARY_THRESHOLDS,
+    VOCABULARY_COLUMNS,
+    examine_vocabulary,
+    format_vocabulary_report,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -630,6 +636,56 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="as_json",
         help="machine-readable JSON array instead of the human-readable report",
+    )
+
+    vocabulary_parser = subparsers.add_parser(
+        "vocabulary",
+        help=(
+            "issue #805 (derived-vocabulary, slice 01): 'examine' is a "
+            "read-only census over the twelve sentence-valued answer "
+            "columns -- whether they group by meaning even though they "
+            "never repeat as strings, the go/no-go for the feature "
+            "(plans/derived-vocabulary/README.md)"
+        ),
+    )
+    vocabulary_subparsers = vocabulary_parser.add_subparsers(dest="vocabulary_command")
+    vocabulary_examine_parser = vocabulary_subparsers.add_parser(
+        "examine",
+        help=(
+            "read data/answers/ and report, per column, its answered/"
+            "distinct/excluded counts, then at each swept distance "
+            "threshold: group count, share of the population in a group "
+            "of 2+, largest group size, and the count of groups spanning "
+            "2+ sources -- then the ten largest groups at the threshold "
+            "nearest the live claim path's own 0.55 "
+            "(axial.argmap.build.BAG_DISTANCE_THRESHOLD), as their member "
+            "sentences. Local encoder only -- zero model calls, writes no "
+            "pipeline artifact"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--columns",
+        default=None,
+        help=(
+            "comma-separated column names to sweep (default: all twelve, "
+            f"{','.join(VOCABULARY_COLUMNS)})"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--thresholds",
+        default=None,
+        help=(
+            "comma-separated cosine-distance thresholds to sweep (default: "
+            f"{','.join(str(t) for t in DEFAULT_VOCABULARY_THRESHOLDS)} -- a "
+            "+/-0.20 spread around the live claim path's own 0.55, in steps "
+            "of 0.10; the go/no-go bar quantifies over the whole sweep, not "
+            "one threshold)"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--answers-dir",
+        default=None,
+        help="override data/answers/ (default: resolved from config/pipeline.yaml)",
     )
 
     map_parser = subparsers.add_parser(
@@ -2861,6 +2917,30 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
     return 0
 
 
+def _parse_vocabulary_columns(raw: str | None) -> list[str]:
+    if raw is None:
+        return list(VOCABULARY_COLUMNS)
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def _parse_vocabulary_thresholds(raw: str | None) -> list[float]:
+    if raw is None:
+        return list(DEFAULT_VOCABULARY_THRESHOLDS)
+    return [float(value.strip()) for value in raw.split(",") if value.strip()]
+
+
+def _vocabulary_examine(
+    columns: str | None, thresholds: str | None, answers_dir: str | None
+) -> int:
+    stats = examine_vocabulary(
+        answers_dir=Path(answers_dir) if answers_dir is not None else None,
+        columns=_parse_vocabulary_columns(columns),
+        thresholds=_parse_vocabulary_thresholds(thresholds),
+    )
+    _print_encoding_safe(format_vocabulary_report(stats))
+    return 0
+
+
 def _names_merge(
     min_cluster_size: int | None,
     min_samples: int | None,
@@ -3469,6 +3549,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "examine":
         return _names_examine(args.min_cluster_sizes, args.min_samples)
+
+    if args.command == "vocabulary" and args.vocabulary_command == "examine":
+        return _vocabulary_examine(args.columns, args.thresholds, args.answers_dir)
 
     if args.command == "names" and args.names_command == "merge":
         return _names_merge(
