@@ -611,7 +611,7 @@ def parse_answer_response(raw: str, examples: dict[str, list[tuple[str, str]]]) 
     for field in ANSWER_FIELDS:
         if field not in data:
             raise AnswerParseError(f"answer field {field!r} is missing from the response")
-        value = data[field]
+        value = _normalize_empty_list_written_as_text(data[field], field)
         if _is_blank(value, field):
             raise AnswerParseError(
                 f"answer field {field!r} is empty: an answer or the explicit "
@@ -647,6 +647,32 @@ def _is_blank(value: Any, field: str | None = None) -> bool:
     if isinstance(value, dict):
         return len(value) == 0
     return False
+
+
+_EMPTY_LIST_AS_TEXT_RE = re.compile(r"^\[\s*\]$")
+
+
+def _normalize_empty_list_written_as_text(value: Any, field: str | None) -> Any:
+    """A list-valued field's answer is sometimes the JSON for an empty list
+    written as a string rather than the list itself -- `"[]"` or `"[ ]"`
+    where `[]` belongs (#810: 38 records across the corpus, the model having
+    written its own answer's shape as text). It says exactly what `[]` says,
+    so it is folded onto `[]` here, upstream of `_is_blank`, and then reads as
+    the real answer `_is_blank` already grants an empty list on a list-valued
+    field -- never as a blank, and never normalised onto the `not-in-passage`
+    abstention (§7.15's own distinction: `[]` is a read, not a refusal).
+
+    Scoped to `LIST_VALUED_FIELDS`: on a scalar field, `"[]"` is just a
+    two-character string answer, not the JSON of an empty list in disguise,
+    and a string that merely mentions `[]` inside longer text is untouched --
+    only the whole value being `[]`/`[ ]` (after stripping) qualifies."""
+    if (
+        field in LIST_VALUED_FIELDS
+        and isinstance(value, str)
+        and _EMPTY_LIST_AS_TEXT_RE.match(value.strip())
+    ):
+        return []
+    return value
 
 
 def build_answer_record(
