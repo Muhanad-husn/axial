@@ -354,7 +354,7 @@ def _distinct_sources_cited(record: dict[str, Any] | None) -> int | None:
     if not isinstance(source_usage, dict):
         return None
     sources = source_usage.get("sources")
-    if not isinstance(sources, dict):
+    if not isinstance(sources, list):
         return None
     return len(sources)
 

@@ -365,7 +365,7 @@ def test_run_one_draw_computes_distinct_sources_cited_from_source_usage(tmp_path
     def _fake_run_brief(_brief, **_kwargs):
         record = {
             "brief_id": brief.brief_id,
-            "source_usage": {"sources": {"src-a": {}, "src-b": {}}},
+            "source_usage": {"sources": [{"source_id": "src-a"}, {"source_id": "src-b"}]},
         }
         return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
 
@@ -693,7 +693,11 @@ def test_run_sweep_persists_distinct_sources_cited_per_draw(tmp_path, monkeypatc
             "interrogation": {"disposition": "proceed"},
             "claims": [],
             "cost": {"by_pass": {}},
-            "source_usage": {"sources": {"src-a": {}, "src-b": {}, "src-c": {}}},
+            "source_usage": {"sources": [
+                    {"source_id": "src-a"},
+                    {"source_id": "src-b"},
+                    {"source_id": "src-c"},
+                ]},
         }
         path = Path(analyses_dir) / f"{brief.brief_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
