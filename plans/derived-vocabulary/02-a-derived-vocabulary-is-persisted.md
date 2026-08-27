@@ -5,7 +5,7 @@
 - **Slice slug:** a-derived-vocabulary-is-persisted
 - **Branch:** feat/derived-vocabulary/02-a-derived-vocabulary-is-persisted
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ code complete; awaiting the real-corpus build
 - **Walking skeleton?** no
 
 > **Rewritten 2026-08-27**, after slice 01 shipped and ran on the real corpus.
@@ -158,32 +158,32 @@ depends-on: 01-the-sentence-columns-are-counted
 
 ## Inner loop — initial unit test list
 
-- [ ] Every population entry lands with a category id or a recorded refusal,
+- [x] Every population entry lands with a category id or a recorded refusal,
       keyed by the note's `chunk_id`, its column, and the element's index within
       a list-valued answer. Slice 01's `PopulationEntry` already carries the
       value, the `chunk_id` and the `source_id`.
-- [ ] A refusal is persisted as a refusal, distinct from a value that was never
+- [x] A refusal is persisted as a refusal, distinct from a value that was never
       asked about. Slice 01 split `refused_count` from `unanswered_count` after
       review found the two lumped together; the artifact keeps that distinction
       rather than collapsing it again.
-- [ ] A completed build has zero unanswered values. An unanswered value is a
+- [x] A completed build has zero unanswered values. An unanswered value is a
       failed run, not a result, and the build says so rather than persisting a
       hole.
-- [ ] The artifact records the scheme version it was built against.
-- [ ] A build whose scheme version differs from the artifact's refuses, naming
+- [x] The artifact records the scheme version it was built against.
+- [x] A build whose scheme version differs from the artifact's refuses, naming
       both versions, rather than mixing two schemes in one file.
-- [ ] The pin is content-keyed over the rendered input, matching the convention
+- [x] The pin is content-keyed over the rendered input, matching the convention
       merge and Gather already use: a change to the answers re-assigns, a change
       to an unrelated part of the repo does not.
-- [ ] An unchanged pin and an unchanged scheme reuse the artifact and call the
+- [x] An unchanged pin and an unchanged scheme reuse the artifact and call the
       model zero times.
-- [ ] New values assign incrementally. Assignments already on disk are neither
+- [x] New values assign incrementally. Assignments already on disk are neither
       re-asked nor rewritten.
-- [ ] A column with no scheme in `config/vocabulary.yaml` fails naming the
+- [x] A column with no scheme in `config/vocabulary.yaml` fails naming the
       column, not with a stack trace and not with an empty success.
-- [ ] A category carries a parent id, null at depth 1, and the scheme file parses
+- [x] A category carries a parent id, null at depth 1, and the scheme file parses
       a nested scheme even though the committed v1 scheme is flat.
-- [ ] Assignments are recorded against the level they were made at, so a later
+- [x] Assignments are recorded against the level they were made at, so a later
       level can be added without re-asking this one.
 
 ## Design notes for the executor
@@ -229,12 +229,12 @@ depends-on: 01-the-sentence-columns-are-counted
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for
       the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] `uv run ruff check` clean.
-- [ ] Slice's tests run in CI (`tdd-ci`).
+- [x] Refactor pass complete with the bar green.
+- [x] `uv run ruff check` clean.
+- [x] Slice's tests run in CI (`tdd-ci`).
 - [ ] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
       run observed to reuse rather than rebuild and a third run after new answers
       observed to assign only those. Log to
@@ -266,3 +266,15 @@ commits, not a derived artifact, and why.
   depth 1 only, but the artifact, the scheme file and the version must admit a
   second level without a migration, and a blob is now read as a category that
   wants splitting rather than as a column that failed.
+- 2026-08-28 built. `config/vocabulary.yaml` holds the twenty `mechanism`
+  categories slice 01's corrected run proposed, split into a distinct id, name
+  and gloss apiece -- that run persisted all twenty `name` fields as the
+  identical string "Causal mechanism", with the discriminating label sitting as
+  the clause before the first colon of each gloss. `axial vocabulary build`
+  assigns the whole column against them through slice 01's own
+  `_assign_all`/`_assign_batch` path (now able to run its batches concurrently)
+  and writes `data/vocabulary/<column>/{assignments.jsonl,manifest.json}`.
+  Reuse is keyed on a content-keyed answers pin plus the scheme version, held
+  beside it: a scheme edit refuses rather than mixing two vocabularies in one
+  file. The owed spec section is `specs/PHASE-B.md` §7.18. Not yet built on
+  the real corpus -- that is the remaining box below.
