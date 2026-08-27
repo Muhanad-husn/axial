@@ -291,6 +291,17 @@ unaffected: it depends on nothing here and is useful whatever this says.
   exception**, and **every failure is condition 2** -- a scheme that came out
   too coarse, never an absence of structure. `assumes` and `ranges_over` miss
   by about a point.
+- 2026-08-27 reviewed (`aeo:reviewer`, packet-staged, findings on PR #815) and
+  re-run after the fixes. The reviewer found that the assign loop could not
+  distinguish a refusal from an unanswered index, so a truncated or renumbered
+  batch silently deflated the assignment rate -- the exact number condition 4
+  turns on. Corrected run in `data/logs/2026-08-27-vocabulary-categorise-v2/`,
+  the first run kept beside it: **seven of twelve clear all five**, `unanswered`
+  is 0 across every column, and coverage rose far outside the noise where the
+  defect had been biting -- `mechanism` 50.7% -> 88.5%, `claim` 75.0% -> 99.5%.
+  Two passes remain thin and are named as such: `arguing_against` clears the
+  agreement floor by 1.8 points at n=68, `mechanism` by 1.4 at n=83, against a
+  standard error of about 5.5.
 - 2026-08-27 the open question for slice 02, measured rather than guessed:
   scheme granularity is unstable. `mechanism` named 36 categories and assigned
   50.7% here where the same prompt and model named 14 and assigned 70.8%
