@@ -239,13 +239,15 @@ depends-on: 01-the-sentence-columns-are-counted
 - [x] Refactor pass complete with the bar green.
 - [x] `uv run ruff check` clean.
 - [x] Slice's tests run in CI (`tdd-ci`).
-- [ ] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
+- [x] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
       run observed to reuse rather than rebuild and a third run after new answers
       observed to assign only those. Log to
       `data/logs/<YYYY-MM-DD>-vocabulary-build/` with `run.jsonl`, `console.log`
       and `summary.md`; record the per-category member counts, the refusal count,
-      the cost and the reuse observation.
-- [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
+      the cost and the reuse observation. Done 2026-08-28,
+      `data/logs/2026-08-28-vocabulary-build/`.
+- [x] Evidence collected and PR opened into the default branch (`safe-pr`): PR
+      [#817](https://github.com/Muhanad-husn/axial/pull/817).
 
 ## Spec
 
@@ -280,5 +282,22 @@ commits, not a derived artifact, and why.
   and writes `data/vocabulary/<column>/{assignments.jsonl,manifest.json}`.
   Reuse is keyed on a content-keyed answers pin plus the scheme version, held
   beside it: a scheme edit refuses rather than mixing two vocabularies in one
-  file. The owed spec section is `specs/PHASE-B.md` §7.18. Not yet built on
-  the real corpus -- that is the remaining box below.
+  file. The owed spec section is `specs/PHASE-B.md` §7.18.
+- 2026-08-28 built on the real corpus, `mechanism`, scheme
+  `2026-08-28-mechanism-v1`, answers pin `417777fd2373b7e6`. 5,871 answered
+  values, 971 excluded, **5,315 assigned, 556 refused, 0 unanswered**, in 59
+  calls for **$0.0633** and **1 minute 51 seconds** of wall clock. Effective
+  concurrency **10.0 on 12 workers** -- 1,110.2s of summed per-call elapsed
+  over 111s of wall clock. All twenty categories reach five members and two or
+  more sources, and the largest holds 11.7% across 30 sources. The second run
+  took 3.9s, made zero calls and left the artifact byte-identical; an
+  incremental run after new answers assigned 48 and reused 142, in one call for
+  $0.0008. Full log in `data/logs/2026-08-28-vocabulary-build/summary.md`.
+  PR [#817](https://github.com/Muhanad-husn/axial/pull/817).
+- 2026-08-28 five review findings applied on the same branch. An out-of-scheme
+  category name is no longer stamped as a refusal (it is counted, named and
+  reported apart, because reuse freezes whatever a record holds); `--force` is
+  the deliberate act that re-assigns under an edited scheme, setting the paid
+  artifact aside rather than deleting it; the build spends under its own
+  `vocabulary_build` pass name, pinned to the examine pass's tier; and the
+  command's non-zero exit on an incomplete build is asserted.
