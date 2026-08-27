@@ -196,18 +196,17 @@ The rest is new.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for
       the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] `uv run ruff check` clean. No gate runs it.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] **Run it on the real corpus.** All twelve columns, full answer store, in
-      the main checkout `D:/axial`, never a worktree where `data/` does not
-      exist. The operator writes
-      `data/logs/<YYYY-MM-DD>-vocabulary-census/` with `run.jsonl`,
-      `console.log` and `summary.md`, and puts the per-column table in the
-      summary. A green suite is not the evidence here; the corpus reading is.
+- [x] Refactor pass complete with the bar green.
+- [x] `uv run ruff check` clean. No gate runs it.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [x] **Run it on the real corpus.** All twelve columns, full answer store,
+      driven from the worktree against the main checkout's answer store, twelve
+      processes in parallel. `data/logs/2026-08-27-vocabulary-categorise/` holds
+      `run.jsonl`, one `console-<column>.log` per column and `summary.md` with
+      the per-column table. $0.1054 over 75 calls, ~20 minutes.
 - [ ] Report to the founder and **stop**. Slice 02 does not start until the
       number is read.
 - [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
@@ -267,3 +266,21 @@ unaffected: it depends on nothing here and is useful whatever this says.
   `data/logs/2026-08-27-vocabulary-census/`.
 - 2026-08-27 rewritten to the categorisation pass on the founder's ruling. The
   population reader survives; the clustering does not.
+- 2026-08-27 run on the full corpus, all twelve columns
+  (`data/logs/2026-08-27-vocabulary-categorise/`). **Six of twelve clear all
+  five numeric conditions**; the bar asked for one. `move` 97.5% assigned,
+  `about` 94.0%, `evidence` 87.5%, `claim` 75.0%, `arguing_against` 71.8%,
+  `mechanism` 50.7%. Two results the bar did not anticipate: **every category
+  reaching five members crosses books, in all twelve columns without
+  exception**, and **every failure is condition 2** -- a scheme that came out
+  too coarse, never an absence of structure. `assumes` and `ranges_over` miss
+  by about a point.
+- 2026-08-27 the open question for slice 02, measured rather than guessed:
+  scheme granularity is unstable. `mechanism` named 36 categories and assigned
+  50.7% here where the same prompt and model named 14 and assigned 70.8%
+  earlier the same day, and re-assigning that 14-category scheme on the
+  identical held-out 400 gave 78.2% -- roughly 7 points of run-to-run noise on
+  byte-identical input. A second round over the residue named 5 further real
+  categories covering 41.4% of it and judged the other 51 values genuinely
+  one-off, implying 87.2% coverage for one more call. Slice 02 has to pin the
+  granularity; the residue round is the cheapest lever.

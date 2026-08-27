@@ -26,7 +26,10 @@ whether the 5,905 mechanism sentences fall into forty recurring mechanisms.
 
 Distinct-value reuse per column over 6,860 notes in `data/answers/*.jsonl`,
 excluding the `not-in-passage` abstention. Counted 2026-08-27, and re-derivable
-for free by slice 01.
+for free by slice 01. It is the reason this feature exists and it is also the
+trap: near-zero string reuse says nothing about whether the *meanings* repeat,
+and the first instrument built here answered the string question with
+embeddings and got a confident wrong answer.
 
 | Column | Values | Distinct | Reuse | Shape |
 |---|---|---|---|---|
@@ -69,7 +72,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | Issue | Slice | Goal (one line) | Status | PR |
 |-------|-------|-----------------|--------|----|
-| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, how many groups its answers fall into, how much of the column they cover, and how many reach a second source | ☐ todo | — |
+| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ built, awaiting the founder's read | — |
 | [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | The groups become an artifact on disk with a stable id and a medoid label, so anything downstream can read which group a note's answer belongs to | ☐ todo | — |
 | [#807](https://github.com/Muhanad-husn/axial/issues/807) | [two-notes-meet-at-a-shared-group](03-two-notes-meet-at-a-shared-group.md) | A brief runs through `--arm map+vocab`, and two passages meet at a shared mechanism the way they meet at a shared name today | ☐ todo | — |
 | [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☐ todo | — |
@@ -96,7 +99,9 @@ comparisons in one table and answers neither. The founder does.
 **What the comparison costs.** 5 briefs × 3 draws × 3 arms = 45 runs, roughly
 $1.90 and about 2.5 hours at the sweep's default 3 workers. Bounded by
 construction: it is a five-brief measurement, never a pass over the corpus.
-Nothing else in this feature makes a model call at all.
+Slice 01 now makes about five model calls per column, roughly a cent each --
+$0.1054 for all twelve, measured. Nothing else in this feature makes a model
+call at all.
 
 ## Slice 01 is a go/no-go, for slices 02 and 03 only
 
@@ -110,12 +115,20 @@ sweep an arm selector is useful whatever the census says. On a no-go, 04 and a
 two-arm 05 still run and still answer the first question, which never depended
 on the census.
 
-The bar is written into slice 01 in advance: five conditions at one threshold,
-including a floor on cross-source groups and a ceiling on the largest group. It
-deliberately does not require a majority of the column's values to land in a
-group. A majority test is passed by a single blob and failed by forty real
-recurring mechanisms covering a third of the column, which is the outcome this
-feature is hoping for.
+The bar is written into slice 01 in advance: five numeric conditions on one
+column, including a floor on cross-source categories, a ceiling on the largest
+one, a floor on how much of a held-out sample is placed, and a floor on how far
+a second, different model agrees. It deliberately does not require a majority
+of the column's values to land in a large category. A majority test is passed
+by a single blob and failed by forty real recurring mechanisms covering a third
+of the column, which is the outcome this feature is hoping for.
+
+**Read 2026-08-27: six of twelve columns clear all five**
+(`data/logs/2026-08-27-vocabulary-categorise/`), and every category reaching
+five members crosses books in all twelve. The instrument changed on the way --
+embedding clustering measures wording, not meaning, and was replaced by a
+model that reads a sample and names the recurring kinds. Slice 02 inherits one
+open question: the granularity of the scheme is unstable run to run.
 
 Anyone executing this plan stops at the end of 01 and shows the founder the
 report.
@@ -152,8 +165,10 @@ Recommended order: **01 alone, then stop and read its number.**
   clustering and merge pass, and `uses` is filed as #811. `citations` holds
   structured records rather than sentences.
 - **Tuning the argument map's own thresholds.** `BAG_DISTANCE_THRESHOLD = 0.55`
-  stays where it is. Slice 01 sweeps thresholds for the new columns and reports
-  what it finds, without touching the claim path already in production.
+  stays where it is. Slice 01 does not cluster at all any more, and never
+  touches the claim path already in production -- though its `claim` reading is
+  the sharpest comparison available against what argmap's bagging produces:
+  1,937 positions at 35.3% cross-source, against 10 categories at 100%.
 
 ## Vocabulary this plan borrows and does not define
 
