@@ -307,6 +307,18 @@ llm:
     # `llm_tier` names) -- the pass that wrote a disagreement must never be
     # the pass that judges it grounded.
     gather_eval: production_high
+    # The derived-vocabulary categorisation pass (issue #805 slice 01,
+    # plans/derived-vocabulary/01-the-sentence-columns-are-counted.md): its
+    # own tier, on the same one-tier-per-pass rule as every entry above. The
+    # examine pass proposes a category scheme and assigns a disjoint held-out
+    # sample against it.
+    vocabulary_examine: production_vocabulary_examine
+    # The self-consistency check pass, same rule as `paper_shape` above: it
+    # re-assigns a subsample of the same held-out values under a second
+    # model, and must resolve to a DIFFERENT model than `vocabulary_examine`
+    # -- enforced at run time by `axial.vocabulary.SelfConsistencyError`, not
+    # by this naming alone.
+    vocabulary_examine_check: production_vocabulary_examine_check
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the result, mirroring the
   # two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass

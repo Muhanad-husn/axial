@@ -280,6 +280,20 @@ PRODUCTION_PAPER_SHAPE_TIER = "production_paper_shape"
 # prose and must not be the drafter, but this pass writes, and a writer
 # summarising its own argument is not self-grading.
 PRODUCTION_PAPER_ABSTRACT_TIER = "production_paper_abstract"
+# The derived-vocabulary categorisation pass's two tiers (issue #805 slice
+# 01, plans/derived-vocabulary/01-the-sentence-columns-are-counted.md): the
+# examine tier proposes a category scheme from a sample and assigns a
+# disjoint held-out sample against it; the check tier re-assigns a subsample
+# of the same held-out values under a SECOND model, for the self-consistency
+# check bar condition 5 names. Same different-model rule as
+# PRODUCTION_PAPER_SHAPE_TIER above, enforced at run time by `axial.
+# vocabulary.SelfConsistencyError` rather than by this naming alone -- the
+# pass names themselves (`axial.vocabulary.EXAMINE_PASS_NAME`/`CHECK_PASS_
+# NAME`) live with the module that owns the pass, mirroring `axial.argmap.
+# build.PASS_NAME`'s own local convention, and only the tier needs
+# registering centrally here.
+PRODUCTION_VOCABULARY_EXAMINE_TIER = "production_vocabulary_examine"
+PRODUCTION_VOCABULARY_EXAMINE_CHECK_TIER = "production_vocabulary_examine_check"
 DEFAULT_LLM_TIER = BUILDING_TIER
 
 # Fallback model used only when secrets.toml doesn't name one for the
@@ -2954,6 +2968,8 @@ TIER_TO_MODEL_KEY = {
     PRODUCTION_PAPER_DRAFT_TIER: "production_paper_draft",
     PRODUCTION_PAPER_SHAPE_TIER: "production_paper_shape",
     PRODUCTION_PAPER_ABSTRACT_TIER: "production_paper_abstract",
+    PRODUCTION_VOCABULARY_EXAMINE_TIER: "production_vocabulary_examine",
+    PRODUCTION_VOCABULARY_EXAMINE_CHECK_TIER: "production_vocabulary_examine_check",
 }
 
 

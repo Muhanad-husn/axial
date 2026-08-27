@@ -3,8 +3,6 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - repo requires-python >=3.13
@@ -428,8 +426,10 @@ def test_build_parser_recognises_vocabulary_examine_subcommand(tmp_path):
             "examine",
             "--columns",
             "mechanism",
-            "--thresholds",
-            "0.45,0.55",
+            "--propose-n",
+            "40",
+            "--assign-n",
+            "40",
             "--answers-dir",
             str(tmp_path / "answers"),
         ]
@@ -438,7 +438,8 @@ def test_build_parser_recognises_vocabulary_examine_subcommand(tmp_path):
     assert args.command == "vocabulary"
     assert args.vocabulary_command == "examine"
     assert args.columns == "mechanism"
-    assert args.thresholds == "0.45,0.55"
+    assert args.propose_n == 40
+    assert args.assign_n == 40
     assert args.answers_dir == str(tmp_path / "answers")
 
 
@@ -502,50 +503,93 @@ def _write_vocabulary_answers(answers_dir):
     return repeated, unrelated
 
 
-def _fake_topic_encoder(topic_by_sentence):
-    """A deterministic stand-in for the real MiniLM encoder: every sentence
-    maps to a one-hot vector keyed on which topic it belongs to, so sentences
-    that "say the same thing in different words" land on the identical
-    vector (cosine distance 0) and unrelated sentences land on orthogonal
-    vectors (cosine distance 1) -- no real embedding, no model call, and the
-    clustering that runs on top of it is real."""
-    import numpy as np
+class _FakeVocabExamineClient:
+    """A minimal `LLMClient` for the CLI acceptance test: canned responses
+    queued per pass name, in the order the propose/assign/check calls are
+    expected to ask for them. Mirrors `axial.vocabulary.test_vocabulary.
+    _FakeVocabClient`, duplicated here (small, self-contained) rather than
+    imported across test modules -- no other test module in this repo
+    imports fixtures from another one."""
 
-    topics = sorted(set(topic_by_sentence.values()))
-    index_by_topic = {topic: index for index, topic in enumerate(topics)}
-    call_count = {"n": 0}
+    def __init__(self, responses_by_pass, models):
+        self._responses = {name: list(queue) for name, queue in responses_by_pass.items()}
+        self._models = models
+        self.prompts_by_pass = {}
+        self._calls = {}
+        self._cost = {}
 
-    def encode(texts):
-        call_count["n"] += 1
-        vectors = np.zeros((len(texts), len(topics)))
-        for row, text in enumerate(texts):
-            vectors[row, index_by_topic[topic_by_sentence[text]]] = 1.0
-        return vectors
+    def complete(self, prompt, pass_name=None):
+        self.prompts_by_pass.setdefault(pass_name, []).append(prompt)
+        self._calls[pass_name] = self._calls.get(pass_name, 0) + 1
+        self._cost[pass_name] = self._cost.get(pass_name, 0.0) + 0.001
+        queue = self._responses.get(pass_name)
+        if not queue:
+            raise AssertionError(f"_FakeVocabExamineClient: no response left for pass {pass_name!r}")
+        return queue.pop(0)
 
-    encode.call_count = call_count
-    return encode
+    def model_for_pass(self, pass_name=None):
+        return self._models.get(pass_name, "fake/default")
+
+    def calls_for_pass(self, pass_name=None):
+        return self._calls.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name=None):
+        return self._cost.get(pass_name) if self._calls.get(pass_name, 0) else None
 
 
-def test_main_vocabulary_examine_reports_the_sweep_and_the_top_groups(tmp_path, capsys, monkeypatch):
+def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_rate(
+    tmp_path, capsys, monkeypatch
+):
     """The acceptance test (plan's gherkin, verbatim in intent): a store
     with notes from more than one source, whose `mechanism` answers include
-    several paraphrases of the same mechanism and several unrelated ones.
-    Real clustering runs (scipy, from the `distill` group); only the
-    encoder is a fake, injected by monkeypatching the same seam
-    `axial.argmap.build.bag_passages` already exposes."""
-    pytest.importorskip("scipy")
+    several paraphrases of the same mechanism and several unrelated ones,
+    and a model client that names categories when asked to propose and
+    assigns values when asked to assign. No test makes a model call -- the
+    client is injected by monkeypatching the same seam `axial.vocabulary.
+    examine_vocabulary`'s own `client=None` default resolves through
+    (`axial.vocabulary.get_client`)."""
+    import json
+
     import axial.vocabulary as vocabulary_mod
     from axial.cli import main
 
     answers_dir = tmp_path / "answers"
     repeated, unrelated = _write_vocabulary_answers(answers_dir)
+    # 8 answered values total (5 repeated + 3 unrelated); the abstention and
+    # the issue #810 "[]" literal are excluded from the population.
 
-    topic_by_sentence = {sentence: "extraction" for sentence in repeated}
-    for index, sentence in enumerate(unrelated):
-        topic_by_sentence[sentence] = f"unrelated-{index}"
+    propose_response = json.dumps(
+        {
+            "categories": [
+                {
+                    "name": "Extraction funds central coercion",
+                    "gloss": "rural surplus, once extracted, pays for the state's own army",
+                }
+            ]
+        }
+    )
+    # Both calls assign every held-out value to the one proposed category --
+    # a clean, fully-determined 100% assignment rate and agreement rate,
+    # regardless of exactly which 4 of the 8 values the propose/assign
+    # split (seed 0) drew into which sample.
+    assign_response = json.dumps(
+        {"assignments": [{"n": n, "category": "Extraction funds central coercion"} for n in range(1, 5)]}
+    )
+    check_response = json.dumps(
+        {"assignments": [{"n": n, "category": "Extraction funds central coercion"} for n in range(1, 5)]}
+    )
 
-    fake_encode = _fake_topic_encoder(topic_by_sentence)
-    monkeypatch.setattr(vocabulary_mod, "_default_encoder", lambda: fake_encode)
+    client = _FakeVocabExamineClient(
+        responses_by_pass={
+            vocabulary_mod.EXAMINE_PASS_NAME: [propose_response, assign_response],
+            vocabulary_mod.CHECK_PASS_NAME: [check_response],
+        },
+        models={
+            vocabulary_mod.EXAMINE_PASS_NAME: "z-ai/glm-5.2",
+            vocabulary_mod.CHECK_PASS_NAME: "deepseek/deepseek-v4-pro",
+        },
+    )
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: client)
 
     before = sorted(str(p) for p in tmp_path.rglob("*"))
 
@@ -555,6 +599,10 @@ def test_main_vocabulary_examine_reports_the_sweep_and_the_top_groups(tmp_path, 
             "examine",
             "--columns",
             "mechanism",
+            "--propose-n",
+            "4",
+            "--assign-n",
+            "4",
             "--answers-dir",
             str(answers_dir),
         ]
@@ -562,41 +610,35 @@ def test_main_vocabulary_examine_reports_the_sweep_and_the_top_groups(tmp_path, 
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    # Names the column, its answered-value count, and its distinct-string
-    # count.
+    # Names the column, its answered-value count, its distinct-string
+    # count, and how many values were excluded as abstentions.
     assert "mechanism: 8 answered value(s)" in captured.out
     assert "8 distinct string(s)" in captured.out
+    assert "2 excluded (abstention/[]/empty)" in captured.out
 
-    # Per swept threshold: group count, share in a group of 2+, largest
-    # group size, cross-source group count.
-    assert "threshold=0.35" in captured.out
-    assert "threshold=0.55" in captured.out
-    assert "threshold=0.75" in captured.out
-    assert "group(s)" in captured.out
-    assert "in a group of 2+" in captured.out
-    assert "largest group" in captured.out
-    assert "cross-source group(s)" in captured.out
+    # Lists every category the model named, with its gloss, its member
+    # count and the number of distinct sources its members come from.
+    assert "Extraction funds central coercion" in captured.out
+    assert "rural surplus, once extracted, pays for the state's own army" in captured.out
+    assert "4 member(s)" in captured.out
 
-    # The go/no-go bar (plan conditions 1 and 3) quantifies over groups of
-    # 5+ members specifically -- printed on every threshold row. At every
-    # swept threshold here the repeated group (5 members, 3 sources) is the
-    # only one that clears the floor, and it is cross-source.
-    assert captured.out.count("1 group(s) with 5+ member(s), 1 of those cross-source") == 5
+    # The share of the held-out sample assigned, the count of categories
+    # with 5+ members, how many of those span 2+ sources, and the largest
+    # category's share.
+    assert "assignment rate on held-out sample: 100.0%" in captured.out
+    assert "categories with 5+ members: 0" in captured.out
+    assert "spanning 2+ sources: 0" in captured.out
+    assert "largest category share: 100.0%" in captured.out
 
-    # Names the sampling threshold (0.55, the live claim path's own
-    # threshold and the centre of the default sweep), then prints the
-    # largest groups at that threshold as their member sentences -- here
-    # 4 groups exist in total (one group of 5 paraphrases, three unrelated
-    # singletons), all under the ten printed.
-    assert "sampling threshold for the 4 largest group(s): 0.55" in captured.out
-    for sentence in repeated:
-        assert sentence in captured.out
-    for sentence in unrelated:
-        assert sentence in captured.out
+    # The share of a subsample on which a second, different model agrees
+    # with the first about which category a value belongs to.
+    assert "two-model agreement on subsample of 4: 100.0%" in captured.out
 
-    # Zero model calls: the fake encoder was the only thing that produced a
-    # vector.
-    assert fake_encode.call_count["n"] >= 1
+    # The model, the call count and the cost per column.
+    assert "z-ai/glm-5.2" in captured.out
+    assert "deepseek/deepseek-v4-pro" in captured.out
+    assert "2 call(s)" in captured.out  # examine: 1 propose + 1 assign batch
+    assert "1 call(s)" in captured.out  # check: 1 batch
 
     # Writes nothing under the answer store or anywhere else in the tmp
     # tree -- no pipeline artifact, not even a new empty directory.
