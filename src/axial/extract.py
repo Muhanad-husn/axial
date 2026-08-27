@@ -228,6 +228,70 @@ _FONT_INTERNAL_CODE_PATTERN = re.compile(r"\bH\d{3,4}\b|\bQ\d{2}\b")
 
 _DOTLESS_I = "ı"  # ı
 
+# A `●` (U+25CF) in the extracted text is never content. In `batatu-1999` it
+# stands where an Arabic-transliteration underdot consonant was dropped, mid
+# name; in `heydemann-2004` it is page furniture — a running-header marker the
+# extractor let into the text stream. Measured over the corpus: 2,799 in the
+# first, 220 in the second, none anywhere else.
+#
+# The rule removes it in both, and the only judgement it makes is about
+# spacing. When the glyph touches a letter or a hyphen with no space between,
+# it sits inside a word and the two sides are joined: `al-● Ham id` becomes
+# `al-Ham id`. When whitespace separates it from both neighbours, they are
+# two separate tokens and exactly one space is left between them:
+# `clear ● what` becomes `clear what`, never `clearwhat`.
+#
+# It deliberately does not try to rejoin a word the extractor split elsewhere.
+# `batatu-1999`'s text is fragmented independently of this glyph (`Jibr il`,
+# `Sal a h`, `H an i`), so `A ● hmad` becomes `A hmad` rather than `Ahmad`.
+# Rejoining those needs a general fragment-joiner with a dictionary behind it,
+# which is a different defect and a much larger one. A narrower rule that
+# guessed at fragments by length and capitalisation was measured and rejected:
+# it welded ordinary prose together 62 times in `heydemann-2004`
+# (`as the ● unit` → `theunit`) and still missed 428 of `batatu-1999`'s cases,
+# where the dropped consonant precedes a capital.
+_UNDERDOT_GLYPH = "●"
+
+
+def _repair_underdot_glyph(text: str) -> str:
+    """Tier 2: remove every `●`, joining the two sides when it sat inside a
+    word and leaving a single space when it sat between two tokens. No-op
+    when absent (§7.4)."""
+    if _UNDERDOT_GLYPH not in text:
+        return text
+
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] != _UNDERDOT_GLYPH:
+            out.append(text[i])
+            i += 1
+            continue
+
+        left_spaces = 0
+        while len(out) - 1 - left_spaces >= 0 and out[len(out) - 1 - left_spaces].isspace():
+            left_spaces += 1
+        after = i + 1
+        while after < n and text[after].isspace():
+            after += 1
+
+        left_index = len(out) - 1 - left_spaces
+        left_char = out[left_index] if left_index >= 0 else ""
+        right_char = text[after] if after < n else ""
+        inside_word = (
+            left_spaces == 0 and (left_char.isalpha() or left_char == "-")
+        ) or (after == i + 1 and (right_char.isalpha() or right_char == "-"))
+
+        for _ in range(left_spaces):
+            out.pop()
+        if not inside_word and out and right_char:
+            out.append(" ")
+        i = after
+
+    return "".join(out)
+
+
 _SPACE_BEFORE_PUNCT_PATTERN = re.compile(r"[ \t]+([,.;:!?])")
 _WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
 
@@ -305,6 +369,7 @@ def normalize_text(text: str) -> str:
     text = _decode_pua_offset_glyphs(text)
     text = _remove_detached_sk_marks(text)
     text = _repair_glyph_names(text)
+    text = _repair_underdot_glyph(text)
     text = _normalize_dotless_i(text)
     text = _collapse_whitespace(text)
     return text
