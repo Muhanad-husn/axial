@@ -119,57 +119,46 @@ def test_repair_underdot_glyph_is_a_noop_when_absent():
     assert _repair_underdot_glyph("plain text") == "plain text"
 
 
-def test_repair_underdot_glyph_joins_single_letter_fragments_on_both_sides():
-    # The `A ● hmad` half of the issue's headline example, isolated from the
-    # unrelated `Jibr il` split next to it (see
-    # test_normalize_text_fixes_the_glyph_but_leaves_an_unrelated_word_split
-    # below for why that half is out of scope).
-    assert _repair_underdot_glyph("A ● hmad") == "Ahmad"
+def test_repair_underdot_glyph_joins_across_a_touching_hyphen():
+    # `batatu-1999`: the glyph stands where an underdot consonant was dropped
+    # and touches the hyphen before it, so the two sides are one word.
+    assert _repair_underdot_glyph("al-● Ham id") == "al-Ham id"
+    assert _repair_underdot_glyph("Colonel ʿ Abd-ul-● Ham id") == "Colonel ʿ Abd-ul-Ham id"
 
 
-def test_repair_underdot_glyph_closes_a_leading_hyphen_attached_fragment():
-    # "al-" touches the glyph directly (no space) -- unambiguously mid-word,
-    # so the left side closes. "Ham" is a capitalized, multi-letter token
-    # across the space on the right -- not a fragment by this rule, so that
-    # space is left alone. The `Ham`/`id` split is a separate, pre-existing
-    # word-fragmentation defect unrelated to the glyph, and stays: this rule
-    # only closes gaps immediately adjacent to `●`.
-    assert _repair_underdot_glyph("al-● Ham id") == "al- Ham id"
-
-
-def test_repair_underdot_glyph_joins_fragments_on_both_sides():
-    # "u" (a single letter) and "tah" (a short, lowercase-initial run) both
-    # read as fragments, so both flanking spaces close. "Gh" is two tokens
-    # away from the glyph and stays untouched, same reasoning as `Ham id`
-    # above.
-    assert _repair_underdot_glyph("Gh u ● tah") == "Gh utah"
-
-
-def test_repair_underdot_glyph_leaves_a_whitespace_isolated_header_untouched():
-    # heydemann-2004's running-header divider: `6` (a number) and `Steven`
-    # (a capitalized word) are both complete tokens, not fragments.
-    assert _repair_underdot_glyph("6 ● Steven Heydemann") == "6 ● Steven Heydemann"
-
-
-def test_repair_underdot_glyph_joins_a_line_start_touching_fragment():
-    # No left neighbour at all (start of string); the right side touches a
-    # letter directly, which alone is enough to call it damage.
+def test_repair_underdot_glyph_joins_when_it_touches_a_letter():
     assert _repair_underdot_glyph("●halid arrived") == "halid arrived"
+    assert _repair_underdot_glyph("Fay●sal") == "Faysal"
 
 
-def test_repair_underdot_glyph_leaves_a_punctuation_adjacent_glyph_untouched():
-    # Touching punctuation on both sides is never a word fragment.
-    assert _repair_underdot_glyph("figures (●) omitted") == "figures (●) omitted"
+def test_repair_underdot_glyph_leaves_one_space_between_two_tokens():
+    # `heydemann-2004`: page furniture between two complete words. Removing
+    # the glyph must NOT weld the words together -- the defect that killed
+    # the first version of this rule, 62 times in that source alone.
+    assert _repair_underdot_glyph("does not make clear ● what") == "does not make clear what"
+    assert _repair_underdot_glyph("as the ● unit of agency") == "as the unit of agency"
+    assert _repair_underdot_glyph("6 ● Steven Heydemann") == "6 Steven Heydemann"
 
 
-def test_repair_underdot_glyph_leaves_ordinary_lowercase_words_untouched():
-    # Guards the length cap that keeps this rule from firing on ordinary
-    # prose: a ● between two full lowercase words (neither short, both
-    # plausible as complete tokens on their own) is left as-is. This is the
-    # one place this rule leans on a tuned constant (max fragment length 5,
-    # derived from the longest measured damage-side fragment, "hmad", at 4)
-    # rather than a purely structural signal -- flagged, not hidden.
-    assert _repair_underdot_glyph("totals ● verified") == "totals ● verified"
+def test_repair_underdot_glyph_drops_a_leading_glyph_without_a_leading_space():
+    assert _repair_underdot_glyph("● Hamzah himself") == "Hamzah himself"
+
+
+def test_repair_underdot_glyph_handles_several_in_one_run():
+    assert _repair_underdot_glyph("General ● Sal a ● h Jad id") == "General Sal a h Jad id"
+
+
+def test_repair_underdot_glyph_leaves_a_word_the_extractor_split_elsewhere():
+    # Deliberate limit, not an oversight. `batatu-1999`'s text is fragmented
+    # independently of this glyph (`Jibr il`, `Sal a h`), so the rule removes
+    # the glyph and stops. Rejoining split words is a separate, larger defect
+    # and needs a dictionary, not a neighbour test.
+    assert _repair_underdot_glyph("A ● hmad Jibr il") == "A hmad Jibr il"
+    assert _repair_underdot_glyph("Gh u ● tah") == "Gh u tah"
+
+
+def test_repair_underdot_glyph_between_punctuation_leaves_one_space():
+    assert _repair_underdot_glyph("figures (● ) omitted") == "figures ( ) omitted"
 
 
 def test_normalize_dotless_i_maps_to_ascii_i():
@@ -203,21 +192,27 @@ def test_normalize_text_repairs_a_pua_glyph_that_decodes_to_an_sk_character():
     assert normalize_text(f"wo{pua_acute}rd") == "word"
 
 
-def test_normalize_text_fixes_the_glyph_but_leaves_an_unrelated_word_split():
-    # Issue #779 acceptance criterion, first half. `normalize_text` repairs
-    # the `A ● hmad` fragmentation the glyph caused: "Ahmad". It does NOT
-    # also repair "Jibr il" -> "Jibril" -- that split has no `●` in it, isn't
-    # this glyph's damage, and reconstructing it would need a general
-    # word-fragment joiner the issue explicitly scopes out ("the rule is
-    # about the character's neighbours"). Stated plainly, not silently: the
-    # full headline reconstruction in the issue's illustration is not what
-    # this transform produces end-to-end.
-    assert normalize_text("A ● hmad Jibr il") == "Ahmad Jibr il"
+def test_normalize_text_removes_the_glyph_without_welding_words_together():
+    # `heydemann-2004`, the case that decides this rule. The glyph is page
+    # furniture between two complete words. Removing it must leave a space.
+    assert normalize_text("does not make clear ● what") == "does not make clear what"
+    assert normalize_text("6 ● Steven Heydemann") == "6 Steven Heydemann"
 
 
-def test_normalize_text_leaves_a_legitimate_header_bullet_exactly_as_it_stands():
-    # Issue #779 acceptance criterion, second half.
-    assert normalize_text("6 ● Steven Heydemann") == "6 ● Steven Heydemann"
+def test_normalize_text_joins_a_name_the_glyph_sat_inside():
+    # `batatu-1999`. The glyph touches the hyphen, so the sides are one word.
+    assert normalize_text("Colonel ʿ Abd-ul-● Ham id") == "Colonel ʿ Abd-ul-Ham id"
+
+
+def test_normalize_text_leaves_a_word_the_extractor_split_elsewhere():
+    # A deliberate limit, stated rather than papered over. `batatu-1999`'s
+    # text is fragmented independently of this glyph -- `Jibr il` and the
+    # space in `A hmad` carry no `●` and are not this transform's damage.
+    # Reconstructing them needs a general word-fragment joiner with a
+    # dictionary behind it, which is a separate and much larger defect.
+    # The illustration in issue #779 shows the fully reconstructed name;
+    # this transform does not get there, and is not trying to.
+    assert normalize_text("A ● hmad Jibr il") == "A hmad Jibr il"
 
 
 # --- normalize_tree_text: tree-walk preserves shape -------------------------
