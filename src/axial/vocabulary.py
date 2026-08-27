@@ -214,7 +214,20 @@ class ColumnVocabularyStats:
     what there was. `proposal_failed` (restatement, `RESTATEMENT_RATIO`)
     means every field from `assignment_rate` on is `None`: assignment and
     the self-consistency check are never run against a scheme that failed
-    to categorise, so no further spend is made on it."""
+    to categorise, so no further spend is made on it.
+
+    Two agreement numbers, and neither substitutes for the other.
+    `agreement_rate`/`agreement_sample_size` is the OVERALL rate over the
+    whole check subsample: an entry where both models say "none" counts as
+    agreement, because it is an honest denominator for "how often do the two
+    models do the same thing" -- but it also means two models that both fail
+    to place a value are scored as agreeing about it.
+    `agreement_where_assigned_rate`/`agreement_where_assigned_sample_size` is
+    restricted to the subsample entries the FIRST model placed in a real
+    category; this is the number bar condition 5 (60% floor) is about, and
+    it carries its own `n` because a restricted rate over a handful of
+    values is not evidence. When the first model assigned nothing in the
+    subsample, `agreement_where_assigned_rate` is `None`, not `0.0`."""
 
     column: str
     answered_count: int
@@ -231,6 +244,8 @@ class ColumnVocabularyStats:
     largest_category_share: float | None
     agreement_rate: float | None
     agreement_sample_size: int | None
+    agreement_where_assigned_rate: float | None
+    agreement_where_assigned_sample_size: int | None
     examine_model: str
     check_model: str | None
     examine_calls: int
@@ -475,6 +490,8 @@ def _empty_column_stats(
         largest_category_share=None,
         agreement_rate=None,
         agreement_sample_size=None,
+        agreement_where_assigned_rate=None,
+        agreement_where_assigned_sample_size=None,
         examine_model=examine_model,
         check_model=check_model,
         examine_calls=0,
@@ -526,6 +543,8 @@ def _examine_column(
     largest_share: float | None = None
     agreement_rate: float | None = None
     agreement_sample_size: int | None = None
+    agreement_where_assigned_rate: float | None = None
+    agreement_where_assigned_sample_size: int | None = None
     check_calls = 0
     check_cost: float | None = None
 
@@ -575,15 +594,24 @@ def _examine_column(
         check_cost = _cost_delta(check_cost_before, client.cost_for_pass(CHECK_PASS_NAME))
 
         agree = 0
+        assigned_total = 0
+        assigned_agree = 0
         for index in range(1, check_take + 1):
             first_label = assignments.get(index, "")
             first_label = first_label if first_label in category_names else "none"
             second_label = check_assignments.get(index, "")
             second_label = second_label if second_label in category_names else "none"
-            if first_label == second_label:
+            matches = first_label == second_label
+            if matches:
                 agree += 1
+            if first_label != "none":
+                assigned_total += 1
+                if matches:
+                    assigned_agree += 1
         agreement_rate = agree / check_take if check_take else None
         agreement_sample_size = check_take
+        agreement_where_assigned_rate = assigned_agree / assigned_total if assigned_total else None
+        agreement_where_assigned_sample_size = assigned_total
 
     examine_calls = client.calls_for_pass(EXAMINE_PASS_NAME) - examine_calls_before
     examine_cost = _cost_delta(examine_cost_before, client.cost_for_pass(EXAMINE_PASS_NAME))
@@ -604,6 +632,8 @@ def _examine_column(
         largest_category_share=largest_share,
         agreement_rate=agreement_rate,
         agreement_sample_size=agreement_sample_size,
+        agreement_where_assigned_rate=agreement_where_assigned_rate,
+        agreement_where_assigned_sample_size=agreement_where_assigned_sample_size,
         examine_model=examine_model,
         check_model=check_model,
         examine_calls=examine_calls,
@@ -703,9 +733,20 @@ def format_vocabulary_report(stats: VocabularyExamineStats) -> str:
                 lines.append(f"  largest category share: {column.largest_category_share:.1%}")
             if column.agreement_rate is not None:
                 lines.append(
-                    f"  two-model agreement on subsample of "
-                    f"{column.agreement_sample_size}: {column.agreement_rate:.1%}"
+                    f"  two-model agreement overall (subsample of "
+                    f"{column.agreement_sample_size}): {column.agreement_rate:.1%}"
                 )
+                if column.agreement_where_assigned_rate is not None:
+                    lines.append(
+                        "  two-model agreement where the first model assigned a category "
+                        f"(n={column.agreement_where_assigned_sample_size}): "
+                        f"{column.agreement_where_assigned_rate:.1%}"
+                    )
+                else:
+                    lines.append(
+                        "  two-model agreement where the first model assigned a category: "
+                        "not applicable (the first model assigned nothing in the subsample)"
+                    )
         else:
             lines.append("  0 categories proposed -- these answers did not recur")
 

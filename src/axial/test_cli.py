@@ -631,8 +631,15 @@ def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_ra
     assert "largest category share: 100.0%" in captured.out
 
     # The share of a subsample on which a second, different model agrees
-    # with the first about which category a value belongs to.
-    assert "two-model agreement on subsample of 4: 100.0%" in captured.out
+    # with the first about which category a value belongs to -- both the
+    # overall rate and the rate restricted to values the first model
+    # actually assigned (here every value in the subsample was assigned,
+    # so both read 100%).
+    assert "two-model agreement overall (subsample of 4): 100.0%" in captured.out
+    assert (
+        "two-model agreement where the first model assigned a category (n=4): 100.0%"
+        in captured.out
+    )
 
     # The model, the call count and the cost per column.
     assert "z-ai/glm-5.2" in captured.out

@@ -355,9 +355,54 @@ def test_second_model_agreement_rate_is_measured_against_the_first_models_own_as
     column = stats.columns[0]
     # 1: Cat A/Cat A agree. 2: none/Cat A disagree. 3: Cat A/none disagree.
     # 4: none/none agree (both models saying "nowhere in scheme" IS
-    # agreement about where the value belongs).
+    # agreement about where the value belongs) -- this is the OVERALL rate,
+    # and it is what's computed here.
     assert column.agreement_sample_size == 4
     assert column.agreement_rate == 0.5
+
+    # Restricted to entries the FIRST model placed in a real category
+    # (indices 1 and 3 -- 2 and 4 were "none" on the first model's own
+    # assignment and are excluded from this denominator, not counted as
+    # agreement). Of those two, only index 1 (Cat A/Cat A) agrees.
+    assert column.agreement_where_assigned_sample_size == 2
+    assert column.agreement_where_assigned_rate == 0.5
+
+
+def test_agreement_where_assigned_is_none_when_the_first_model_assigned_nothing_in_the_subsample(
+    tmp_path,
+):
+    """Bar condition 5 is about the rate on values the FIRST model actually
+    placed in a category. When the first model assigned every value in the
+    check subsample to "none", the restricted rate has no denominator and
+    must be reported as `None`, never `0.0` -- a zero would read as "the
+    models disagreed" when in fact nothing was measured."""
+    answers_dir = tmp_path / "answers"
+    _write_small_column(answers_dir, n=6)
+
+    client = _FakeVocabClient(
+        responses_by_pass={
+            vocabulary_mod.EXAMINE_PASS_NAME: [
+                _propose_json([("Cat A", "gloss a")]),
+                _assign_json([(1, "none"), (2, "none"), (3, "none"), (4, "none")]),
+            ],
+            vocabulary_mod.CHECK_PASS_NAME: [
+                _assign_json([(1, "Cat A"), (2, "none"), (3, "Cat A"), (4, "none")])
+            ],
+        },
+        models={vocabulary_mod.EXAMINE_PASS_NAME: "model-a", vocabulary_mod.CHECK_PASS_NAME: "model-b"},
+    )
+
+    stats = examine_vocabulary(
+        answers_dir=answers_dir, columns=["mechanism"], propose_n=2, assign_n=4, seed=0, client=client
+    )
+
+    column = stats.columns[0]
+    # Overall agreement is still measurable (both-"none" counted).
+    assert column.agreement_sample_size == 4
+    assert column.agreement_rate == 0.5  # 2 and 4 agree (both "none")
+
+    assert column.agreement_where_assigned_sample_size == 0
+    assert column.agreement_where_assigned_rate is None
 
 
 def test_population_smaller_than_combined_samples_is_measured_on_what_it_has_and_reduced_is_reported(tmp_path):
@@ -455,6 +500,8 @@ def test_format_report_includes_every_bar_figure_and_the_agreement_rate():
         largest_category_share=0.108,
         agreement_rate=0.82,
         agreement_sample_size=100,
+        agreement_where_assigned_rate=0.91,
+        agreement_where_assigned_sample_size=71,
         examine_model="z-ai/glm-5.2",
         check_model="deepseek/deepseek-v4-pro",
         examine_calls=5,
@@ -473,7 +520,11 @@ def test_format_report_includes_every_bar_figure_and_the_agreement_rate():
     assert "categories with 5+ members: 1" in report
     assert "spanning 2+ sources: 1" in report
     assert "largest category share: 10.8%" in report
-    assert "two-model agreement on subsample of 100: 82.0%" in report
+    assert "two-model agreement overall (subsample of 100): 82.0%" in report
+    assert (
+        "two-model agreement where the first model assigned a category "
+        "(n=71): 91.0%" in report
+    )
     assert "z-ai/glm-5.2" in report
     assert "deepseek/deepseek-v4-pro" in report
     assert "5 call(s)" in report
@@ -497,6 +548,8 @@ def test_format_report_flags_a_proposal_failure_instead_of_reporting_numbers():
         largest_category_share=None,
         agreement_rate=None,
         agreement_sample_size=None,
+        agreement_where_assigned_rate=None,
+        agreement_where_assigned_sample_size=None,
         examine_model="model-a",
         check_model="model-b",
         examine_calls=1,
@@ -510,3 +563,43 @@ def test_format_report_flags_a_proposal_failure_instead_of_reporting_numbers():
     assert "PROPOSAL FAILED" in report
     assert "assignment rate" not in report
     assert "two-model agreement" not in report
+
+
+def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_zero():
+    """When the check subsample's first-model assignments were all "none",
+    `agreement_where_assigned_rate` is `None` -- the report must say so in
+    words, never print a `0.0%` that would read as measured disagreement."""
+    column = ColumnVocabularyStats(
+        column="mechanism",
+        answered_count=10,
+        distinct_count=10,
+        excluded_count=0,
+        propose_sample_size=6,
+        assign_sample_size=4,
+        reduced=False,
+        proposal_failed=False,
+        categories=[CategoryReport("Cat A", "gloss a", 1, 1)],
+        assignment_rate=0.25,
+        categories_5plus=0,
+        categories_5plus_cross_source=0,
+        largest_category_share=0.25,
+        agreement_rate=0.5,
+        agreement_sample_size=4,
+        agreement_where_assigned_rate=None,
+        agreement_where_assigned_sample_size=0,
+        examine_model="model-a",
+        check_model="model-b",
+        examine_calls=2,
+        examine_cost=0.002,
+        check_calls=1,
+        check_cost=0.001,
+    )
+
+    report = format_vocabulary_report(VocabularyExamineStats(columns=[column]))
+
+    assert "two-model agreement overall (subsample of 4): 50.0%" in report
+    assert (
+        "two-model agreement where the first model assigned a category: "
+        "not applicable" in report
+    )
+    assert "assigned a category: 0.0%" not in report

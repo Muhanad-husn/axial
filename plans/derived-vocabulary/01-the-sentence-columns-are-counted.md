@@ -232,10 +232,16 @@ founder's read agrees:
 4. **At least half of the held-out sample is assigned to some category.** The
    probe reached 70.8%. Below half, most of the column joins nothing and the
    scheme is not a vocabulary.
-5. **A second model agrees with the first on at least 60% of a subsample.**
-   Without this the assignment rate is one model grading itself. This condition
-   did not exist in the probe and is the one genuinely open question the probe
-   left.
+5. **A second model agrees with the first on at least 60% of the subsample
+   entries the first model actually assigned to a category** (`agreement_
+   where_assigned_rate`, with its own `n` reported alongside it) -- not the
+   overall agreement rate, which also counts two models that both fail to
+   place a value as "agreeing" about it, and on the measured `mechanism`
+   probe that shared-silence agreement alone was worth roughly 29 points
+   (29.2% of the held-out sample went unassigned). Without the restriction
+   the condition is passable without the two models ever agreeing about a
+   single category. This condition did not exist in the probe and is the
+   one genuinely open question the probe left.
 6. **The founder reads the category names and glosses, and at least 7 of the 10
    largest are legible as one recurring kind of thing.**
 
