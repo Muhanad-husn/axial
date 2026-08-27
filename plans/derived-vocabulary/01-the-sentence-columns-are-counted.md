@@ -209,7 +209,8 @@ The rest is new.
       the per-column table. $0.1054 over 75 calls, ~20 minutes.
 - [ ] Report to the founder and **stop**. Slice 02 does not start until the
       number is read.
-- [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
+- [x] Evidence collected and PR opened into the default branch (`safe-pr`):
+      [#815](https://github.com/Muhanad-husn/axial/pull/815).
 
 ## The bar for slice 02 to proceed
 

@@ -72,7 +72,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | Issue | Slice | Goal (one line) | Status | PR |
 |-------|-------|-----------------|--------|----|
-| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ built, awaiting the founder's read | — |
+| [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ built, awaiting the founder's read | [#815](https://github.com/Muhanad-husn/axial/pull/815) |
 | [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | The groups become an artifact on disk with a stable id and a medoid label, so anything downstream can read which group a note's answer belongs to | ☐ todo | — |
 | [#807](https://github.com/Muhanad-husn/axial/issues/807) | [two-notes-meet-at-a-shared-group](03-two-notes-meet-at-a-shared-group.md) | A brief runs through `--arm map+vocab`, and two passages meet at a shared mechanism the way they meet at a shared name today | ☐ todo | — |
 | [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☐ todo | — |
