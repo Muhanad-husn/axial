@@ -181,10 +181,16 @@ from axial.validators.coverage import (
 from axial.vault import VaultError, run_vault_write
 from axial.vocabulary import (
     DEFAULT_ASSIGN_N,
+    DEFAULT_ASSIGN_WORKERS,
     DEFAULT_PROPOSE_N,
+    DEFAULT_VOCABULARY_SCHEME_PATH,
     VOCABULARY_COLUMNS,
+    SchemeVersionMismatchError,
     SelfConsistencyError,
+    VocabularySchemeError,
+    build_vocabulary,
     examine_vocabulary,
+    format_vocabulary_build_report,
     format_vocabulary_report,
 )
 
@@ -694,6 +700,53 @@ def build_parser() -> argparse.ArgumentParser:
         "--answers-dir",
         default=None,
         help="override data/answers/ (default: resolved from config/pipeline.yaml)",
+    )
+
+    vocabulary_build_parser = vocabulary_subparsers.add_parser(
+        "build",
+        help=(
+            "issue #806 (derived-vocabulary, slice 02): assign every "
+            "answered value in a column against the category scheme frozen "
+            f"in {DEFAULT_VOCABULARY_SCHEME_PATH} and persist the assignment "
+            "under data/vocabulary/<column>/. The scheme is an INPUT a "
+            "person commits, never derived here. A second run over "
+            "unchanged answers and an unchanged scheme re-assigns nothing "
+            "and makes zero model calls; a run after new answers land "
+            "assigns only those"
+        ),
+    )
+    vocabulary_build_parser.add_argument(
+        "--columns",
+        default=None,
+        help=(
+            "comma-separated column names to build (default: every column "
+            "the frozen scheme file commits a scheme for -- widening the "
+            "build is an edit to that file, not a code change)"
+        ),
+    )
+    vocabulary_build_parser.add_argument(
+        "--scheme-path",
+        default=None,
+        help=f"override {DEFAULT_VOCABULARY_SCHEME_PATH} (default: that path)",
+    )
+    vocabulary_build_parser.add_argument(
+        "--vocabulary-dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path)",
+    )
+    vocabulary_build_parser.add_argument(
+        "--answers-dir",
+        default=None,
+        help="override data/answers/ (default: resolved from config/pipeline.yaml)",
+    )
+    vocabulary_build_parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_ASSIGN_WORKERS,
+        help=(
+            "how many assignment batches run concurrently (default: "
+            f"{DEFAULT_ASSIGN_WORKERS})"
+        ),
     )
 
     map_parser = subparsers.add_parser(
@@ -2948,6 +3001,36 @@ def _vocabulary_examine(
     return 0
 
 
+def _vocabulary_build(
+    columns: str | None,
+    scheme_path: str | None,
+    vocabulary_dir: str | None,
+    answers_dir: str | None,
+    workers: int,
+) -> int:
+    """Exit 1 on a scheme the operator has to fix, on a scheme-version
+    mismatch the operator has to decide about, and on a build that left a
+    value unanswered -- an unanswered value is a failed run, not a
+    result."""
+    try:
+        stats = build_vocabulary(
+            answers_dir=Path(answers_dir) if answers_dir is not None else None,
+            columns=_parse_vocabulary_columns(columns) if columns is not None else None,
+            scheme_path=(
+                Path(scheme_path)
+                if scheme_path is not None
+                else DEFAULT_VOCABULARY_SCHEME_PATH
+            ),
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            workers=workers,
+        )
+    except (VocabularySchemeError, SchemeVersionMismatchError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_vocabulary_build_report(stats))
+    return 0 if stats.complete else 1
+
+
 def _names_merge(
     min_cluster_size: int | None,
     min_samples: int | None,
@@ -3560,6 +3643,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "vocabulary" and args.vocabulary_command == "examine":
         return _vocabulary_examine(
             args.columns, args.propose_n, args.assign_n, args.answers_dir
+        )
+
+    if args.command == "vocabulary" and args.vocabulary_command == "build":
+        return _vocabulary_build(
+            args.columns,
+            args.scheme_path,
+            args.vocabulary_dir,
+            args.answers_dir,
+            args.workers,
         )
 
     if args.command == "names" and args.names_command == "merge":

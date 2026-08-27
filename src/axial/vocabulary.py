@@ -1,6 +1,8 @@
-"""The derived-vocabulary categorisation pass (issue #805, slice 01 of
-`plans/derived-vocabulary/`): a read-only report over the twelve sentence-
-valued answer columns -- `about`, `claim`, `move`, `ranges_over`,
+"""The derived vocabulary (`plans/derived-vocabulary/`): two passes over
+the twelve sentence-valued answer columns, one that reports and one that
+persists.
+
+`examine_vocabulary` (issue #805, slice 01) is the read-only report -- `about`, `claim`, `move`, `ranges_over`,
 `stops_holding`, `position`, `arguing_against`, `mechanism`, `evidence`,
 `comparison`, `concedes`, `assumes`. Every note answers seventeen questions;
 three repeat often enough to join on and are out of scope here (`names`,
@@ -11,10 +13,18 @@ anyway -- not by embedding distance, which measures wording (rejected here
 but by having a model read a random sample and name the recurring kinds,
 then testing that scheme against a disjoint sample it has never seen.
 
-This is the go/no-go for the whole feature (`plans/derived-vocabulary/
-README.md`). It reads `data/answers/` and writes nothing -- no artifact, no
-category ids, no reuse across runs, no corpus pin moved. Persisting a
-category scheme is slice 02, gated on this report's own numbers.
+It is the go/no-go for the whole feature (`plans/derived-vocabulary/
+README.md`), and it writes nothing -- no artifact, no category ids, no
+reuse across runs, no corpus pin moved. It reports a scheme; a person reads
+it and decides.
+
+`build_vocabulary` (issue #806, slice 02) is the other half, and the two
+face opposite directions. It takes a scheme as an INPUT -- committed to
+`config/vocabulary.yaml` by a person, never derived at run time -- assigns
+the WHOLE column against it, and persists that assignment under
+`data/vocabulary/<column>/`. It proposes nothing. See `specs/PHASE-B.md`
+§7.18 for the artifact's shape and the reuse rule, and the long comment
+above `DEFAULT_VOCABULARY_SCHEME_PATH` below for why the scheme is frozen.
 
 Reuses rather than rebuilds: `axial.query.reader.is_abstention` (the one
 place an abstention is decided) and `axial.model_json.complete_json`/
@@ -48,10 +58,16 @@ anchored to the drafting pass by name.
 from __future__ import annotations
 
 import collections
+import hashlib
+import json
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+import yaml
 
 from axial.interrogate import _default_answers_dir
 from axial.llm import LLMClient, get_client
@@ -59,6 +75,7 @@ from axial.model_json import complete_json, parse_model_json
 from axial.names import load_answer_records
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
 from axial.query.reader import is_abstention
+from axial.yaml_loader import SAFE_LOADER
 
 # The twelve sentence-valued columns this census covers (README's own
 # table), named explicitly rather than inferred -- inferring "everything
@@ -193,11 +210,20 @@ Return JSON only, no prose:
 class PopulationEntry:
     """One answered value: the sentence itself, and the note it came from.
     A list-valued column (`about`, `arguing_against`) contributes one entry
-    per list element, so several entries can share a `chunk_id`."""
+    per list element, so several entries can share a `chunk_id`.
+
+    `element_index` (issue #806) is that element's position in the note's
+    own list -- always `0` for a scalar column. It is the third part of the
+    key a persisted assignment is filed under (`chunk_id`, column,
+    `element_index`), and without it two elements of one note's list are
+    indistinguishable on disk. It counts RAW list positions, so an element
+    excluded as an abstention still consumes its own index rather than
+    shifting its neighbours."""
 
     value: str
     chunk_id: str
     source_id: str
+    element_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -350,12 +376,14 @@ def read_column(
             if not isinstance(value, list):
                 excluded += 1
                 continue
-            for element in value:
+            for element_index, element in enumerate(value):
                 text = _extract_scalar(element)
                 if text is None:
                     excluded += 1
                 else:
-                    population.append(PopulationEntry(text, chunk_id, source_id))
+                    population.append(
+                        PopulationEntry(text, chunk_id, source_id, element_index)
+                    )
         else:
             text = _extract_scalar(value)
             if text is None:
@@ -506,16 +534,47 @@ def _assign_all(
     pass_name: str,
     scheme_text: str,
     sample: Sequence[PopulationEntry],
+    workers: int = 1,
 ) -> dict[int, str]:
     """Assign the whole of `sample` against `scheme_text`, in `BATCH_SIZE`
     batches, numbered globally (1-based, continuing across batches) so a
     caller can compare this pass's assignment for index `i` against another
     pass's assignment for the same index -- what the self-consistency check
-    does."""
+    does.
+
+    `workers` runs those batches concurrently (issue #806). Each batch is
+    an independent call over a disjoint slice of the global index space, so
+    merging their results is order-free -- and `_validate_assign_batch_keys`
+    is what makes that safe, since a batch that renumbered itself 1..N is
+    re-asked rather than allowed to overwrite a concurrent batch's real
+    assignments. The examine pass (slice 01) keeps the serial default: it
+    assigns 400 values, four batches, where a pool buys nothing. A build
+    over the whole `mechanism` column is ~60 batches, which serially is
+    hours rather than the twenty minutes at twelve workers issue #806
+    budgets for.
+    """
+    starts = list(range(0, len(sample), BATCH_SIZE))
     assignments: dict[int, str] = {}
-    for start in range(0, len(sample), BATCH_SIZE):
-        batch = sample[start : start + BATCH_SIZE]
-        assignments.update(_assign_batch(client, pass_name, scheme_text, batch, start))
+    if workers <= 1 or len(starts) <= 1:
+        for start in starts:
+            batch = sample[start : start + BATCH_SIZE]
+            assignments.update(_assign_batch(client, pass_name, scheme_text, batch, start))
+        return assignments
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(starts))) as pool:
+        futures = [
+            pool.submit(
+                _assign_batch,
+                client,
+                pass_name,
+                scheme_text,
+                sample[start : start + BATCH_SIZE],
+                start,
+            )
+            for start in starts
+        ]
+        for future in futures:
+            assignments.update(future.result())
     return assignments
 
 
@@ -834,6 +893,738 @@ def format_vocabulary_report(stats: VocabularyExamineStats) -> str:
             f"cost {_format_cost(column.examine_cost)}); "
             f"check model: {column.check_model} ({column.check_calls} call(s), "
             f"cost {_format_cost(column.check_cost)})"
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip("\n")
+
+
+# ---------------------------------------------------------------------------
+# Issue #806 (slice 02): the frozen scheme, and the assignment persisted
+# against it.
+#
+# Slice 01 above PROPOSES a scheme from a sample and scores it on a disjoint
+# sample, writing nothing. Everything below takes a scheme as an INPUT --
+# committed to `config/vocabulary.yaml` by a person -- assigns the WHOLE
+# column against it, and persists that assignment under `data/vocabulary/`.
+# There is no proposal call here at all.
+#
+# Frozen is the point. Slice 01 measured the same prompt under the same
+# model producing different granularity between runs (`mechanism` 36
+# categories then 20), and a vocabulary that reshuffles on every build is
+# not an index -- reconciling one build's categories against the next one's
+# is name merging wearing a new coat, which is the cost this whole feature
+# exists to escape.
+#
+# The persistence shape mirrors `axial.names`'s own fit-persistence pattern
+# (`_write_fit_artifact`/`_read_fit_artifact`/`_manifest_reusable`), which
+# `axial.argmap.build` already mirrored once for bag state (#677): a
+# manifest recording exactly what a later run must match, written LAST so a
+# directory without one was never a completed build, and a reusability
+# check that reads the manifest before it opens the artifact at all.
+#
+# The pin is content-keyed over the rendered input, the convention merge and
+# Gather use for their decision logs: it covers the answered values and
+# nothing else, so an edited answer re-assigns and a model swap does not.
+# The scheme version is carried BESIDE it rather than inside it, because the
+# two failure modes differ -- a moved pin assigns the values that moved, a
+# moved scheme version means the artifact and the config describe different
+# vocabularies and must not be merged into one file.
+#
+# The vocabulary is a TREE (founder ruling, 2026-08-28). This slice builds
+# depth 1 only, but nothing here assumes depth 1: a category carries a
+# parent id, the scheme file nests, the version covers every level, and an
+# assignment records the level it was made at, so adding depth 2 never
+# re-asks depth 1 and needs no migration.
+# ---------------------------------------------------------------------------
+
+# The committed scheme file. Configuration a person writes, never an
+# artifact a command derives.
+DEFAULT_VOCABULARY_SCHEME_PATH = Path("config/vocabulary.yaml")
+
+# Where the assignment lands: one directory per column, holding the
+# manifest and the assignment records.
+VOCABULARY_DIR = Path("data/vocabulary")
+MANIFEST_FILENAME = "manifest.json"
+ASSIGNMENTS_FILENAME = "assignments.jsonl"
+
+# The top of the tree. A depth-1 category's parent id is null and its level
+# is this; a depth-2 category would carry its parent's id and level 2.
+ROOT_LEVEL = 1
+
+# Twelve, the concurrency issue #806 budgets the `mechanism` build at
+# (5,905 values, ~60 batches, ~20 minutes). The examine pass keeps
+# `_assign_all`'s serial default -- four batches gain nothing from a pool.
+DEFAULT_ASSIGN_WORKERS = 12
+
+
+class VocabularySchemeError(Exception):
+    """Raised when `config/vocabulary.yaml` cannot be read as a scheme for
+    the column asked for: the file is absent, the column has no scheme, a
+    category is missing an id/name/gloss, two categories share an id or a
+    name, or the committed scheme is deeper than this slice assigns. Always
+    names the column and the file, because the fix is always an edit to
+    that file."""
+
+
+class SchemeVersionMismatchError(Exception):
+    """Raised when an existing artifact for a column was built against a
+    different scheme version than `config/vocabulary.yaml` now holds.
+
+    The build refuses rather than merging, and refuses rather than silently
+    overwriting: two schemes in one file would leave a category id meaning
+    one thing under some notes and another thing under others, which is
+    exactly the property freezing the scheme exists to guarantee. Nothing
+    is written and no model call is made. Re-assigning under the new
+    version is a deliberate act -- move the column's directory aside (it is
+    the only record of what each note was filed under, and it was paid for)
+    and run the build again."""
+
+    def __init__(self, column: str, artifact_version: str | None, scheme_version: str, artifact_dir: Path) -> None:
+        self.column = column
+        self.artifact_version = artifact_version
+        self.scheme_version = scheme_version
+        self.artifact_dir = artifact_dir
+        super().__init__(
+            f"column {column!r} already has an assignment built against scheme version "
+            f"{artifact_version!r}, but config now holds version {scheme_version!r} -- "
+            f"refusing to mix two schemes in one artifact. Move {artifact_dir} aside "
+            "and run the build again to re-assign the whole column under the new version."
+        )
+
+
+@dataclass(frozen=True)
+class SchemeCategory:
+    """One committed category. `id` is what the artifact and every
+    downstream join record, and it never changes meaning under a note
+    already filed against it. `name` and `gloss` are what the model reads
+    when it assigns -- and the model answers with the NAME, which is why
+    two categories may not share one. `parent_id` is `None` at depth 1 and
+    the field exists anyway."""
+
+    id: str
+    name: str
+    gloss: str
+    parent_id: str | None
+    level: int
+
+
+@dataclass(frozen=True)
+class ColumnScheme:
+    """One column's whole category tree, flattened -- every node at every
+    level, each carrying its own parent and level. `version` covers the
+    WHOLE tree rather than a level of it, so adding depth 2 is a version
+    bump and not a second versioning scheme."""
+
+    column: str
+    version: str
+    categories: tuple[SchemeCategory, ...]
+
+    @property
+    def max_level(self) -> int:
+        return max((category.level for category in self.categories), default=ROOT_LEVEL)
+
+    def at_level(self, level: int) -> tuple[SchemeCategory, ...]:
+        return tuple(category for category in self.categories if category.level == level)
+
+
+@dataclass(frozen=True)
+class CategoryCount:
+    """One category's standing in the built column: how many of the
+    column's answered values were filed under it, and how many distinct
+    sources those values came from. Every committed category is reported,
+    including one nothing was filed under -- an empty category is a
+    finding, not a row to drop."""
+
+    category_id: str
+    name: str
+    parent_id: str | None
+    level: int
+    member_count: int
+    source_count: int
+
+
+@dataclass(frozen=True)
+class ColumnBuildResult:
+    """What one column's build did. `reused` is `True` only when the whole
+    artifact was left untouched -- the scheme version and the answers pin
+    both matched a complete artifact already on disk, and zero model calls
+    were made."""
+
+    column: str
+    scheme_version: str
+    answers_pin: str
+    artifact_dir: Path
+    reused: bool
+    answered_count: int
+    excluded_count: int
+    assigned_count: int
+    refused_count: int
+    unanswered_count: int
+    reused_assignment_count: int
+    newly_assigned_count: int
+    categories: list[CategoryCount]
+    model: str
+    calls: int
+    cost: float | None
+
+    @property
+    def complete(self) -> bool:
+        """A completed build has zero unanswered values."""
+        return self.unanswered_count == 0
+
+
+@dataclass(frozen=True)
+class VocabularyBuildStats:
+    columns: list[ColumnBuildResult]
+
+    @property
+    def complete(self) -> bool:
+        return all(column.complete for column in self.columns)
+
+
+# ---------------------------------------------------------------------------
+# The scheme file
+# ---------------------------------------------------------------------------
+
+
+def _scheme_document(scheme_path: Path) -> dict[str, Any]:
+    if not Path(scheme_path).is_file():
+        raise VocabularySchemeError(
+            f"no category scheme file at {scheme_path} -- the scheme is configuration a "
+            "person commits, so create it before building a vocabulary"
+        )
+    with Path(scheme_path).open("r", encoding="utf-8") as handle:
+        parsed = yaml.load(handle, Loader=SAFE_LOADER)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("columns"), dict):
+        raise VocabularySchemeError(
+            f"{scheme_path} does not hold a 'columns' mapping of column name to scheme"
+        )
+    return parsed
+
+
+def scheme_columns(scheme_path: Path = DEFAULT_VOCABULARY_SCHEME_PATH) -> list[str]:
+    """Every column `scheme_path` commits a scheme for, in file order. What
+    `axial vocabulary build` builds when no `--columns` is given: adding a
+    column to the frozen scheme file is what widens the build, so the
+    column set is read from configuration rather than named in code."""
+    return [str(column) for column in _scheme_document(scheme_path)["columns"]]
+
+
+def _walk_categories(
+    raw: Any, column: str, scheme_path: Path, parent_id: str | None, level: int
+) -> list[SchemeCategory]:
+    if not isinstance(raw, list):
+        raise VocabularySchemeError(
+            f"the scheme for column {column!r} in {scheme_path} has no 'categories' list"
+        )
+    categories: list[SchemeCategory] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise VocabularySchemeError(
+                f"a category in column {column!r} ({scheme_path}) is not a mapping: {entry!r}"
+            )
+        fields = {}
+        for field in ("id", "name", "gloss"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise VocabularySchemeError(
+                    f"a category in column {column!r} ({scheme_path}) has no usable "
+                    f"{field!r}: {entry!r}"
+                )
+            fields[field] = value.strip()
+        categories.append(
+            SchemeCategory(
+                id=fields["id"],
+                name=fields["name"],
+                gloss=fields["gloss"],
+                parent_id=parent_id,
+                level=level,
+            )
+        )
+        children = entry.get("children")
+        if children:
+            categories.extend(
+                _walk_categories(children, column, scheme_path, fields["id"], level + 1)
+            )
+    return categories
+
+
+def load_vocabulary_scheme(
+    column: str, scheme_path: Path = DEFAULT_VOCABULARY_SCHEME_PATH
+) -> ColumnScheme:
+    """`column`'s committed category tree, flattened, from `scheme_path`.
+
+    Raises `VocabularySchemeError` naming the column and the file when the
+    column has no scheme, the version is missing, a category lacks an
+    id/name/gloss, or two categories share an id or a name. The name check
+    is not pedantry: the assign prompt renders names, the model answers
+    with a name, and slice 01's own corrected run persisted all twenty
+    `mechanism` categories under the identical name "Causal mechanism" --
+    committed as-is, every assignment would have been ambiguous."""
+    document = _scheme_document(scheme_path)
+    columns = document["columns"]
+    if column not in columns:
+        raise VocabularySchemeError(
+            f"{scheme_path} commits no category scheme for column {column!r} "
+            f"(it has: {', '.join(sorted(str(key) for key in columns)) or 'none'}) -- "
+            "which columns are worth committing is a person's read of "
+            "`axial vocabulary examine`, never a rule in code"
+        )
+    raw = columns[column]
+    if not isinstance(raw, dict):
+        raise VocabularySchemeError(
+            f"the scheme for column {column!r} in {scheme_path} is not a mapping"
+        )
+    version = raw.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise VocabularySchemeError(
+            f"the scheme for column {column!r} in {scheme_path} has no 'version' string -- "
+            "the version covers the whole tree and every artifact records the one it was "
+            "built against"
+        )
+
+    categories = _walk_categories(raw.get("categories"), column, scheme_path, None, ROOT_LEVEL)
+
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    for category in categories:
+        if category.id in seen_ids:
+            raise VocabularySchemeError(
+                f"column {column!r} in {scheme_path} has two categories with id "
+                f"{category.id!r} -- an id is what every assignment is filed under and "
+                "must identify exactly one category"
+            )
+        if category.name in seen_names:
+            raise VocabularySchemeError(
+                f"column {column!r} in {scheme_path} has two categories named "
+                f"{category.name!r} -- the model assigns by name, so two categories "
+                "sharing one cannot be told apart in a response"
+            )
+        seen_ids.add(category.id)
+        seen_names.add(category.name)
+
+    return ColumnScheme(column=column, version=version.strip(), categories=tuple(categories))
+
+
+# ---------------------------------------------------------------------------
+# The pin, the artifact, and reuse
+# ---------------------------------------------------------------------------
+
+
+def compute_answers_pin(population: Sequence[PopulationEntry]) -> str:
+    """A sha256 digest (first 16 hex chars) over the rendered input this
+    build assigns: every answered value with the note and list position it
+    came from, sorted, and NOTHING else.
+
+    Content-keyed like merge's and Gather's decision logs: an edited or
+    added answer moves the pin and gets assigned; a model swap, a prompt
+    tweak, a code change anywhere in the repo does not move it and re-asks
+    nothing. Sorted rather than taken in read order so a renamed answer
+    file, which changes nothing about the content, does not move it
+    either."""
+    rendered = sorted(
+        [entry.chunk_id, entry.element_index, entry.value] for entry in population
+    )
+    canonical = json.dumps(rendered, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_json_or_none(path: Path) -> dict[str, Any] | None:
+    """A tolerant JSON read: `None` when `path` does not exist or fails to
+    parse -- either way this run cannot tell whether what is on disk is
+    reusable, so it falls back to building. Same tolerance
+    `axial.names._load_manifest` and `axial.argmap.build._load_json_or_none`
+    already apply to their own manifests."""
+    if not Path(path).is_file():
+        return None
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _manifest_reusable(
+    manifest: dict[str, Any] | None, scheme_version: str, answers_pin: str
+) -> bool:
+    """Whether a persisted assignment's own manifest says it was built
+    against exactly this scheme version and these answers, and that it
+    finished. A `False` means the build reads the assignment records and
+    works out what still has to be asked; a `True` means it opens nothing
+    and makes no call.
+
+    `complete` is part of the check, not decoration: an artifact with an
+    unanswered value is a failed run, and reusing it would freeze the hole
+    in place forever, since a hole is never written and so never matches an
+    entry on a later run."""
+    if not manifest:
+        return False
+    return (
+        manifest.get("scheme_version") == scheme_version
+        and manifest.get("answers_pin") == answers_pin
+        and manifest.get("complete") is True
+    )
+
+
+def _assignment_key(record: Mapping[str, Any]) -> tuple[str, int, int]:
+    return (
+        str(record.get("chunk_id", "")),
+        int(record.get("element_index", 0)),
+        int(record.get("level", ROOT_LEVEL)),
+    )
+
+
+def _read_assignment_records(path: Path) -> list[dict[str, Any]]:
+    """Every persisted assignment record under `path`, or `[]` when the
+    file is absent. A torn final line is dropped rather than crashing the
+    read: the value it named is simply asked about again."""
+    if not Path(path).is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _write_assignment_records(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
+    """Persist the column's assignments, one JSON object per line, keys
+    sorted. A record read back and written again round-trips to the same
+    bytes, which is what lets an incremental build leave every assignment
+    already on disk byte-identical."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _write_manifest(path: Path, manifest: Mapping[str, Any]) -> None:
+    """Written LAST, after the assignments -- so a column directory without
+    a readable manifest was never a completed build, the same ordering
+    `axial.argmap.build` gives `map.json`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _record_for(entry: PopulationEntry, column: str, level: int, category_id: str | None) -> dict[str, Any]:
+    return {
+        "chunk_id": entry.chunk_id,
+        "source_id": entry.source_id,
+        "column": column,
+        "element_index": entry.element_index,
+        "level": level,
+        "value": entry.value,
+        "category_id": category_id,
+        "refused": category_id is None,
+    }
+
+
+def _category_counts(
+    scheme: ColumnScheme, records: Sequence[Mapping[str, Any]]
+) -> list[CategoryCount]:
+    members: dict[str, list[Mapping[str, Any]]] = collections.defaultdict(list)
+    for record in records:
+        category_id = record.get("category_id")
+        if isinstance(category_id, str):
+            members[category_id].append(record)
+    return [
+        CategoryCount(
+            category_id=category.id,
+            name=category.name,
+            parent_id=category.parent_id,
+            level=category.level,
+            member_count=len(members.get(category.id, [])),
+            source_count=len({m.get("source_id", "") for m in members.get(category.id, [])}),
+        )
+        for category in scheme.categories
+    ]
+
+
+def _counts_from_manifest(manifest: Mapping[str, Any]) -> list[CategoryCount]:
+    return [
+        CategoryCount(
+            category_id=str(entry.get("category_id", "")),
+            name=str(entry.get("name", "")),
+            parent_id=entry.get("parent_id"),
+            level=int(entry.get("level", ROOT_LEVEL)),
+            member_count=int(entry.get("member_count", 0)),
+            source_count=int(entry.get("source_count", 0)),
+        )
+        for entry in manifest.get("categories", [])
+        if isinstance(entry, dict)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The build
+# ---------------------------------------------------------------------------
+
+
+def _build_column(
+    client: LLMClient,
+    column: str,
+    scheme: ColumnScheme,
+    records: Sequence[Mapping[str, Any]],
+    vocabulary_dir: Path,
+    workers: int,
+) -> ColumnBuildResult:
+    population, excluded = read_column(records, column)
+    answers_pin = compute_answers_pin(population)
+    column_dir = Path(vocabulary_dir) / column
+    manifest_path = column_dir / MANIFEST_FILENAME
+    assignments_path = column_dir / ASSIGNMENTS_FILENAME
+    manifest = _load_json_or_none(manifest_path)
+    model = client.model_for_pass(EXAMINE_PASS_NAME)
+
+    if manifest is not None and manifest.get("scheme_version") != scheme.version:
+        raise SchemeVersionMismatchError(
+            column, manifest.get("scheme_version"), scheme.version, column_dir
+        )
+
+    if _manifest_reusable(manifest, scheme.version, answers_pin):
+        assert manifest is not None
+        return ColumnBuildResult(
+            column=column,
+            scheme_version=scheme.version,
+            answers_pin=answers_pin,
+            artifact_dir=column_dir,
+            reused=True,
+            answered_count=int(manifest.get("answered_count", 0)),
+            excluded_count=int(manifest.get("excluded_count", 0)),
+            assigned_count=int(manifest.get("assigned_count", 0)),
+            refused_count=int(manifest.get("refused_count", 0)),
+            unanswered_count=int(manifest.get("unanswered_count", 0)),
+            reused_assignment_count=int(manifest.get("answered_count", 0)),
+            newly_assigned_count=0,
+            categories=_counts_from_manifest(manifest),
+            model=model,
+            calls=0,
+            cost=None,
+        )
+
+    existing = {
+        _assignment_key(record): record
+        for record in _read_assignment_records(assignments_path)
+    }
+
+    reused_records: list[dict[str, Any]] = []
+    pending: list[PopulationEntry] = []
+    for entry in population:
+        prior = existing.get((entry.chunk_id, entry.element_index, ROOT_LEVEL))
+        if prior is not None and prior.get("value") == entry.value:
+            reused_records.append(prior)
+        else:
+            pending.append(entry)
+
+    calls_before = client.calls_for_pass(EXAMINE_PASS_NAME)
+    cost_before = client.cost_for_pass(EXAMINE_PASS_NAME)
+
+    new_records: list[dict[str, Any]] = []
+    unanswered = 0
+    if pending:
+        level_categories = scheme.at_level(ROOT_LEVEL)
+        scheme_text = _scheme_text(
+            [{"name": category.name, "gloss": category.gloss} for category in level_categories]
+        )
+        id_by_name = {category.name: category.id for category in level_categories}
+        assignments = _assign_all(client, EXAMINE_PASS_NAME, scheme_text, pending, workers)
+        for index, entry in enumerate(pending, start=1):
+            if index not in assignments:
+                # After `_validate_assign_batch_keys` this is unreachable in
+                # a completed run -- a batch that did not answer about every
+                # index it was asked about is re-asked, not accepted. The
+                # count is kept and reported anyway, because slice 01's first
+                # corpus run lost assignments exactly here and read 50.7%
+                # where the truth was 88.5%. The value is left OUT of the
+                # artifact rather than written as a null: a hole is not a
+                # result, and an absent key is what makes the next run ask
+                # about it again.
+                unanswered += 1
+                continue
+            new_records.append(
+                _record_for(entry, column, ROOT_LEVEL, id_by_name.get(assignments[index]))
+            )
+
+    calls = client.calls_for_pass(EXAMINE_PASS_NAME) - calls_before
+    cost = _cost_delta(cost_before, client.cost_for_pass(EXAMINE_PASS_NAME))
+
+    out_records = sorted(reused_records + new_records, key=_assignment_key)
+    assigned_count = sum(1 for record in out_records if record.get("category_id") is not None)
+    refused_count = len(out_records) - assigned_count
+    categories = _category_counts(scheme, out_records)
+
+    _write_assignment_records(assignments_path, out_records)
+    _write_manifest(
+        manifest_path,
+        {
+            "column": column,
+            "scheme_version": scheme.version,
+            "answers_pin": answers_pin,
+            "max_level": scheme.max_level,
+            "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "answered_count": len(population),
+            "excluded_count": excluded,
+            "assigned_count": assigned_count,
+            "refused_count": refused_count,
+            "unanswered_count": unanswered,
+            "complete": unanswered == 0,
+            "categories": [
+                {
+                    "category_id": count.category_id,
+                    "name": count.name,
+                    "parent_id": count.parent_id,
+                    "level": count.level,
+                    "member_count": count.member_count,
+                    "source_count": count.source_count,
+                }
+                for count in categories
+            ],
+        },
+    )
+
+    return ColumnBuildResult(
+        column=column,
+        scheme_version=scheme.version,
+        answers_pin=answers_pin,
+        artifact_dir=column_dir,
+        reused=False,
+        answered_count=len(population),
+        excluded_count=excluded,
+        assigned_count=assigned_count,
+        refused_count=refused_count,
+        unanswered_count=unanswered,
+        reused_assignment_count=len(reused_records),
+        newly_assigned_count=len(new_records),
+        categories=categories,
+        model=model,
+        calls=calls,
+        cost=cost,
+    )
+
+
+def build_vocabulary(
+    answers_dir: Path | None = None,
+    columns: Sequence[str] | None = None,
+    scheme_path: Path = DEFAULT_VOCABULARY_SCHEME_PATH,
+    vocabulary_dir: Path | None = None,
+    workers: int = DEFAULT_ASSIGN_WORKERS,
+    config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
+    client: LLMClient | None = None,
+) -> VocabularyBuildStats:
+    """Assign every answered value in each of `columns` against that
+    column's frozen scheme in `scheme_path`, and persist the assignment
+    under `vocabulary_dir/<column>/`.
+
+    `columns` defaults to every column the scheme file commits a scheme for
+    -- widening the build is an edit to that file, not to this code.
+
+    A run over an unchanged corpus and an unchanged scheme re-assigns
+    nothing and makes zero model calls. A run after new answers land
+    assigns only the values that are new or changed, and leaves every
+    assignment already on disk byte-identical. A run against a different
+    scheme version refuses (`SchemeVersionMismatchError`) rather than
+    mixing two vocabularies in one artifact.
+
+    Every scheme is loaded and checked BEFORE any answer is read or any
+    call is made, so a scheme error costs nothing -- the same rule
+    `examine_vocabulary` applies to `SelfConsistencyError`.
+
+    `client` defaults to `axial.llm.get_client()`, the injection seam
+    `examine_vocabulary`, `axial.argmap.build.run_map_build` and
+    `axial.gather.run_gather` already expose, so a unit test never makes a
+    network call. Assignment runs under `EXAMINE_PASS_NAME`: it is the same
+    call the examine pass makes, against the same kind of scheme, and
+    routing it to the tier already configured and priced for that pass is
+    what keeps a build at the cost issue #806 budgets."""
+    if columns is None:
+        columns = scheme_columns(scheme_path)
+
+    schemes = {column: load_vocabulary_scheme(column, scheme_path) for column in columns}
+    for column, scheme in schemes.items():
+        if scheme.max_level > ROOT_LEVEL:
+            raise VocabularySchemeError(
+                f"the scheme for column {column!r} in {scheme_path} is {scheme.max_level} "
+                f"levels deep, and this build assigns level {ROOT_LEVEL} only (issue #806 "
+                "ships depth 1) -- assigning its roots and reporting success would "
+                "silently drop the rest of the committed scheme"
+            )
+
+    if answers_dir is None:
+        answers_dir = _default_answers_dir(config_path)
+    if vocabulary_dir is None:
+        vocabulary_dir = VOCABULARY_DIR
+    records = load_answer_records(Path(answers_dir))
+
+    if client is None:
+        client = get_client(config_path)
+
+    return VocabularyBuildStats(
+        columns=[
+            _build_column(client, column, schemes[column], records, Path(vocabulary_dir), workers)
+            for column in columns
+        ]
+    )
+
+
+def format_vocabulary_build_report(stats: VocabularyBuildStats) -> str:
+    """Render `VocabularyBuildStats` as a human-readable report: per column,
+    what was assigned, what was refused, what was reused rather than
+    rebuilt, and each category's member and distinct-source counts."""
+    lines: list[str] = []
+
+    for column in stats.columns:
+        lines.append(
+            f"{column.column}: {column.answered_count} answered value(s), "
+            f"{column.excluded_count} excluded (abstention/[]/empty)"
+        )
+        lines.append(
+            f"  scheme {column.scheme_version} ({len(column.categories)} category(ies), "
+            f"depth {max((c.level for c in column.categories), default=ROOT_LEVEL)}), "
+            f"answers pin {column.answers_pin}"
+        )
+        lines.append(f"  artifact: {column.artifact_dir}")
+        if column.reused:
+            lines.append(
+                "  REUSED: the scheme version and the answers pin are both unchanged -- "
+                "0 model call(s), nothing re-assigned"
+            )
+        else:
+            lines.append(
+                f"  built: {column.newly_assigned_count} newly assigned, "
+                f"{column.reused_assignment_count} reused from the previous build"
+            )
+        lines.append(
+            f"  {column.assigned_count} assigned to a category, "
+            f'{column.refused_count} refused ("none"/out-of-scheme), '
+            f"{column.unanswered_count} unanswered (never returned)"
+        )
+        if not column.complete:
+            lines.append(
+                f"  INCOMPLETE: {column.unanswered_count} value(s) the model never answered "
+                "about are absent from the artifact rather than written as holes -- an "
+                "unanswered value is a failed run, not a result; run the build again"
+            )
+        if column.categories:
+            lines.append("  categories, by member count:")
+            for category in sorted(
+                column.categories, key=lambda c: (-c.member_count, c.category_id)
+            ):
+                lines.append(
+                    f"    - {category.category_id} ({category.name}): "
+                    f"{category.member_count} member(s), {category.source_count} source(s)"
+                )
+        lines.append(
+            f"  model: {column.model} ({column.calls} call(s), cost {_format_cost(column.cost)})"
         )
         lines.append("")
 

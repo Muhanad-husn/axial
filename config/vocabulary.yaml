@@ -1,0 +1,157 @@
+# The frozen category schemes the derived vocabulary assigns against
+# (issue #806, derived-vocabulary slice 02). This file is CONFIGURATION a
+# person commits, not an artifact a command derives. Nothing in it is
+# inferred at run time, and `axial vocabulary build` never writes it.
+#
+# Why frozen: `axial vocabulary examine` (issue #805) measured the same
+# prompt under the same model producing different granularity between runs
+# -- `position` 5 categories then 15, `stops_holding` 7 then 20, `mechanism`
+# 36 then 20. A vocabulary that reshuffles on every build is not an index,
+# and reconciling one build's categories against the next one's is name
+# merging wearing a new coat. So a scheme is proposed once, read by a
+# person, and committed here. Which columns are worth committing at all is
+# the founder's read of #805's report, never a rule in code.
+#
+# The shape is a TREE, not a list (founder ruling, 2026-08-28). A category
+# may carry `children`, and a child is a finer category under its parent.
+# The committed v1 scheme below is depth 1 -- every category is a root and
+# its parent id is null -- but the file's shape does not assume that, so a
+# second level is an edit here plus a version bump, never a migration.
+#
+# `version` is per column and covers that column's WHOLE tree, every level
+# of it. Editing a category, adding one, or adding a level is a version
+# bump. `axial vocabulary build` refuses to mix two schemes in one
+# artifact: an existing artifact built under a different version is named,
+# not silently overwritten and not silently extended.
+#
+# `id` is what the artifact and every downstream join record. It never
+# changes meaning under a note already filed against it -- rename the
+# `name`, rewrite the `gloss`, but a changed `id` is a new category.
+# `name` and `gloss` are what the model reads when it assigns.
+
+columns:
+  mechanism:
+    # Proposed by the examine pass over a random 400-value sample of the
+    # column, 2026-08-27 (data/logs/2026-08-27-vocabulary-categorise-v2/).
+    # 88.5% of a disjoint 400 the model had never seen fell into these 20;
+    # every category reaching 5 members drew on more than one book, and the
+    # largest held 8.0% of the held-out sample. The names below are the
+    # founder-side read of that run: it persisted all twenty `name` fields
+    # as the identical string "Causal mechanism", with the discriminating
+    # label sitting as the clause before the first colon of each gloss.
+    version: "2026-08-28-mechanism-v1"
+    categories:
+      - id: state-repression-and-violence
+        name: "state repression and violence"
+        gloss: >-
+          Answers describe how state forces use coercion, violence, or
+          intimidation to suppress opposition, enforce control, or generate
+          compliance, often through military, police, or paramilitary means.
+      - id: economic-dependency-and-structural-adjustment
+        name: "economic dependency and structural adjustment"
+        gloss: >-
+          Answers explain how economic pressures (debt, IMF conditions, oil
+          revenues, neoliberal reforms) reshape state-society relations, class
+          structures, or political outcomes.
+      - id: war-and-state-formation
+        name: "war and state formation"
+        gloss: >-
+          Answers trace how warfare, military mobilization, or geopolitical
+          competition drives state-building, territorial control, fiscal
+          extraction, or institutional change.
+      - id: ideological-persuasion-and-legitimation
+        name: "ideological persuasion and legitimation"
+        gloss: >-
+          Answers show how beliefs, symbols, propaganda, or nationalist
+          narratives are deployed to secure consent, mobilize support, or
+          justify authority.
+      - id: institutional-path-dependence-and-state-capacity
+        name: "institutional path dependence and state capacity"
+        gloss: >-
+          Answers describe how existing institutions, bureaucracies, or legal
+          frameworks constrain or enable subsequent actions, reforms, or
+          outcomes.
+      - id: elite-competition-and-coalition-formation
+        name: "elite competition and coalition formation"
+        gloss: >-
+          Answers explain how rival elites negotiate, ally, or clash over
+          power, resources, or authority, shaping political regimes or
+          outcomes.
+      - id: social-mobilization-and-collective-action
+        name: "social mobilization and collective action"
+        gloss: >-
+          Answers detail how groups (classes, ethnicities, communities)
+          organize, protest, or revolt in response to grievances,
+          opportunities, or structural changes.
+      - id: modernization-and-cultural-change
+        name: "modernization and cultural change"
+        gloss: >-
+          Answers link industrialization, urbanization, education, or media to
+          shifts in identity, values, or social organization.
+      - id: territorial-control-and-conflict-dynamics
+        name: "territorial control and conflict dynamics"
+        gloss: >-
+          Answers explain how spatial control, boundaries, or territorial
+          shifts influence violence, collaboration, or political behavior
+          during civil wars or insurgencies.
+      - id: international-norms-and-external-intervention
+        name: "international norms and external intervention"
+        gloss: >-
+          Answers show how global rules, foreign aid, or great-power actions
+          shape domestic sovereignty, state survival, or political
+          trajectories.
+      - id: resource-extraction-and-rentier-state
+        name: "resource extraction and rentier state"
+        gloss: >-
+          Answers describe how natural resource rents (oil, minerals) or
+          external funds enable state autonomy, patronage, or authoritarian
+          rule without domestic taxation.
+      - id: organizational-logics-and-bureaucratic-rationality
+        name: "organizational logics and bureaucratic rationality"
+        gloss: >-
+          Answers explain how organizational structures (hierarchies,
+          networks, party cells) produce discipline, loyalty, or violence
+          through routine procedures.
+      - id: demographic-and-ecological-pressures
+        name: "demographic and ecological pressures"
+        gloss: >-
+          Answers link population growth, land scarcity, or geographical
+          factors to migration, conflict, or institutional adaptation.
+      - id: micro-interaction-and-symbolic-reciprocity
+        name: "micro-interaction and symbolic reciprocity"
+        gloss: >-
+          Answers detail how face-to-face exchanges, gestures, or rituals
+          trigger escalation, solidarity, or identity formation.
+      - id: learning-adaptation-and-innovation
+        name: "learning, adaptation, and innovation"
+        gloss: >-
+          Answers show how actors copy, borrow, or improve upon existing
+          models (technologies, institutions, ideologies) from other contexts.
+      - id: feedback-loops-and-unintended-consequences
+        name: "feedback loops and unintended consequences"
+        gloss: >-
+          Answers describe how initial actions produce reactions that alter
+          the original context, often leading to self-reinforcing or self-
+          undermining dynamics.
+      - id: identity-construction-and-boundary-making
+        name: "identity construction and boundary-making"
+        gloss: >-
+          Answers explain how ethnic, national, or religious categories are
+          created, politicized, or naturalized through social practices and
+          discourse.
+      - id: market-penetration-and-commodification
+        name: "market penetration and commodification"
+        gloss: >-
+          Answers show how capitalist markets, trade, or commercialization
+          reshape social relations, property rights, or labor practices.
+      - id: legal-and-normative-frameworks
+        name: "legal and normative frameworks"
+        gloss: >-
+          Answers describe how laws, constitutions, or international legal
+          principles constrain or enable actors, producing specific political
+          or social outcomes.
+      - id: technological-change-and-infrastructure
+        name: "technological change and infrastructure"
+        gloss: >-
+          Answers link inventions (military, agricultural, communication) to
+          shifts in power, economy, or social organization.
