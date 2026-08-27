@@ -88,6 +88,12 @@ SAMPLE_CEILING = 6_860
 # founder to read (bar condition 4).
 TOP_GROUPS = 10
 
+# The go/no-go bar's own floor (`plans/derived-vocabulary/
+# 01-the-sentence-columns-are-counted.md`, "the bar for slice 02 to
+# proceed", conditions 1 and 3): a group counts toward the bar only at 5
+# or more members.
+MIN_BAR_GROUP_SIZE = 5
+
 ClusterSweepFn = Callable[[np.ndarray, Sequence[float]], dict[float, list[int]]]
 
 
@@ -107,13 +113,22 @@ class ThresholdStats:
     """One swept threshold's own slice of a column's report. `sampled`/
     `sample_size` are carried on every threshold row, not just the column's
     own summary line, so a sampled row is marked wherever it appears and no
-    reader can mistake it for a whole-column measurement."""
+    reader can mistake it for a whole-column measurement.
+
+    `bar_group_count`/`bar_cross_source_group_count` are the go/no-go bar's
+    own figures (conditions 1 and 3): groups with `MIN_BAR_GROUP_SIZE`+
+    members, and how many of THOSE span 2+ sources. `cross_source_group_
+    count` above counts every cross-source group regardless of size -- the
+    broader reading the acceptance criterion names -- and stays as it is;
+    the two bar figures are additional, not a replacement."""
 
     threshold: float
     group_count: int
     grouped_share: float  # share of the measured population in a group of 2+
     largest_group_size: int
     cross_source_group_count: int
+    bar_group_count: int
+    bar_cross_source_group_count: int
     sampled: bool
     sample_size: int | None
 
@@ -241,12 +256,18 @@ def _threshold_stats(
     cross_source = sum(
         1 for members in groups.values() if len({member.source_id for member in members}) >= 2
     )
+    bar_groups = [members for members in groups.values() if len(members) >= MIN_BAR_GROUP_SIZE]
+    bar_cross_source = sum(
+        1 for members in bar_groups if len({member.source_id for member in members}) >= 2
+    )
     return ThresholdStats(
         threshold=threshold,
         group_count=len(groups),
         grouped_share=grouped / len(population) if population else 0.0,
         largest_group_size=sizes[0] if sizes else 0,
         cross_source_group_count=cross_source,
+        bar_group_count=len(bar_groups),
+        bar_cross_source_group_count=bar_cross_source,
         sampled=sampled,
         sample_size=sample_size,
     )
@@ -343,6 +364,8 @@ def examine_vocabulary(
                             grouped_share=0.0,
                             largest_group_size=0,
                             cross_source_group_count=0,
+                            bar_group_count=0,
+                            bar_cross_source_group_count=0,
                             sampled=sampled,
                             sample_size=sample_size,
                         )
@@ -410,7 +433,10 @@ def format_vocabulary_report(stats: VocabularyExamineStats) -> str:
                 f"{threshold_stats.group_count} group(s), "
                 f"{threshold_stats.grouped_share:.1%} in a group of 2+, "
                 f"largest group {threshold_stats.largest_group_size}, "
-                f"{threshold_stats.cross_source_group_count} cross-source group(s)"
+                f"{threshold_stats.cross_source_group_count} cross-source group(s), "
+                f"{threshold_stats.bar_group_count} group(s) with "
+                f"{MIN_BAR_GROUP_SIZE}+ member(s), "
+                f"{threshold_stats.bar_cross_source_group_count} of those cross-source"
                 f"{row_sample_note}"
             )
 

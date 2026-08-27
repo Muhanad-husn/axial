@@ -245,6 +245,66 @@ def test_per_threshold_reports_group_count_share_largest_and_cross_source(tmp_pa
     assert threshold_stats.cross_source_group_count == 1
 
 
+def test_bar_group_counts_are_5_plus_members_and_their_cross_source_share(tmp_path):
+    """The go/no-go bar (plan's own conditions 1 and 3) quantifies over
+    groups of 5+ members, not all groups: a 4-member group must not count
+    toward either figure, a 5-member single-source group counts toward the
+    first figure only, and a 5-member cross-source group counts toward
+    both. A 2-member cross-source group must move `cross_source_group_
+    count` (unbounded by size) but not the bar's own cross-source figure."""
+    answers_dir = tmp_path / "answers"
+    _write_answers(
+        answers_dir,
+        {
+            "book-a": [
+                # Group A (label 0): 4 members, one source -- under the bar.
+                *[{"chunk_id": f"a-A{i}", "source_id": "book-a",
+                   "answers": {"mechanism": f"a-sentence {i}"}} for i in range(4)],
+                # Group C (label 2): 5 members, one source -- at the bar,
+                # single-source.
+                *[{"chunk_id": f"a-C{i}", "source_id": "book-a",
+                   "answers": {"mechanism": f"c-sentence {i}"}} for i in range(5)],
+                # Group B (label 1): 3 of its 5 members, from book-a.
+                *[{"chunk_id": f"a-B{i}", "source_id": "book-a",
+                   "answers": {"mechanism": f"b-sentence {i}"}} for i in range(3)],
+                # Group D (label 3): 1 of its 2 members, from book-a.
+                {"chunk_id": "a-D0", "source_id": "book-a",
+                 "answers": {"mechanism": "d-sentence 0"}},
+            ],
+            "book-b": [
+                # Group B (label 1): the other 2 of its 5 members.
+                *[{"chunk_id": f"b-B{i}", "source_id": "book-b",
+                   "answers": {"mechanism": f"b-sentence {i + 3}"}} for i in range(2)],
+                # Group D (label 3): the other 1 of its 2 members.
+                {"chunk_id": "b-D0", "source_id": "book-b",
+                 "answers": {"mechanism": "d-sentence 1"}},
+            ],
+        },
+    )
+    encode = _counting_encoder()
+    # Population order: book-a's 13 records, then book-b's 3.
+    labels = [0, 0, 0, 0, 2, 2, 2, 2, 2, 1, 1, 1, 3, 1, 1, 3]
+    cluster_fn = _counting_cluster_fn(lambda thresholds: {t: labels for t in thresholds})
+
+    stats = examine_vocabulary(
+        answers_dir=answers_dir,
+        columns=["mechanism"],
+        thresholds=[0.55],
+        encode=encode,
+        cluster_fn=cluster_fn,
+    )
+
+    threshold_stats = stats.columns[0].thresholds[0]
+    assert threshold_stats.group_count == 4
+    # Group B (5, cross-source) and Group D (2, cross-source) -- any size.
+    assert threshold_stats.cross_source_group_count == 2
+    # Only Group B (5, cross-source) and Group C (5, single-source) clear
+    # the bar's own 5-member floor -- Group A (4) and Group D (2) do not.
+    assert threshold_stats.bar_group_count == 2
+    # Of those two, only Group B spans 2+ sources -- Group C is one source.
+    assert threshold_stats.bar_cross_source_group_count == 1
+
+
 def test_population_above_ceiling_is_sampled_and_the_row_reports_it(tmp_path):
     answers_dir = tmp_path / "answers"
     _write_answers(

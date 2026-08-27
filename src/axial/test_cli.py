@@ -577,6 +577,12 @@ def test_main_vocabulary_examine_reports_the_sweep_and_the_top_groups(tmp_path, 
     assert "largest group" in captured.out
     assert "cross-source group(s)" in captured.out
 
+    # The go/no-go bar (plan conditions 1 and 3) quantifies over groups of
+    # 5+ members specifically -- printed on every threshold row. At every
+    # swept threshold here the repeated group (5 members, 3 sources) is the
+    # only one that clears the floor, and it is cross-source.
+    assert captured.out.count("1 group(s) with 5+ member(s), 1 of those cross-source") == 5
+
     # Names the sampling threshold (0.55, the live claim path's own
     # threshold and the centre of the default sweep), then prints the
     # largest groups at that threshold as their member sentences -- here
