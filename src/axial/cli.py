@@ -1260,6 +1260,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="arm",
         action="store_const",
         const="map",
+        # Same default as `--arm` above, so neither registration order nor
+        # which of the two carries the default decides what a bare `brief
+        # sweep` runs: argparse seeds a dest from the FIRST action that
+        # declares it, so a `None` here would become the no-flag default
+        # if the two calls were ever swapped.
+        default="name",
         help="alias for --arm map (issue #572), kept so no existing invocation breaks",
     )
 
