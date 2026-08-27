@@ -1242,6 +1242,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=SWEEP_DEFAULT_WORKERS,
         help=f"bounded concurrent (brief, draw) workers (default: {SWEEP_DEFAULT_WORKERS})",
     )
+    brief_sweep_parser.add_argument(
+        "--arm",
+        default="name",
+        help=(
+            "named retrieval arm every draw runs through (issue #808): "
+            "'name' (default) is the existing name-layer loop, 'map' is "
+            "the argument-map path (issue #572) -- forwarded verbatim, "
+            "with no fixed list of valid names here, so an arm added "
+            "elsewhere is usable with no edit to this command; resuming "
+            "--sweep-dir under a different arm than the one already "
+            "recorded there is refused"
+        ),
+    )
+    brief_sweep_parser.add_argument(
+        "--map",
+        dest="arm",
+        action="store_const",
+        const="map",
+        # Same default as `--arm` above, so neither registration order nor
+        # which of the two carries the default decides what a bare `brief
+        # sweep` runs: argparse seeds a dest from the FIRST action that
+        # declares it, so a `None` here would become the no-flag default
+        # if the two calls were ever swapped.
+        default="name",
+        help="alias for --arm map (issue #572), kept so no existing invocation breaks",
+    )
 
     brief_smoke_parser = brief_subparsers.add_parser(
         "smoke",
@@ -2709,9 +2735,17 @@ def _brief_usage(pin: str | None) -> int:
     return 0
 
 
-def _brief_sweep(worklist_path: str, draws: int, sweep_dir: str, workers: int) -> int:
+def _brief_sweep(
+    worklist_path: str, draws: int, sweep_dir: str, workers: int, *, arm: str = "name"
+) -> int:
     try:
-        summary = run_sweep(worklist_path, draws=draws, sweep_dir=Path(sweep_dir), workers=workers)
+        summary = run_sweep(
+            worklist_path,
+            draws=draws,
+            sweep_dir=Path(sweep_dir),
+            workers=workers,
+            arm=arm,
+        )
     except SweepError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -3656,7 +3690,9 @@ def main(argv: list[str] | None = None) -> int:
         return _brief_usage(args.pin)
 
     if args.command == "brief" and args.brief_command == "sweep":
-        return _brief_sweep(args.worklist_path, args.draws, args.sweep_dir, args.workers)
+        return _brief_sweep(
+            args.worklist_path, args.draws, args.sweep_dir, args.workers, arm=args.arm
+        )
 
     if args.command == "brief" and args.brief_command == "smoke":
         return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers, use_map=args.use_map)

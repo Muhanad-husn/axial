@@ -1,0 +1,27 @@
+# Real-corpus run, D:/axial, 2026-08-28
+# One draw of config/briefs/smoke/S-03.yaml per arm. $0.1821 total.
+
+## Name arm -- OK, 690.4s, all four gates PASS
+$ uv run axial brief sweep <worklist> --draws 1 --sweep-dir data/runs/808-arm-name --workers 1 --arm name
+sweep: S-03 draw 0 starting
+retrieval turn 1 of 14: deciding what to look for next
+sweep: S-03 draw 0 OK (690.4s)
+sweep: S-03 gate 'attribution-fidelity' scoring 1 draw(s)
+sweep: S-03 gate 'attribution-fidelity' done, verdict=PASS
+sweep: S-03 gate 'grounding' scoring 1 draw(s)
+sweep: S-03 gate 'grounding' done, verdict=PASS
+sweep: S-03 gate 'synthesis-quality' scoring 1 draw(s)
+
+## Map arm -- took the argument-map path, then hit a corpus defect (issue #816)
+$ uv run axial brief sweep <worklist> --draws 1 --sweep-dir data/runs/808-arm-map --workers 1 --arm map
+retrieving evidence through the argument map
+sweep: S-03 draw 0 FAIL (66.8s): no raw source file found for source_id 'beshara-2011-8410a9059300' under data\sources (looked for .docx, .pdf); place the original source file there before running `axial pin write`
+
+## Resuming a directory under a different arm is refused, before any draw
+$ uv run axial brief sweep <worklist> --draws 1 --sweep-dir data/runs/808-arm-name --arm map
+error: data\runs\808-arm-name already holds draws for arm 'name'; refusing to run arm 'map' in the same directory
+(exit 1)
+
+## What the two summaries hold
+name: arm=name commit=dd278b8 draw.arm=name status=SKIP distinct_sources_cited=4
+map: arm=map commit=29255b0 draw.arm=map status=FAIL distinct_sources_cited=None
