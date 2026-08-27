@@ -502,8 +502,12 @@ def _empty_column_stats(
 
 
 def _cost_delta(before: float | None, after: float | None) -> float | None:
-    if before is None or after is None:
+    if after is None:
         return None
+    if before is None:
+        # `before is None` means nothing had been spent on that pass yet, which is 0.0,
+        # not unknown. Treat it as zero.
+        return after
     return after - before
 
 

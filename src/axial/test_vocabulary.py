@@ -19,6 +19,7 @@ from axial.vocabulary import (
     PopulationEntry,
     SelfConsistencyError,
     VocabularyExamineStats,
+    _cost_delta,
     draw_vocabulary_samples,
     examine_vocabulary,
     format_vocabulary_report,
@@ -47,6 +48,31 @@ def _propose_json(name_glosses):
 
 def _assign_json(pairs):
     return json.dumps({"assignments": [{"n": n, "category": category} for n, category in pairs]})
+
+
+# ---------------------------------------------------------------------------
+# _cost_delta: computing the cost incurred in a pass
+# ---------------------------------------------------------------------------
+
+
+def test_cost_delta_none_before_with_float_after_returns_full_after_value():
+    """When before is None (nothing had been spent on that pass yet), treat it
+    as 0.0, so the delta is after - 0.0 = after."""
+    assert _cost_delta(None, 0.5) == 0.5
+    assert _cost_delta(None, 0.001) == 0.001
+    assert _cost_delta(None, 10.0) == 10.0
+
+
+def test_cost_delta_normal_case_returns_difference():
+    """When both before and after are floats, return the difference."""
+    assert _cost_delta(0.1, 0.5) == 0.4
+    assert _cost_delta(1.0, 3.5) == 2.5
+
+
+def test_cost_delta_none_after_returns_none():
+    """When after is None, the genuine unknown case, return None."""
+    assert _cost_delta(0.1, None) is None
+    assert _cost_delta(None, None) is None
 
 
 class _FakeVocabClient:
