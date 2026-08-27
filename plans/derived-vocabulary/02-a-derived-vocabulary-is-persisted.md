@@ -16,6 +16,57 @@
 > named 20 categories. What shipped is model categorisation. This plan persists
 > that. Nothing below clusters anything.
 
+## The vocabulary is a tree, not a list
+
+**Founder ruling, 2026-08-28, before any of this is built.**
+
+A category holding roughly 295 notes is a browsing unit, not a retrieval unit.
+That is not an argument against categories. It is an argument against stopping
+at one level. Coarse is the top of a hierarchy, not the whole of it.
+
+The same instrument that named 20 mechanisms from a sample of the column will
+name sub-categories from a sample of one category. Twenty categories of about
+ten sub-categories each lands at roughly 30 notes per node, which is the band
+the name index already works in: 30 to 200 notes across five or more sources.
+The repo has made this move before, from a flat table to a relational one, and
+it paid.
+
+Three reasons this is the shape and not scope creep:
+
+- **It needs no new machinery.** A second level is slice 01's command pointed at
+  a subset. The five-condition bar applies unchanged to a sub-population.
+- **It is cheap.** Every value is assigned once at about $0.08 for `mechanism`;
+  assigning those same values within their own category costs about the same
+  again, plus one propose call per category.
+- **It is the direct fix for the only failure slice 01 found.** Five columns
+  cleared every condition except the ceiling on the largest category —
+  `comparison` at 50.5%, `concedes` 27.0%, `stops_holding` 25.5%, `assumes`
+  25.2%. A blob is a category that wants splitting. A second level is what
+  splits it, and it may make all twelve columns usable rather than seven.
+
+**What this slice must therefore do.** Ship depth 1, with an artifact and a
+scheme file that admit depth 2 without a migration.
+
+- A category carries a parent id. At depth 1 every parent is null, and the field
+  exists anyway.
+- `config/vocabulary.yaml` nests. A v1 scheme has depth 1; its shape does not
+  assume depth 1.
+- The scheme version covers the whole tree, so adding a level is a version bump
+  rather than a second versioning scheme.
+- Assignments are recorded per level, so adding depth 2 never re-asks depth 1.
+  That is the frozen-scheme rule one level up.
+- The join slice 03 exposes takes the level as a parameter, or resolves to the
+  finest level that column has.
+
+**What this slice must not do.** Build depth 2. Nothing has yet measured whether
+depth 1 pays, and slice 05 is what answers that. A second level before the first
+is measured is polishing past the bar.
+
+One caution carried forward: granularity was unstable run to run at depth 1, and
+a depth-2 scheme sitting under an unstable depth-1 scheme is unstable twice over.
+Freezing the scheme handles it, provided the version covers the tree and not a
+single level.
+
 ## Goal — the minimum testable behaviour
 
 A category scheme for one column is frozen in configuration, every answered
@@ -130,6 +181,10 @@ depends-on: 01-the-sentence-columns-are-counted
       re-asked nor rewritten.
 - [ ] A column with no scheme in `config/vocabulary.yaml` fails naming the
       column, not with a stack trace and not with an empty success.
+- [ ] A category carries a parent id, null at depth 1, and the scheme file parses
+      a nested scheme even though the committed v1 scheme is flat.
+- [ ] Assignments are recorded against the level they were made at, so a later
+      level can be added without re-asking this one.
 
 ## Design notes for the executor
 
@@ -207,3 +262,7 @@ commits, not a derived artifact, and why.
   rejected clustering. Clustering leaves this slice entirely; the scheme is
   frozen in configuration and assignment runs against it; scope is cut to
   `mechanism` alone until slice 05 says the join pays.
+- 2026-08-28 founder ruling: the vocabulary is a tree. This slice still ships
+  depth 1 only, but the artifact, the scheme file and the version must admit a
+  second level without a migration, and a blob is now read as a category that
+  wants splitting rather than as a column that failed.

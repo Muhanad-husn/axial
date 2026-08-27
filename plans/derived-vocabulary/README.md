@@ -156,6 +156,15 @@ Two caveats stay attached to the go:
   would be name merging in a new coat, which is the cost this feature exists to
   escape.
 
+**The five columns that failed all failed the same way**, on the ceiling over
+the largest category: `comparison` at 50.5%, `concedes` 27.0%, `stops_holding`
+25.5%, `assumes` 25.2%. Nothing failed for lack of structure. Founder ruling
+2026-08-28: the vocabulary is a tree, and a blob is a category that wants
+splitting rather than a column that failed. A second level over a blob is
+slice 01's own instrument pointed at a subset, so it needs no new machinery and
+costs about what the first level cost. Slice 02 ships depth 1 and must not
+foreclose depth 2; building depth 2 waits on slice 05 saying depth 1 pays.
+
 The first run (`data/logs/2026-08-27-vocabulary-categorise/`) is kept beside the
 corrected one rather than overwritten. It read six of twelve, because a
 silent-failure path in the assign loop counted a value the model never answered

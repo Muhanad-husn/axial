@@ -102,6 +102,11 @@ depends-on: 02-a-derived-vocabulary-is-persisted
   specs would push the tool surface past what a model reliably chooses between,
   and the recorded finding is that four of eight query tools already returned
   zero.
+- **The level is a parameter too, for the same reason.** The founder's
+  2026-08-28 ruling makes the vocabulary a tree; slice 02 ships depth 1 with a
+  shape that admits depth 2. This tool takes the level, or resolves to the finest
+  level the column has, so a second level becomes reachable without a second
+  tool.
 - **`--arm` is a pass-through, not an enum each caller re-declares.** Slice 04
   puts the same selector on `brief sweep`. If the arm list lives in one place,
   a new arm becomes available everywhere at once and the two slices stay
