@@ -776,6 +776,78 @@ def test_a_build_against_a_different_scheme_version_refuses_naming_both(tmp_path
     assert _read_manifest(tmp_path / "vocabulary")["scheme_version"] == "test-v1"
 
 
+def test_force_re_assigns_the_whole_column_under_the_new_scheme_version(tmp_path):
+    """Refusing by default is right and stays. But `axial map build`
+    refuses by default and re-spends behind an explicit flag, and without
+    the same flag here the operator's only remedy is moving a directory by
+    hand -- a remedy described in an exception message. `--force` is what
+    the issue's "a scheme edit must re-assign" asks for, as a deliberate
+    act."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    _build(tmp_path, _extraction_client())
+
+    _write_scheme(tmp_path / "vocabulary.yaml", _SCHEME_YAML.replace("test-v1", "test-v2"))
+    client = _extraction_client()
+    stats = _build(tmp_path, client, force=True)
+
+    assert len(client.asked_values) == 8
+    assert stats.columns[0].reused is False
+    assert stats.columns[0].newly_assigned_count == 8
+    assert stats.columns[0].reused_assignment_count == 0
+    assert _read_manifest(tmp_path / "vocabulary")["scheme_version"] == "test-v2"
+    assert len(_read_assignments(tmp_path / "vocabulary")) == 8
+
+
+def test_force_sets_the_paid_artifact_aside_rather_than_deleting_it(tmp_path):
+    """The old assignment is the only record of what each note was filed
+    under and it was paid for, so `--force` moves it to a timestamped
+    sibling -- the remedy the exception message already described, and the
+    same promise `axial map build --force` makes about a paid ledger."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    _build(tmp_path, _extraction_client())
+    before = (tmp_path / "vocabulary" / "mechanism" / ASSIGNMENTS_FILENAME).read_bytes()
+
+    _write_scheme(tmp_path / "vocabulary.yaml", _SCHEME_YAML.replace("test-v1", "test-v2"))
+    stats = _build(tmp_path, _extraction_client(), force=True)
+
+    aside = stats.columns[0].forced_aside
+    assert aside is not None
+    assert aside.parent == tmp_path / "vocabulary"
+    assert (aside / ASSIGNMENTS_FILENAME).read_bytes() == before
+    assert json.loads((aside / MANIFEST_FILENAME).read_text(encoding="utf-8"))[
+        "scheme_version"
+    ] == "test-v1"
+    assert str(aside) in format_vocabulary_build_report(stats)
+
+
+def test_force_re_asks_even_when_nothing_changed(tmp_path):
+    """`--force` means rebuild, not "get past the version check": an
+    unchanged pin and an unchanged scheme re-assign too, which is what
+    makes it the remedy for an artifact that is wrong rather than stale."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+    _build(tmp_path, _extraction_client())
+
+    client = _extraction_client()
+    stats = _build(tmp_path, client, force=True)
+
+    assert len(client.asked_values) == 8
+    assert stats.columns[0].reused is False
+    assert stats.columns[0].forced_aside is not None
+
+
+def test_a_build_without_force_leaves_no_aside_directory(tmp_path):
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+
+    stats = _build(tmp_path, _extraction_client())
+
+    assert stats.columns[0].forced_aside is None
+    assert [path.name for path in (tmp_path / "vocabulary").iterdir()] == ["mechanism"]
+
+
 # ---------------------------------------------------------------------------
 # An unanswered value is a failed run, not a result
 # ---------------------------------------------------------------------------

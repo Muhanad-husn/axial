@@ -982,9 +982,10 @@ class SchemeVersionMismatchError(Exception):
     one thing under some notes and another thing under others, which is
     exactly the property freezing the scheme exists to guarantee. Nothing
     is written and no model call is made. Re-assigning under the new
-    version is a deliberate act -- move the column's directory aside (it is
-    the only record of what each note was filed under, and it was paid for)
-    and run the build again."""
+    version is a deliberate act -- pass `--force`, which moves the column's
+    directory aside to a timestamped sibling (it is the only record of what
+    each note was filed under, and it was paid for) and re-assigns the
+    whole column under the new version."""
 
     def __init__(self, column: str, artifact_version: str | None, scheme_version: str, artifact_dir: Path) -> None:
         self.column = column
@@ -994,8 +995,9 @@ class SchemeVersionMismatchError(Exception):
         super().__init__(
             f"column {column!r} already has an assignment built against scheme version "
             f"{artifact_version!r}, but config now holds version {scheme_version!r} -- "
-            f"refusing to mix two schemes in one artifact. Move {artifact_dir} aside "
-            "and run the build again to re-assign the whole column under the new version."
+            f"refusing to mix two schemes in one artifact. Re-run with --force to set "
+            f"{artifact_dir} aside to a timestamped sibling and re-assign the whole "
+            "column under the new version."
         )
 
 
@@ -1062,6 +1064,7 @@ class ColumnBuildResult:
     answers_pin: str
     artifact_dir: Path
     reused: bool
+    forced_aside: Path | None
     answered_count: int
     excluded_count: int
     assigned_count: int
@@ -1400,12 +1403,27 @@ def _build_column(
     records: Sequence[Mapping[str, Any]],
     vocabulary_dir: Path,
     workers: int,
+    force: bool = False,
 ) -> ColumnBuildResult:
     population, excluded = read_column(records, column)
     answers_pin = compute_answers_pin(population)
     column_dir = Path(vocabulary_dir) / column
     manifest_path = column_dir / MANIFEST_FILENAME
     assignments_path = column_dir / ASSIGNMENTS_FILENAME
+
+    # `--force`: the whole column re-assigns, whatever is on disk. The
+    # previous artifact moves to a timestamped sibling rather than being
+    # deleted -- it is the only record of what each note was filed under
+    # and it was paid for, the same promise `axial map build --force` makes
+    # about a paid ledger. Timestamped to the microsecond so two forced
+    # runs, or two in one process, never overwrite each other.
+    forced_aside: Path | None = None
+    if force and column_dir.is_dir():
+        forced_aside = column_dir.with_name(
+            f"{column}.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+        )
+        column_dir.replace(forced_aside)
+
     manifest = _load_json_or_none(manifest_path)
     model = client.model_for_pass(EXAMINE_PASS_NAME)
 
@@ -1422,6 +1440,7 @@ def _build_column(
             answers_pin=answers_pin,
             artifact_dir=column_dir,
             reused=True,
+            forced_aside=forced_aside,
             answered_count=int(manifest.get("answered_count", 0)),
             excluded_count=int(manifest.get("excluded_count", 0)),
             assigned_count=int(manifest.get("assigned_count", 0)),
@@ -1544,6 +1563,7 @@ def _build_column(
         answers_pin=answers_pin,
         artifact_dir=column_dir,
         reused=False,
+        forced_aside=forced_aside,
         answered_count=len(population),
         excluded_count=excluded,
         assigned_count=assigned_count,
@@ -1566,6 +1586,7 @@ def build_vocabulary(
     scheme_path: Path = DEFAULT_VOCABULARY_SCHEME_PATH,
     vocabulary_dir: Path | None = None,
     workers: int = DEFAULT_ASSIGN_WORKERS,
+    force: bool = False,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
 ) -> VocabularyBuildStats:
@@ -1582,6 +1603,11 @@ def build_vocabulary(
     assignment already on disk byte-identical. A run against a different
     scheme version refuses (`SchemeVersionMismatchError`) rather than
     mixing two vocabularies in one artifact.
+
+    `force` re-assigns each column whatever is on disk, moving the previous
+    artifact aside to a timestamped sibling first. It is the deliberate act
+    a scheme edit needs, and the only way past the version refusal -- the
+    safe default is kept.
 
     Every scheme is loaded and checked BEFORE any answer is read or any
     call is made, so a scheme error costs nothing -- the same rule
@@ -1618,7 +1644,9 @@ def build_vocabulary(
 
     return VocabularyBuildStats(
         columns=[
-            _build_column(client, column, schemes[column], records, Path(vocabulary_dir), workers)
+            _build_column(
+                client, column, schemes[column], records, Path(vocabulary_dir), workers, force
+            )
             for column in columns
         ]
     )
@@ -1641,6 +1669,11 @@ def format_vocabulary_build_report(stats: VocabularyBuildStats) -> str:
             f"answers pin {column.answers_pin}"
         )
         lines.append(f"  artifact: {column.artifact_dir}")
+        if column.forced_aside is not None:
+            lines.append(
+                f"  --force: the previous artifact was set aside to {column.forced_aside} "
+                "(never deleted -- it was paid for) and the whole column re-assigned"
+            )
         if column.reused:
             lines.append(
                 "  REUSED: the scheme version and the answers pin are both unchanged -- "

@@ -173,7 +173,8 @@ depends-on: 01-the-sentence-columns-are-counted
       hole.
 - [x] The artifact records the scheme version it was built against.
 - [x] A build whose scheme version differs from the artifact's refuses, naming
-      both versions, rather than mixing two schemes in one file.
+      both versions, rather than mixing two schemes in one file, and `--force`
+      is the deliberate act that re-assigns under the new one.
 - [x] The pin is content-keyed over the rendered input, matching the convention
       merge and Gather already use: a change to the answers re-assigns, a change
       to an unrelated part of the repo does not.
@@ -203,7 +204,8 @@ depends-on: 01-the-sentence-columns-are-counted
 - **Content-keyed, like the decision logs.** Merge and Gather hash the
   *rendered* input, so a one-byte render change re-asks the corpus and a model
   change re-asks nothing. Same rule here, with the scheme version carried beside
-  the pin: a scheme edit must re-assign, a model swap must not.
+  the pin: a scheme edit must re-assign behind `--force`, a model swap must
+  not.
 - **The scheme file is written by a person.** `config/vocabulary.yaml` holds,
   per cleared column, the category names and glosses taken from slice 01's
   report, plus a version string. Nothing in it is inferred at runtime. Slice 01

@@ -751,6 +751,7 @@ def test_build_parser_recognises_vocabulary_build_subcommand(tmp_path):
             str(tmp_path / "vocabulary"),
             "--workers",
             "4",
+            "--force",
         ]
     )
 
@@ -761,6 +762,74 @@ def test_build_parser_recognises_vocabulary_build_subcommand(tmp_path):
     assert args.scheme_path == str(tmp_path / "vocabulary.yaml")
     assert args.vocabulary_dir == str(tmp_path / "vocabulary")
     assert args.workers == 4
+    assert args.force is True
+
+
+def test_main_vocabulary_build_force_re_assigns_after_a_scheme_edit(tmp_path, capsys, monkeypatch):
+    """Refusing a scheme-version mismatch by default is right and stays.
+    Without a flag, though, the operator's only remedy is moving a
+    directory by hand -- and `axial map build` already refuses by default
+    and re-spends behind exactly this flag."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, _unrelated = _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+    vocabulary_dir = tmp_path / "vocabulary"
+    lookup = {value: "war and state formation" for value in repeated}
+
+    argv = [
+        "vocabulary",
+        "build",
+        "--columns",
+        "mechanism",
+        "--answers-dir",
+        str(answers_dir),
+        "--scheme-path",
+        str(scheme_path),
+        "--vocabulary-dir",
+        str(vocabulary_dir),
+    ]
+
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: _FakeVocabBuildClient(lookup))
+    assert main(argv) == 0
+    capsys.readouterr()
+
+    scheme_path.write_text(
+        _BUILD_SCHEME_YAML.replace("test-v1", "test-v2"), encoding="utf-8"
+    )
+
+    # Without the flag: refuse, name both versions, spend nothing.
+    refusing = _FakeVocabBuildClient(lookup)
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: refusing)
+    assert main(argv) == 1
+    captured = capsys.readouterr()
+    assert "test-v1" in captured.err and "test-v2" in captured.err
+    assert "--force" in captured.err
+    assert refusing.asked_values == []
+
+    # With it: the whole column re-assigns under the new version, and the
+    # artifact that was paid for is still on disk beside it.
+    forcing = _FakeVocabBuildClient(lookup)
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: forcing)
+    assert main(argv + ["--force"]) == 0
+    captured = capsys.readouterr()
+
+    assert len(forcing.asked_values) == 8
+    manifest = json.loads(
+        (vocabulary_dir / "mechanism" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["scheme_version"] == "test-v2"
+    aside = [path for path in vocabulary_dir.iterdir() if path.name != "mechanism"]
+    assert len(aside) == 1
+    assert json.loads((aside[0] / "manifest.json").read_text(encoding="utf-8"))[
+        "scheme_version"
+    ] == "test-v1"
+    assert "set aside" in captured.out
 
 
 def test_main_vocabulary_build_writes_then_reuses_then_extends_the_assignment(

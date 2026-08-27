@@ -748,6 +748,19 @@ def build_parser() -> argparse.ArgumentParser:
             f"{DEFAULT_ASSIGN_WORKERS})"
         ),
     )
+    vocabulary_build_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "re-assign each column whatever is on disk, and the only way "
+            "past the refusal a scheme-version change raises -- what "
+            "re-assigning under an edited scheme takes, deliberately, with "
+            "the safe default kept (the same shape as 'map build --force'). "
+            "Moves the previous artifact aside to a timestamped sibling "
+            "rather than deleting it: it is the only record of what each "
+            "note was filed under, and it was paid for"
+        ),
+    )
 
     map_parser = subparsers.add_parser(
         "map",
@@ -3007,6 +3020,7 @@ def _vocabulary_build(
     vocabulary_dir: str | None,
     answers_dir: str | None,
     workers: int,
+    force: bool = False,
 ) -> int:
     """Exit 1 on a scheme the operator has to fix, on a scheme-version
     mismatch the operator has to decide about, and on a build that left a
@@ -3023,6 +3037,7 @@ def _vocabulary_build(
             ),
             vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
             workers=workers,
+            force=force,
         )
     except (VocabularySchemeError, SchemeVersionMismatchError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -3652,6 +3667,7 @@ def main(argv: list[str] | None = None) -> int:
             args.vocabulary_dir,
             args.answers_dir,
             args.workers,
+            args.force,
         )
 
     if args.command == "names" and args.names_command == "merge":
