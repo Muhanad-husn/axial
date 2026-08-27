@@ -93,6 +93,11 @@ builds nor anything that used it.
 The second is what this feature exists to answer. Slice 05 prints both
 comparisons in one table and answers neither. The founder does.
 
+**What the comparison costs.** 5 briefs × 3 draws × 3 arms = 45 runs, roughly
+$1.90 and about 2.5 hours at the sweep's default 3 workers. Bounded by
+construction: it is a five-brief measurement, never a pass over the corpus.
+Nothing else in this feature makes a model call at all.
+
 ## Slice 01 is a go/no-go, for slices 02 and 03 only
 
 **Slices 02 and 03 are not committed work until 01's number is read.** If the

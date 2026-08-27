@@ -108,7 +108,14 @@ depends-on: 04-the-sweep-runs-the-map-arm
   per-brief spread across draws, and a spread needs more than two points to
   mean anything. Fewer than three makes the central figure decorative.
 - **Total:** 5 briefs × 3 draws × 3 arms = 45 runs. This is the expensive step
-  in the feature.
+  in the feature, and it is bounded: a five-brief measurement, not a corpus
+  pass. Priced against the recorded $0.0417 and 9m46s for a single ask, that is
+  roughly **$1.90 and about 2.5 hours** at the sweep's default of 3 workers.
+  Raising `--workers` is the lever on the clock; the cost does not move.
+- **If the clock matters more than the spread**, cut draws to 2 and say so in
+  the run log. Do not cut below 2: with a single draw the per-brief spread is
+  degenerate and the variance argument this slice rests on has nothing behind
+  it.
 
 ## Two known misreadings, carried into the run log
 
