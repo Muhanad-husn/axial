@@ -267,7 +267,9 @@ def test_run_one_draw_records_an_ask_error_as_fail_and_does_not_raise(tmp_path, 
     assert record is None
 
 
-def test_run_one_draw_forwards_use_map_to_run_brief(tmp_path, monkeypatch):
+def test_run_one_draw_forwards_arm_map_as_use_map_to_run_brief(tmp_path, monkeypatch):
+    """issue #808: `arm="map"` is `_run_one_draw`'s own translation of the
+    named arm into `run_brief`'s boolean `use_map` knob."""
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
     captured = {}
 
@@ -282,11 +284,114 @@ def test_run_one_draw_forwards_use_map_to_run_brief(tmp_path, monkeypatch):
         "briefstem.yaml",
         brief,
         0,
-        use_map=True,
+        arm="map",
         **_draw_kwargs(tmp_path / "sweep", lambda: object()),
     )
 
     assert captured["use_map"] is True
+
+
+def test_run_one_draw_default_arm_is_name_layer(tmp_path, monkeypatch):
+    """No `arm` given is byte-identical in behaviour to today's default:
+    the name-layer loop, `use_map=False`."""
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+    captured = {}
+
+    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
+        captured["use_map"] = use_map
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    sweep_mod._run_one_draw(
+        "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
+    )
+
+    assert captured["use_map"] is False
+
+
+def test_run_one_draw_records_the_arm_on_the_draw_outcome(tmp_path, monkeypatch):
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    outcome, _record = sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        arm="map",
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert outcome.arm == "map"
+
+
+def test_run_one_draw_an_unrecognized_arm_name_is_accepted_and_runs_name_layer(
+    tmp_path, monkeypatch
+):
+    """issue #808: this module holds no whitelist of valid arm names -- an
+    arm no lower layer has given meaning to yet is accepted, recorded
+    verbatim, and simply runs the name-layer default today."""
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+    captured = {}
+
+    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
+        captured["use_map"] = use_map
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    outcome, _record = sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        arm="map+vocab",
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert captured["use_map"] is False
+    assert outcome.arm == "map+vocab"
+
+
+def test_run_one_draw_computes_distinct_sources_cited_from_source_usage(tmp_path, monkeypatch):
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _fake_run_brief(_brief, **_kwargs):
+        record = {
+            "brief_id": brief.brief_id,
+            "source_usage": {"sources": {"src-a": {}, "src-b": {}}},
+        }
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    outcome, _record = sweep_mod._run_one_draw(
+        "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
+    )
+
+    assert outcome.distinct_sources_cited == 2
+
+
+def test_run_one_draw_distinct_sources_cited_is_none_for_a_failed_draw(tmp_path, monkeypatch):
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _raise(*_args, **_kwargs):
+        raise sweep_mod.AnswerError("boom")
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _raise)
+
+    outcome, record = sweep_mod._run_one_draw(
+        "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
+    )
+
+    assert outcome.distinct_sources_cited is None
+    assert record is None
 
 
 def test_run_one_draw_propagates_an_undeclared_exception(tmp_path, monkeypatch):
@@ -375,13 +480,18 @@ def test_run_sweep_raises_sweep_error_for_an_unreadable_worklist(tmp_path):
         sweep_mod.run_sweep(tmp_path / "nope.txt", draws=1, sweep_dir=tmp_path / "sweep")
 
 
+_FAKE_COMMIT_SHA = "deadbeefcafefeed0000111122223333deadbeef"
+
+
 def _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path: dict[str, Brief]):
     """Replace `read_worklist`/`load_brief`/`run_brief`/`resolve_trusted`/
-    `run_gate`/`write_report` with deterministic fakes so `run_sweep`'s own
-    orchestration (draw multiplication, tallying, per-brief gate scoping) is
-    pinned without a real LLM provider, vault, or gate computation."""
+    `run_gate`/`write_report`/`_current_commit_sha` with deterministic fakes
+    so `run_sweep`'s own orchestration (draw multiplication, tallying,
+    per-brief gate scoping) is pinned without a real LLM provider, vault,
+    gate computation, or a subprocess call to `git`."""
     monkeypatch.setattr(sweep_mod, "read_worklist", lambda _path: list(briefs_by_path))
     monkeypatch.setattr(sweep_mod, "load_brief", lambda path: briefs_by_path[path])
+    monkeypatch.setattr(sweep_mod, "_current_commit_sha", lambda: _FAKE_COMMIT_SHA)
 
     def _fake_run_brief(brief, *, analyses_dir, **_kwargs):
         record = {
@@ -431,12 +541,19 @@ def test_run_sweep_runs_every_brief_draws_times_and_scopes_gates_per_brief(tmp_p
     for result in summary.briefs:
         assert len(result.draws) == 3
         assert all(outcome.status == sweep_mod.OK_STATUS for outcome in result.draws)
+        assert all(outcome.arm == "name" for outcome in result.draws)
         assert result.quorum.n_draws == 3
 
     # 4 gates x 2 briefs, each scored over exactly that brief's own 3 draws
     # -- never pooled across briefs.
     assert len(gate_calls) == 2 * len(sweep_mod.SWEEP_GATE_NAMES)
     assert all(count == 3 for _gate_name, count in gate_calls)
+
+    # issue #808: a plain sweep with neither `arm` nor `use_map` given runs
+    # the (default) "name" arm, and the sweep's own summary records it plus
+    # the commit `run_sweep` ran at.
+    assert summary.arm == "name"
+    assert summary.commit == _FAKE_COMMIT_SHA
 
 
 def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypatch):
@@ -478,6 +595,173 @@ def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypat
     )
 
     assert captured_use_map == [True, True, True, True]  # 2 briefs x 2 draws
+
+
+def test_run_sweep_forwards_arm_map_to_every_draws_run_brief(tmp_path, monkeypatch):
+    """issue #808: `arm="map"` -- the CLI's own named-arm seam -- reaches
+    every single `(brief, draw)` pair's `run_brief(use_map=True)` call, the
+    same guarantee the legacy `use_map=True` keyword already had."""
+    briefs_by_path = {
+        "briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None),
+        "briefB.yaml": Brief(brief_id="idB", case="B", request="rB", lens=None),
+    }
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+
+    captured_use_map: list[bool] = []
+    captured_arm: list[str] = []
+
+    def _fake_run_brief(brief, *, analyses_dir, use_map=False, **_kwargs):
+        captured_use_map.append(use_map)
+        record = {
+            "brief_id": brief.brief_id,
+            "interrogation": {"disposition": "proceed"},
+            "claims": [],
+            "cost": {"by_pass": {}},
+        }
+        path = Path(analyses_dir) / f"{brief.brief_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return _FakeBriefRunResult(record=record, path=path, markdown_path=path)
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    summary = sweep_mod.run_sweep(
+        "worklist-ignored-by-fake-read_worklist",
+        draws=2,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+        arm="map",
+    )
+
+    assert captured_use_map == [True, True, True, True]  # 2 briefs x 2 draws
+    assert summary.arm == "map"
+    for result in summary.briefs:
+        captured_arm.extend(outcome.arm for outcome in result.draws)
+    assert captured_arm == ["map", "map", "map", "map"]
+
+
+def test_run_sweep_arm_takes_precedence_over_use_map_when_both_given(tmp_path, monkeypatch):
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+
+    summary = sweep_mod.run_sweep(
+        "wl",
+        draws=1,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+        use_map=True,
+        arm="name",
+    )
+
+    assert summary.arm == "name"
+    assert summary.briefs[0].draws[0].arm == "name"
+
+
+def test_run_sweep_accepts_an_arm_name_it_does_not_recognize(tmp_path, monkeypatch):
+    """issue #808: `run_sweep` holds no list of valid arms -- an arm no
+    lower layer has given meaning to yet is accepted, recorded verbatim on
+    every draw and the summary, and simply runs the name-layer default
+    today (only `arm == "map"` changes what `run_brief` does)."""
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+
+    summary = sweep_mod.run_sweep(
+        "wl",
+        draws=1,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+        arm="map+vocab",
+    )
+
+    assert summary.arm == "map+vocab"
+    assert summary.briefs[0].draws[0].arm == "map+vocab"
+
+
+def test_run_sweep_persists_distinct_sources_cited_per_draw(tmp_path, monkeypatch):
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    monkeypatch.setattr(sweep_mod, "read_worklist", lambda _path: list(briefs_by_path))
+    monkeypatch.setattr(sweep_mod, "load_brief", lambda path: briefs_by_path[path])
+    monkeypatch.setattr(sweep_mod, "resolve_trusted", lambda evals_dir=None: (None, False))
+    monkeypatch.setattr(sweep_mod, "_current_commit_sha", lambda: _FAKE_COMMIT_SHA)
+
+    def _fake_run_brief(brief, *, analyses_dir, **_kwargs):
+        record = {
+            "brief_id": brief.brief_id,
+            "interrogation": {"disposition": "proceed"},
+            "claims": [],
+            "cost": {"by_pass": {}},
+            "source_usage": {"sources": {"src-a": {}, "src-b": {}, "src-c": {}}},
+        }
+        path = Path(analyses_dir) / f"{brief.brief_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return _FakeBriefRunResult(record=record, path=path, markdown_path=path)
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    summary = sweep_mod.run_sweep(
+        "wl", draws=1, sweep_dir=tmp_path / "sweep", client_factory=lambda: object(),
+        score_gates=False,
+    )
+
+    assert summary.briefs[0].draws[0].distinct_sources_cited == 3
+
+
+def test_run_sweep_writes_an_arm_marker_file_into_sweep_dir(tmp_path, monkeypatch):
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+    sweep_dir = tmp_path / "sweep"
+
+    sweep_mod.run_sweep(
+        "wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object(), arm="map"
+    )
+
+    marker = sweep_dir / sweep_mod.ARM_MARKER_FILENAME
+    assert marker.is_file()
+    assert marker.read_text(encoding="utf-8").strip() == "map"
+
+
+def test_run_sweep_resuming_the_same_arm_is_allowed(tmp_path, monkeypatch):
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+    sweep_dir = tmp_path / "sweep"
+
+    sweep_mod.run_sweep(
+        "wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object(), arm="map"
+    )
+    second = sweep_mod.run_sweep(
+        "wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object(), arm="map"
+    )
+
+    assert second.skip_count == 1
+    assert second.arm == "map"
+
+
+def test_run_sweep_refuses_to_resume_a_sweep_dir_under_a_different_arm(tmp_path, monkeypatch):
+    """The acceptance criterion's own hard case (issue #808): a directory
+    that already holds draws from one arm refuses a second invocation
+    asking for a different one, naming the arm already there, and never
+    attempts a single draw under the mismatched arm."""
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+    sweep_dir = tmp_path / "sweep"
+
+    sweep_mod.run_sweep(
+        "wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object(), arm="map"
+    )
+
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("a refused arm mismatch must never run a draw")
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _explode)
+
+    with pytest.raises(sweep_mod.SweepError, match="map"):
+        sweep_mod.run_sweep(
+            "wl", draws=1, sweep_dir=sweep_dir, client_factory=lambda: object(), arm="name"
+        )
 
 
 def test_run_sweep_resume_across_two_invocations_skips_completed_pairs(tmp_path, monkeypatch):
@@ -522,6 +806,8 @@ def test_run_sweep_writes_a_machine_readable_summary_json(tmp_path, monkeypatch)
     assert persisted["ok_count"] == 6
     assert persisted["fail_count"] == 0
     assert persisted["skip_count"] == 0
+    assert persisted["arm"] == summary.arm == "name"
+    assert persisted["commit"] == summary.commit == _FAKE_COMMIT_SHA
     assert len(persisted["briefs"]) == 2
     for brief_entry in persisted["briefs"]:
         assert len(brief_entry["draws"]) == 3
@@ -531,6 +817,7 @@ def test_run_sweep_writes_a_machine_readable_summary_json(tmp_path, monkeypatch)
         for outcome in brief_entry["draws"]:
             assert outcome["status"] == sweep_mod.OK_STATUS
             assert outcome["latency_seconds"] is not None
+            assert outcome["arm"] == "name"
 
 
 def test_run_sweep_summary_json_carries_none_latency_for_a_resumed_draw(tmp_path, monkeypatch):
@@ -566,4 +853,15 @@ def test_write_sweep_summary_returns_the_written_path_and_creates_the_sweep_dir(
         "ok_count": 0,
         "fail_count": 0,
         "skip_count": 0,
+        "arm": "name",
+        "commit": None,
     }
+
+
+def test_current_commit_sha_returns_a_git_sha_or_none():
+    """Exercises the real `git rev-parse HEAD` path once (every other test
+    monkeypatches this function away for determinism/speed): whatever it
+    returns is either `None` (no git, no history) or a 40-character hex
+    commit sha, never something else."""
+    sha = sweep_mod._current_commit_sha()
+    assert sha is None or (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha))

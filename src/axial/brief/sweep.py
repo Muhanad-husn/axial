@@ -91,11 +91,49 @@ model) keeps that pass's summed `usd` `None` too -- summing `None` as 0
 would silently understate cost for a brief mixing priced and unpriced
 passes, the same "never a fabricated zero" rule `axial.llm.usage_and_cost_by_pass`
 itself already follows.
+
+Named arms, not a boolean (issue #808)
+--------------------------------------------------------------------------
+`run_sweep`'s `arm` parameter (default `"name"`) is forwarded to every
+`(brief, draw)`'s own `_run_one_draw` call and recorded on that draw's
+`DrawOutcome.arm` -- the same string for every draw in one invocation,
+never inferred draw-by-draw. Today only `arm == "map"` changes what
+actually runs (`run_brief(use_map=True)`, the argument-map path); any other
+string -- including one no arm elsewhere has given meaning to yet -- runs
+the name-layer default. This module deliberately holds no whitelist of
+valid arm names: it never rejects an unrecognized one, so a slice adding a
+real third arm (issue #807) does so by teaching a lower layer what that
+name means, with no edit here. `use_map: bool` stays as the legacy knob
+`axial.brief.smoke.run_smoke` still calls with; `arm`, when given, takes
+precedence, and `use_map=True` with no `arm` given is still read as
+`arm="map"`.
+
+**The mixed-arm refusal.** A `sweep_dir` holding draws from two arms would
+produce a comparison figure (issue #809) that is quietly meaningless, so
+`run_sweep` writes a one-line `arm.txt` marker into `sweep_dir` before any
+draw is attempted, and refuses -- naming the arm already there -- when a
+later invocation asks for a different one. Checked before the worklist's
+briefs are even loaded, so a mismatched resume costs nothing: no client
+built, no model call made.
+
+**The commit.** `SweepSummary.commit` is this checkout's `git rev-parse
+HEAD` at the moment the sweep ran (`None` only when `git` itself is
+unavailable), because issue #809 compares sweep directories and two built
+from different code produce a difference that is not about the arms --
+this is where that fact is known, recording it here is cheaper than
+reconstructing it later.
+
+**`distinct_sources_cited`.** Already computed on every persisted analysis
+record (`len(record["source_usage"]["sources"])`, §7.13) -- read off here
+onto `DrawOutcome.distinct_sources_cited` rather than recomputed, so issue
+#809's per-arm comparison is a pure reader of `summary.json` and never has
+to open each draw's own record.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -182,6 +220,16 @@ DEFAULT_WORKERS = 3
 
 CLAIM_KINDS = ("a", "b", "c")
 
+# The one arm name `run_sweep` gives real meaning to today (module
+# docstring's "named arms" section) -- not a whitelist, since any other
+# string is still accepted and simply runs the name-layer default.
+MAP_ARM = "map"
+DEFAULT_ARM = "name"
+
+# The mixed-arm-refusal marker's filename, written into `sweep_dir` itself
+# (module docstring).
+ARM_MARKER_FILENAME = "arm.txt"
+
 
 class SweepError(Exception):
     """Fatal, before-any-draw sweep errors: an unreadable worklist, an
@@ -207,6 +255,16 @@ class DrawOutcome:
     # own directory keyed on the same `brief_id`, so a RESUMED draw's report
     # is found the same way a fresh one's is.
     report_path: Path | None = None
+    # The arm (issue #808) this draw ran through -- `run_sweep`'s own
+    # resolved arm, identical across every draw in one invocation (the
+    # mixed-arm refusal enforces that a `sweep_dir` never mixes two), so
+    # two sweep directories are told apart by this field alone.
+    arm: str = DEFAULT_ARM
+    # `len(record["source_usage"]["sources"])` (§7.13, issue #808) -- the
+    # number of distinct sources this draw's grounds actually cite, already
+    # computed by `build_record` and read off here rather than recomputed.
+    # `None` only for a FAILed draw, which produced no record at all.
+    distinct_sources_cited: int | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +304,11 @@ class SweepSummary:
     ok_count: int
     fail_count: int
     skip_count: int
+    # issue #808: the arm every draw in this sweep ran through, and the
+    # commit `run_sweep` ran at (module docstring's "named arms"/"the
+    # commit" sections).
+    arm: str = DEFAULT_ARM
+    commit: str | None = None
 
 
 def draw_dir(sweep_dir: Path, brief_stem: str, draw_index: int) -> Path:
@@ -278,6 +341,61 @@ def _record_path(sweep_dir: Path, brief_stem: str, draw_index: int, brief_id: st
 
 def _report_path(sweep_dir: Path, brief_stem: str, draw_index: int, brief_id: str) -> Path:
     return runs_dir(sweep_dir, brief_stem, draw_index) / f"{brief_id}.json"
+
+
+def _distinct_sources_cited(record: dict[str, Any] | None) -> int | None:
+    """`len(record["source_usage"]["sources"])` (§7.13, issue #808) --
+    already computed by `build_record` on every persisted record; read off
+    here rather than recomputed. `None` when there is no record to read (a
+    FAILed draw) or an old record predates `source_usage` entirely."""
+    if record is None:
+        return None
+    source_usage = record.get("source_usage")
+    if not isinstance(source_usage, dict):
+        return None
+    sources = source_usage.get("sources")
+    if not isinstance(sources, dict):
+        return None
+    return len(sources)
+
+
+def _current_commit_sha() -> str | None:
+    """This checkout's `git rev-parse HEAD` (module docstring's "the
+    commit" section) -- `None`, never a fabricated placeholder, when `git`
+    itself is unavailable or this checkout has no history to ask."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def _check_and_record_arm(sweep_dir: Path, arm: str) -> None:
+    """The mixed-arm refusal (module docstring, issue #808): a `sweep_dir`
+    already holding draws from one arm refuses a resume under a different
+    one, naming the arm already there. Checked and recorded before any
+    draw is attempted -- a mismatch costs nothing, since the worklist has
+    not even been loaded yet. A fresh `sweep_dir` (no marker yet) simply
+    records the arm it starts with."""
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = sweep_dir / ARM_MARKER_FILENAME
+    if marker_path.is_file():
+        existing_arm = marker_path.read_text(encoding="utf-8").strip()
+        if existing_arm and existing_arm != arm:
+            raise SweepError(
+                f"{sweep_dir} already holds draws for arm {existing_arm!r}; "
+                f"refusing to run arm {arm!r} in the same directory"
+            )
+        return
+    marker_path.write_text(arm + "\n", encoding="utf-8")
 
 
 def _claim_kind_counts(record: dict[str, Any]) -> dict[str, int]:
@@ -393,15 +511,18 @@ def _run_one_draw(
     cases_dir: Path | None,
     step_budget: int | None,
     thin_result_floor: int | None,
-    use_map: bool = False,
+    arm: str = DEFAULT_ARM,
 ) -> tuple[DrawOutcome, dict[str, Any] | None]:
     """Run (or resume) one `(brief, draw)` pair. Returns the outcome plus
     the resulting analysis record dict (`None` for a FAILed draw).
 
-    `use_map` (issue #572, PR 4 of 4) forwards verbatim to `run_brief`: this
-    module has no opinion on which retrieval path a draw takes, it only
+    `arm` (issue #808, module docstring's "named arms" section) is
+    recorded on the returned `DrawOutcome` verbatim, and translated to
+    `run_brief`'s own `use_map` boolean (`arm == MAP_ARM`) -- this module
+    has no other opinion on which retrieval path a draw takes, it only
     drives whichever one the caller asked for the same resumable,
     failure-isolated way."""
+    use_map = arm == MAP_ARM
     brief_stem = Path(brief_path).stem
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
@@ -426,6 +547,8 @@ def _run_one_draw(
                 None,
                 record_file,
                 report_file if report_file.is_file() else None,
+                arm=arm,
+                distinct_sources_cited=_distinct_sources_cited(record),
             )
             return outcome, record
 
@@ -478,6 +601,7 @@ def _run_one_draw(
             elapsed,
             None,
             None,
+            arm=arm,
         )
         return outcome, None
 
@@ -493,6 +617,8 @@ def _run_one_draw(
         elapsed,
         result.path,
         result.report_path,
+        arm=arm,
+        distinct_sources_cited=_distinct_sources_cited(result.record),
     )
     return outcome, result.record
 
@@ -559,6 +685,7 @@ def run_sweep(
     workers: int = DEFAULT_WORKERS,
     score_gates: bool = True,
     use_map: bool = False,
+    arm: str | None = None,
 ) -> SweepSummary:
     """Run every brief in `worklist_path` `draws` times each, bounded to
     `workers` concurrent `(brief, draw)` attempts (module docstring), then
@@ -569,12 +696,18 @@ def run_sweep(
     `axial.llm.get_client`) -- see the module docstring for why sharing one
     client instance across draws would corrupt per-draw cost accounting.
 
-    `use_map=True` (issue #572, PR 4 of 4) runs every draw through the
-    argument-map retrieval path instead of the name-layer loop -- forwarded
-    verbatim to `run_brief` on every `(brief, draw)` pair; a draw that
-    raises an `AskError` (no map built at this pin, an encoder mismatch, an
-    unusable door response) is recorded FAILED exactly like a name-layer
-    draw raising `QueryError`, never a sweep-ending crash.
+    `arm` (issue #808, module docstring's "named arms" section) is the
+    retrieval arm every draw runs through, recorded verbatim on each
+    `DrawOutcome` and on the returned `SweepSummary`. `None` (the default)
+    falls back to `"map"` when `use_map=True` is still given (the legacy
+    knob `axial.brief.smoke.run_smoke` calls this with) or `"name"`
+    otherwise; when `arm` is given, it takes precedence over `use_map`.
+    Only `arm == "map"` changes what actually runs today -- any other
+    string, including one no arm elsewhere has given meaning to yet, runs
+    the name-layer default; this function holds no whitelist of valid arm
+    names and never rejects one. A `sweep_dir` already holding draws from a
+    different arm than the one requested here raises `SweepError` naming
+    the arm already there, before any draw is attempted.
 
     `score_gates=False` (issue #491) skips the four rung-3 gates entirely
     and makes ZERO gate calls: the grounding gate calls an independent
@@ -586,10 +719,11 @@ def run_sweep(
     `summary.json`) is exactly what a smoke run needs.
 
     Raises `SweepError` before any draw is attempted for an unreadable
-    worklist or `draws < 1`. A brief that fails to load (`BriefError`) gets
-    no draw attempted; it is recorded as its own single FAILed outcome and
-    the sweep continues with the remaining briefs -- mirrors the per-draw
-    failure-isolation rule one level up.
+    worklist, `draws < 1`, or a mismatched arm on an existing `sweep_dir`.
+    A brief that fails to load (`BriefError`) gets no draw attempted; it is
+    recorded as its own single FAILed outcome and the sweep continues with
+    the remaining briefs -- mirrors the per-draw failure-isolation rule one
+    level up.
     """
     if draws < 1:
         raise SweepError(f"draws must be >= 1, got {draws}")
@@ -600,6 +734,9 @@ def run_sweep(
         raise SweepError(str(exc)) from exc
 
     sweep_dir = Path(sweep_dir)
+    resolved_arm = arm if arm is not None else (MAP_ARM if use_map else DEFAULT_ARM)
+    _check_and_record_arm(sweep_dir, resolved_arm)
+
     if client_factory is None:
         client_factory = lambda: get_client(config_path=config_path)  # noqa: E731
 
@@ -637,7 +774,7 @@ def run_sweep(
                 cases_dir=cases_dir,
                 step_budget=step_budget,
                 thin_result_floor=thin_result_floor,
-                use_map=use_map,
+                arm=resolved_arm,
             ): (brief_path, draw_index)
             for brief_path, brief, draw_index in work_items
         }
@@ -659,7 +796,16 @@ def run_sweep(
 
         if brief is None:
             failed_load = DrawOutcome(
-                brief_path, brief_stem, None, -1, FAIL_STATUS, load_reason, None, None, None
+                brief_path,
+                brief_stem,
+                None,
+                -1,
+                FAIL_STATUS,
+                load_reason,
+                None,
+                None,
+                None,
+                arm=resolved_arm,
             )
             brief_results.append(
                 BriefSweepResult(
@@ -708,7 +854,15 @@ def run_sweep(
     skip_count = sum(1 for outcome in all_outcomes if outcome.status == SKIP_STATUS)
     fail_count = len(all_outcomes) - ok_count - skip_count
 
-    summary = SweepSummary(brief_results, len(all_outcomes), ok_count, fail_count, skip_count)
+    summary = SweepSummary(
+        brief_results,
+        len(all_outcomes),
+        ok_count,
+        fail_count,
+        skip_count,
+        arm=resolved_arm,
+        commit=_current_commit_sha(),
+    )
     write_sweep_summary(summary, sweep_dir)
     return summary
 
@@ -724,6 +878,8 @@ def _draw_outcome_to_json(outcome: DrawOutcome) -> dict[str, Any]:
         "latency_seconds": outcome.latency_seconds,
         "record_path": str(outcome.record_path) if outcome.record_path is not None else None,
         "report_path": str(outcome.report_path) if outcome.report_path is not None else None,
+        "arm": outcome.arm,
+        "distinct_sources_cited": outcome.distinct_sources_cited,
     }
 
 
@@ -761,6 +917,8 @@ def sweep_summary_to_json(summary: SweepSummary) -> dict[str, Any]:
         "ok_count": summary.ok_count,
         "fail_count": summary.fail_count,
         "skip_count": summary.skip_count,
+        "arm": summary.arm,
+        "commit": summary.commit,
     }
 
 
@@ -784,9 +942,11 @@ def write_sweep_summary(summary: SweepSummary, sweep_dir: Path) -> Path:
 
 
 def format_sweep_summary(summary: SweepSummary) -> str:
-    """Human-readable rendering for the CLI: one block per brief (draw
-    statuses, quorum agreement, gate verdicts), then an end-of-sweep tally."""
-    lines: list[str] = []
+    """Human-readable rendering for the CLI: the arm and commit this sweep
+    ran at (issue #808), one block per brief (draw statuses, quorum
+    agreement, gate verdicts), then an end-of-sweep tally."""
+    commit_str = summary.commit if summary.commit is not None else "unknown"
+    lines: list[str] = [f"arm: {summary.arm} commit: {commit_str}"]
     for result in summary.briefs:
         lines.append(f"brief: {result.brief_stem} (brief_id={result.brief_id})")
         for outcome in result.draws:
