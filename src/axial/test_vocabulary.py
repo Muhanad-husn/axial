@@ -297,7 +297,11 @@ def test_propose_call_never_sees_any_value_from_the_held_out_assign_sample(tmp_p
 def test_a_returned_label_outside_the_scheme_counts_as_unassigned_never_a_new_category(tmp_path, monkeypatch):
     """Assignment runs in batches, and the model may not invent a category
     at assignment time -- a label it returns that names no proposed
-    category counts as unassigned, exactly like "none"."""
+    category counts as unassigned, exactly like "none". PR #815 review
+    (F4): this is specifically a REFUSAL (the index came back, its label
+    just names no known category) and must be counted on `refused_count`,
+    not `unanswered_count` -- an index the model never returned at all is
+    the other, distinct failure mode."""
     monkeypatch.setattr(vocabulary_mod, "BATCH_SIZE", 2)
     answers_dir = tmp_path / "answers"
     _write_small_column(answers_dir, n=6)
@@ -325,6 +329,93 @@ def test_a_returned_label_outside_the_scheme_counts_as_unassigned_never_a_new_ca
     assert client.calls_for_pass(vocabulary_mod.EXAMINE_PASS_NAME) == 3  # 1 propose + 2 assign batches
     assert column.assignment_rate == 0.75  # 3 of 4 assigned, 1 unassigned (the invented label)
     assert column.categories[0].member_count == 3
+    assert column.unanswered_count == 0  # both batches returned every index they were asked about
+    assert column.refused_count == 1  # index 2's "an invented category" is a refusal, not a drop
+
+
+def test_assign_batch_raises_when_a_batch_response_is_missing_an_index():
+    """F4 (PR #815 review): a truncated completion -- these calls run
+    170-250s producing ~10k completion tokens, squarely the regime where a
+    completion loses its tail -- must not be trusted as "the rest is
+    unassigned". `_assign_batch` validates the returned keys are exactly
+    the indexes the batch asked about and raises `VocabularyResponseError`
+    when they are not; `complete_json`'s own `validate` seam re-asks on
+    that within its bounded attempt budget."""
+    batch = [
+        PopulationEntry("v1", "c1", "book-a"),
+        PopulationEntry("v2", "c2", "book-a"),
+    ]
+
+    class _TruncatedClient:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, prompt, pass_name=None):
+            self.calls += 1
+            # Always missing index 2 -- a persistent truncation, not a
+            # one-off stochastic glitch.
+            return _assign_json([(1, "Cat A")])
+
+    client = _TruncatedClient()
+    with pytest.raises(vocabulary_mod.VocabularyResponseError):
+        vocabulary_mod._assign_batch(client, "some-pass", "- Cat A: gloss a", batch, start=0)
+    # complete_json's default attempts=3 re-asks the same batch on a
+    # bounded budget rather than trusting the first truncated response.
+    assert client.calls == 3
+
+
+def test_assign_batch_raises_when_a_later_batch_is_renumbered_from_one():
+    """A model that renumbers a later batch 1..N instead of continuing the
+    global numbering must never be merged in silently -- `dict.update`
+    would overwrite the earlier batch's real assignments with a response
+    about the wrong indexes, and those earlier indexes would read as
+    unanswered with no way to tell why."""
+    batch = [
+        PopulationEntry("v101", "c101", "book-a"),
+        PopulationEntry("v102", "c102", "book-a"),
+    ]
+
+    class _RenumberedClient:
+        def complete(self, prompt, pass_name=None):
+            # This batch starts at index 101 (start=100) but the model
+            # numbers it 1, 2 as though it were the first batch.
+            return _assign_json([(1, "Cat A"), (2, "Cat A")])
+
+    client = _RenumberedClient()
+    with pytest.raises(vocabulary_mod.VocabularyResponseError):
+        vocabulary_mod._assign_batch(client, "some-pass", "- Cat A: gloss a", batch, start=100)
+
+
+def test_examine_vocabulary_reasks_a_truncated_assign_batch_and_then_succeeds(tmp_path):
+    """The re-ask path end to end: a first assign-batch response missing an
+    index is rejected and re-asked (`complete_json`'s own seam), and the
+    resulting stats show a clean, fully-accounted-for assignment -- no
+    value silently lost to a truncated completion's tail."""
+    answers_dir = tmp_path / "answers"
+    _write_small_column(answers_dir, n=4)
+
+    client = _FakeVocabClient(
+        responses_by_pass={
+            vocabulary_mod.EXAMINE_PASS_NAME: [
+                _propose_json([("Cat A", "gloss a")]),
+                _assign_json([(1, "Cat A")]),  # truncated: missing index 2
+                _assign_json([(1, "Cat A"), (2, "Cat A")]),  # re-ask: complete
+            ],
+            vocabulary_mod.CHECK_PASS_NAME: [_assign_json([(1, "Cat A"), (2, "Cat A")])],
+        },
+        models={vocabulary_mod.EXAMINE_PASS_NAME: "model-a", vocabulary_mod.CHECK_PASS_NAME: "model-b"},
+    )
+
+    stats = examine_vocabulary(
+        answers_dir=answers_dir, columns=["mechanism"], propose_n=2, assign_n=2, seed=0, client=client
+    )
+
+    column = stats.columns[0]
+    assert column.assignment_rate == 1.0
+    assert column.unanswered_count == 0
+    assert column.refused_count == 0
+    # 1 propose + 2 assign attempts (1 truncated, re-asked once).
+    assert client.calls_for_pass(vocabulary_mod.EXAMINE_PASS_NAME) == 3
 
 
 def test_proposal_returning_roughly_as_many_categories_as_shown_is_flagged_and_assignment_is_skipped(tmp_path):
@@ -521,6 +612,8 @@ def test_format_report_includes_every_bar_figure_and_the_agreement_rate():
             CategoryReport("One-off", "a category nothing else joined", 1, 1),
         ],
         assignment_rate=0.708,
+        unanswered_count=0,
+        refused_count=117,
         categories_5plus=1,
         categories_5plus_cross_source=1,
         largest_category_share=0.108,
@@ -543,9 +636,15 @@ def test_format_report_includes_every_bar_figure_and_the_agreement_rate():
     assert "elite capture of the state" in report
     assert "25 member(s), 13 source(s)" in report
     assert "assignment rate on held-out sample: 70.8%" in report
+    # F4 (PR #815 review): unanswered (no returned entry) and refused
+    # ("none"/out-of-scheme) are printed separately, never merged into one
+    # "unassigned" figure a reader cannot split back apart.
+    assert "unanswered (no returned entry): 0" in report
+    assert 'refused ("none"/out-of-scheme): 117' in report
     assert "categories with 5+ members: 1" in report
     assert "spanning 2+ sources: 1" in report
-    assert "largest category share: 10.8%" in report
+    # F3 (PR #815 review): the denominator is named in the line itself.
+    assert "largest category share (of the held-out sample): 10.8%" in report
     assert "two-model agreement overall (subsample of 100): 82.0%" in report
     assert (
         "two-model agreement where the first model assigned a category "
@@ -569,6 +668,8 @@ def test_format_report_flags_a_proposal_failure_instead_of_reporting_numbers():
         proposal_failed=True,
         categories=[CategoryReport(f"cat-{i}", f"gloss {i}", 0, 0) for i in range(4)],
         assignment_rate=None,
+        unanswered_count=None,
+        refused_count=None,
         categories_5plus=None,
         categories_5plus_cross_source=None,
         largest_category_share=None,
@@ -606,6 +707,8 @@ def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_z
         proposal_failed=False,
         categories=[CategoryReport("Cat A", "gloss a", 1, 1)],
         assignment_rate=0.25,
+        unanswered_count=0,
+        refused_count=3,
         categories_5plus=0,
         categories_5plus_cross_source=0,
         largest_category_share=0.25,
@@ -623,6 +726,8 @@ def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_z
 
     report = format_vocabulary_report(VocabularyExamineStats(columns=[column]))
 
+    assert "unanswered (no returned entry): 0" in report
+    assert 'refused ("none"/out-of-scheme): 3' in report
     assert "two-model agreement overall (subsample of 4): 50.0%" in report
     assert (
         "two-model agreement where the first model assigned a category: "

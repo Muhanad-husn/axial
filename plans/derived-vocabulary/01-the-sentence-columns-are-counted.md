@@ -110,6 +110,9 @@ And    the command writes nothing under `data/answers/`, `data/chunks/` or any
 slice: 01-the-sentence-columns-are-counted
 edits: src/axial/cli.py
 edits: src/axial/test_cli.py
+edits: config/pipeline.yaml
+edits: src/axial/llm.py
+edits: secrets/secrets.example.toml
 creates: src/axial/vocabulary.py
 creates: src/axial/test_vocabulary.py
 ```
@@ -197,6 +200,11 @@ The rest is new.
 ## Definition of done
 
 - [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+      **Caveat (PR #815 review, F1):** true for the census build and the two
+      follow-up fixes on this branch, which were strictly test-first; the
+      rewrite itself was built with tests and implementation written
+      together, not test-first against a failing acceptance test. See the
+      PR body's own process note.
 - [x] All seeded unit behaviours covered; fast tier green locally, CI green for
       the rest.
 - [x] Refactor pass complete with the bar green.
@@ -221,9 +229,16 @@ founder's read agrees:
 1. **At least 8 categories with 5 or more members** in the held-out sample.
    Sets a floor on how much recurring structure was found. The `mechanism`
    probe gave 14 categories, every one of them at 5 or more.
-2. **The largest category holds under 25% of the assigned sample.** Rules out
-   the blob. Fourteen even categories would be 7% each; the probe's largest was
-   10.8%. A quarter of the column in one category is a category doing no work.
+2. **The largest category holds under 25% of the held-out sample.** Rules out
+   the blob. (PR #815 review, F3: named explicitly, because the code divides
+   the largest category's member count by the whole held-out sample, not by
+   the subset actually assigned to some category -- on `mechanism`'s 50.7%
+   assigned run the two readings differ about twofold, and this is the one
+   the report and the code both compute.) At the probe's own 70.8%
+   assignment rate, fourteen even categories would be about 5% of the
+   held-out sample each; the probe's largest was 10.8% of the held-out
+   sample. A quarter of the column in one category is a category doing no
+   work.
 3. **At least half of those categories draw members from more than one source.**
    A category that is one book talking to itself joins nothing, and the recorded
    finding that only 40.5% of argument-map edges reach another book makes
@@ -285,3 +300,16 @@ unaffected: it depends on nothing here and is useful whatever this says.
   categories covering 41.4% of it and judged the other 51 values genuinely
   one-off, implying 87.2% coverage for one more call. Slice 02 has to pin the
   granularity; the residue round is the cheapest lever.
+- 2026-08-27 six findings fixed from the PR #815 review (advisory,
+  DONE_WITH_CONCERNS): the assign path now distinguishes an index the model
+  never returned from one it refused, and validates each batch's returned
+  keys against the indexes it was asked about, re-asking on a mismatch (F4);
+  the CLI acceptance test's held-out sample now includes a value scripted
+  back to "none" so its ratios are not vacuously 1.0 (F5); bar condition 2's
+  denominator is now named explicitly, above (F3); this DoD's own TDD line
+  is annotated (F1); the parallel-safety block now names all six files the
+  rewrite touched (F2). **`RESTATEMENT_RATIO` is inert as calibrated**: at
+  400 propose values it fires only above 200 categories, and the largest
+  scheme observed on the real corpus run was 36 (`mechanism`) -- it never
+  saw the granularity problem that run actually hit, and is kept unchanged
+  because pinning granularity is slice 02's problem (F6).

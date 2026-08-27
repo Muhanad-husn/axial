@@ -568,15 +568,34 @@ def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_ra
             ]
         }
     )
-    # Both calls assign every held-out value to the one proposed category --
-    # a clean, fully-determined 100% assignment rate and agreement rate,
-    # regardless of exactly which 4 of the 8 values the propose/assign
-    # split (seed 0) drew into which sample.
+    # F5 (PR #815 review): under seed 0, `draw_vocabulary_samples` puts
+    # indices 1, 2 and 4 of the held-out sample on a repeated-mechanism
+    # sentence and index 3 on one of the three deliberately unrelated ones
+    # (verified against `draw_vocabulary_samples` directly -- see the PR
+    # review). Scripting index 3 back as "none" makes the unrelated
+    # sentences do real work: the printed assignment rate and largest-
+    # category share come out at 75%, not the vacuous 100% every ratio
+    # showed before, and the "none" case still exercises the CLI's own
+    # rendering of a real refusal.
     assign_response = json.dumps(
-        {"assignments": [{"n": n, "category": "Extraction funds central coercion"} for n in range(1, 5)]}
+        {
+            "assignments": [
+                {"n": 1, "category": "Extraction funds central coercion"},
+                {"n": 2, "category": "Extraction funds central coercion"},
+                {"n": 3, "category": "none"},
+                {"n": 4, "category": "Extraction funds central coercion"},
+            ]
+        }
     )
     check_response = json.dumps(
-        {"assignments": [{"n": n, "category": "Extraction funds central coercion"} for n in range(1, 5)]}
+        {
+            "assignments": [
+                {"n": 1, "category": "Extraction funds central coercion"},
+                {"n": 2, "category": "Extraction funds central coercion"},
+                {"n": 3, "category": "none"},
+                {"n": 4, "category": "Extraction funds central coercion"},
+            ]
+        }
     )
 
     client = _FakeVocabExamineClient(
@@ -620,24 +639,24 @@ def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_ra
     # count and the number of distinct sources its members come from.
     assert "Extraction funds central coercion" in captured.out
     assert "rural surplus, once extracted, pays for the state's own army" in captured.out
-    assert "4 member(s)" in captured.out
+    assert "3 member(s)" in captured.out
 
     # The share of the held-out sample assigned, the count of categories
     # with 5+ members, how many of those span 2+ sources, and the largest
-    # category's share.
-    assert "assignment rate on held-out sample: 100.0%" in captured.out
+    # category's share -- 3 of the 4 held-out values (the repeated
+    # mechanism), 1 the deliberately unrelated sentence scripted as "none".
+    assert "assignment rate on held-out sample: 75.0%" in captured.out
     assert "categories with 5+ members: 0" in captured.out
     assert "spanning 2+ sources: 0" in captured.out
-    assert "largest category share: 100.0%" in captured.out
+    assert "largest category share (of the held-out sample): 75.0%" in captured.out
 
     # The share of a subsample on which a second, different model agrees
-    # with the first about which category a value belongs to -- both the
-    # overall rate and the rate restricted to values the first model
-    # actually assigned (here every value in the subsample was assigned,
-    # so both read 100%).
+    # with the first about which category a value belongs to -- the overall
+    # rate counts the shared "none" as agreement (4 of 4); the restricted
+    # rate is over the 3 entries the first model actually placed.
     assert "two-model agreement overall (subsample of 4): 100.0%" in captured.out
     assert (
-        "two-model agreement where the first model assigned a category (n=4): 100.0%"
+        "two-model agreement where the first model assigned a category (n=3): 100.0%"
         in captured.out
     )
 

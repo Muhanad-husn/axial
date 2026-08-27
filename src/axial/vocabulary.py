@@ -125,6 +125,15 @@ MIN_CATEGORY_SIZE = 5
 # this approach returned 14 categories for a 400-value sample (3.5%), and a
 # scheme sized anywhere near half its own source sample cannot be naming
 # recurring KINDS -- it is naming the values back.
+#
+# As calibrated, this guard is INERT (PR #815 review, F6): at
+# `DEFAULT_PROPOSE_N` == 400, it fires only above 200 categories, and the
+# largest scheme any of the twelve columns actually produced on the real
+# corpus run was 36 (`mechanism`). It has never once seen the granularity
+# problem that run actually hit -- a scheme that came out too coarse, not
+# too fine. Kept as-is (the contract mandates the restatement flag, and the
+# constant is not wrong, just far from the failure mode in play); pinning
+# granularity is slice 02's problem, not this guard's.
 RESTATEMENT_RATIO = 0.5
 
 # Lifted verbatim from the probe that measured this approach against the
@@ -216,6 +225,19 @@ class ColumnVocabularyStats:
     the self-consistency check are never run against a scheme that failed
     to categorise, so no further spend is made on it.
 
+    `unanswered_count`/`refused_count` split what an older cut of this
+    module lumped together as "unassigned" (issue #815 review, F4):
+    `unanswered_count` is an index the merged assign-batch responses never
+    returned at all -- after `_assign_batch`'s own key validation (every
+    batch response must return exactly the indexes it was asked about, or
+    `VocabularyResponseError` re-asks it) this should always be `0` in a
+    completed run, and it is printed anyway so that fact is visible rather
+    than assumed. `refused_count` is an index the model DID return, with a
+    label of `"none"` or one naming no proposed category -- a real,
+    intentional non-placement, not a dropped response. Both are `None`
+    exactly when `assignment_rate` is `None` (proposal failed or no
+    held-out sample).
+
     Two agreement numbers, and neither substitutes for the other.
     `agreement_rate`/`agreement_sample_size` is the OVERALL rate over the
     whole check subsample: an entry where both models say "none" counts as
@@ -239,6 +261,8 @@ class ColumnVocabularyStats:
     proposal_failed: bool
     categories: list[CategoryReport]
     assignment_rate: float | None
+    unanswered_count: int | None
+    refused_count: int | None
     categories_5plus: int | None
     categories_5plus_cross_source: int | None
     largest_category_share: float | None
@@ -434,6 +458,30 @@ def _propose_categories(
     return parse_propose_response(raw)
 
 
+def _validate_assign_batch_keys(raw: str, expected_indexes: frozenset[int]) -> None:
+    """Raise `VocabularyResponseError` unless a parsed assign-batch response
+    returns keys that are exactly `expected_indexes` (issue #815 review,
+    F4). Two failure modes look identical downstream if this is skipped,
+    and both silently score as unassigned: a truncated completion that
+    loses its tail of assignments (these calls run 170-250s producing
+    ~10k completion tokens, squarely the truncation regime), and a model
+    that renumbers a later batch 1..N instead of continuing the global
+    numbering, which would overwrite the earlier batch's real assignments
+    through `dict.update` in `_assign_all`. Raising here, inside
+    `complete_json`'s own `validate` seam, gets the batch re-asked within
+    its bounded attempt budget instead of trusted as-is."""
+    got = set(parse_assign_response(raw))
+    if got != expected_indexes:
+        missing = sorted(expected_indexes - got)
+        extra = sorted(got - expected_indexes)
+        raise VocabularyResponseError(
+            f"assign batch returned {len(got)} key(s), expected exactly the "
+            f"{len(expected_indexes)} indexes {sorted(expected_indexes)} -- "
+            f"missing={missing}, extra={extra} (a truncated completion or a "
+            "renumbered batch)"
+        )
+
+
 def _assign_batch(
     client: LLMClient,
     pass_name: str,
@@ -443,7 +491,13 @@ def _assign_batch(
 ) -> dict[int, str]:
     numbered = "\n".join(f"{start + i + 1}. {entry.value}" for i, entry in enumerate(batch))
     prompt = ASSIGN_PROMPT.format(n=len(batch), categories=scheme_text, values=numbered)
-    raw = complete_json(client, prompt, pass_name=pass_name, validate=parse_assign_response)
+    expected_indexes = frozenset(range(start + 1, start + len(batch) + 1))
+    raw = complete_json(
+        client,
+        prompt,
+        pass_name=pass_name,
+        validate=lambda response: _validate_assign_batch_keys(response, expected_indexes),
+    )
     return parse_assign_response(raw)
 
 
@@ -485,6 +539,8 @@ def _empty_column_stats(
         proposal_failed=False,
         categories=[],
         assignment_rate=None,
+        unanswered_count=None,
+        refused_count=None,
         categories_5plus=None,
         categories_5plus_cross_source=None,
         largest_category_share=None,
@@ -542,6 +598,8 @@ def _examine_column(
 
     category_reports: list[CategoryReport] = []
     assignment_rate: float | None = None
+    unanswered_count: int | None = None
+    refused_count: int | None = None
     categories_5plus: int | None = None
     categories_5plus_cross: int | None = None
     largest_share: float | None = None
@@ -562,15 +620,23 @@ def _examine_column(
         category_names = {category["name"] for category in categories}
 
         members: dict[str, list[PopulationEntry]] = collections.defaultdict(list)
-        unassigned = 0
+        unanswered = 0
+        refused = 0
         for index, entry in enumerate(assign_sample, start=1):
-            label = assignments.get(index, "")
+            if index not in assignments:
+                # After `_assign_batch`'s own key validation this should
+                # never happen in a completed run -- see the docstring.
+                unanswered += 1
+                continue
+            label = assignments[index]
             if label not in category_names:
-                unassigned += 1
+                refused += 1
             else:
                 members[label].append(entry)
 
-        hit = len(assign_sample) - unassigned
+        unanswered_count = unanswered
+        refused_count = refused
+        hit = len(assign_sample) - unanswered - refused
         assignment_rate = hit / len(assign_sample)
         category_reports = [
             CategoryReport(
@@ -631,6 +697,8 @@ def _examine_column(
         proposal_failed=proposal_failed,
         categories=category_reports,
         assignment_rate=assignment_rate,
+        unanswered_count=unanswered_count,
+        refused_count=refused_count,
         categories_5plus=categories_5plus,
         categories_5plus_cross_source=categories_5plus_cross,
         largest_category_share=largest_share,
@@ -731,10 +799,17 @@ def format_vocabulary_report(stats: VocabularyExamineStats) -> str:
                     f"  assignment rate on held-out sample: {column.assignment_rate:.1%}"
                 )
                 lines.append(
+                    f"  unanswered (no returned entry): {column.unanswered_count}, "
+                    f'refused ("none"/out-of-scheme): {column.refused_count}'
+                )
+                lines.append(
                     f"  categories with {MIN_CATEGORY_SIZE}+ members: {column.categories_5plus} "
                     f"(of those, spanning 2+ sources: {column.categories_5plus_cross_source})"
                 )
-                lines.append(f"  largest category share: {column.largest_category_share:.1%}")
+                lines.append(
+                    "  largest category share (of the held-out sample): "
+                    f"{column.largest_category_share:.1%}"
+                )
             if column.agreement_rate is not None:
                 lines.append(
                     f"  two-model agreement overall (subsample of "
