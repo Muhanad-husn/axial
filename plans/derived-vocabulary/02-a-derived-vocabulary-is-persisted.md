@@ -28,7 +28,7 @@ re-running a clustering pass.
   yet, so nothing breaks if the artifact's shape changes later.
 - **Valuable:** the vocabulary becomes inspectable and reusable. On its own, an
   operator can open the artifact and read what the corpus's forty recurring
-  mechanisms actually are — which is the first time that has been possible.
+  mechanisms actually are, which is the first time that has been possible.
 - **Small:** one writer, one reader, one reuse check. The clustering is slice
   01's, unchanged.
 - **Testable:** the artifact is a file; the reuse rule is a pin comparison.
@@ -64,6 +64,7 @@ edits: src/axial/test_cli.py
 edits: src/axial/vocabulary.py
 edits: src/axial/test_vocabulary.py
 creates: src/axial/test_vocabulary_build.py
+creates: config/vocabulary.yaml
 depends-on: 01-the-sentence-columns-are-counted
 ```
 
@@ -72,15 +73,15 @@ depends-on: 01-the-sentence-columns-are-counted
 - [ ] A built vocabulary maps every population entry to a group id, keyed by
       the note's `chunk_id`, its column, and the element's index within a
       list-valued answer.
-- [ ] A group's label is the member sentence closest to the group's centroid,
-      chosen deterministically — the same input yields the same label every
-      time, with ties broken by a stated rule rather than by dict order.
+- [ ] A group's label is the group's **medoid**, the member with the smallest
+      mean cosine distance to the other members, chosen deterministically,
+      with ties broken by a stated rule rather than by dict order.
 - [ ] A group of one is persisted as a group of one, not dropped. What did not
       group is evidence about the column and must stay visible.
 - [ ] The artifact records, per column, the threshold used and the population
       size it was built from.
 - [ ] The pin is content-keyed over the rendered input, matching the
-      convention merge and Gather already use — a change to the answers
+      convention merge and Gather already use: a change to the answers
       re-clusters, a change to an unrelated part of the repo does not.
 - [ ] An unchanged pin reuses the persisted fit and calls the encoder zero
       times.
@@ -100,19 +101,29 @@ depends-on: 01-the-sentence-columns-are-counted
 - **Which columns are "cleared" is an input, not a guess.** Slice 01's run
   decides which columns have a vocabulary. Carry the cleared set and the
   per-column threshold as configuration written by a human after reading the
-  census — not as a rule inferred at runtime.
+  census, not as a rule inferred at runtime.
+- **Medoid, not centroid.** The clustering is average-linkage cosine, under
+  which the representative member is the one with the smallest mean distance to
+  the others, not the one nearest the mean vector. The recorded finding from
+  #677B is exactly that a centroid rule over a mean of unit vectors is not the
+  linkage criterion it claims. The label is display only, so the harm would be
+  cosmetic, but there is no reason to repeat the conflation.
+- **The cleared-column configuration needs a home.** The cleared set and the
+  per-column threshold come from a human reading slice 01's census. Put them in
+  a file this slice declares, not in a constant nobody can find; the Files
+  block names it.
 - **`data/vocabulary/` is gitignored like the rest of `data/`.** Build it in
   the main checkout.
 
 ## Out of scope for this slice (deferred)
 
 - Any retrieval tool reading the artifact. That is slice 03.
-- Asking a model to name a group. The label is the centroid member sentence,
+- Asking a model to name a group. The label is the medoid member sentence,
   chosen mechanically. A model-written label is a later question and a
   reproducibility risk this slice does not take on.
-- Incremental fit — placing a new source's answers into an existing grouping
+- Incremental fit: placing a new source's answers into an existing grouping
   without re-clustering. Worth having eventually, the same way `argmap` grew
-  it in #677; not needed to answer this feature's question.
+  it in #677, but not needed to answer this feature's question.
 - Merging groups across columns.
 - Rendering any of this into the vault.
 
@@ -131,6 +142,18 @@ depends-on: 01-the-sentence-columns-are-counted
       the reuse observation in the summary.
 - [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
 
+## Spec
+
+This slice introduces a new persisted artifact under `data/vocabulary/` with its
+own content-keyed pin, so it owes a spec section of its own rather than an
+extension of an existing one. Write it in the same branch, beside
+`specs/PHASE-B.md` §7.12, which owns the corpus-pin manifest this pin sits
+alongside. Slice 01 owes none — it may kill the feature, and writing the
+section first is polishing past the bar.
+
 ## Status / progress log
 
 - 2026-08-27 planned.
+- 2026-08-27 revised after review and independent verification: centroid
+  corrected to medoid, the cleared-column configuration given a declared home,
+  and the owed spec section named.
