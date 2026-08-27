@@ -179,6 +179,14 @@ from axial.validators.coverage import (
     validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
+from axial.vocabulary import (
+    DEFAULT_ASSIGN_N,
+    DEFAULT_PROPOSE_N,
+    VOCABULARY_COLUMNS,
+    SelfConsistencyError,
+    examine_vocabulary,
+    format_vocabulary_report,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -630,6 +638,62 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="as_json",
         help="machine-readable JSON array instead of the human-readable report",
+    )
+
+    vocabulary_parser = subparsers.add_parser(
+        "vocabulary",
+        help=(
+            "issue #805 (derived-vocabulary, slice 01): 'examine' is a "
+            "read-only categorisation pass over the twelve sentence-valued "
+            "answer columns -- whether they group by MEANING even though "
+            "they never repeat as strings, the go/no-go for the feature "
+            "(plans/derived-vocabulary/README.md)"
+        ),
+    )
+    vocabulary_subparsers = vocabulary_parser.add_subparsers(dest="vocabulary_command")
+    vocabulary_examine_parser = vocabulary_subparsers.add_parser(
+        "examine",
+        help=(
+            "read data/answers/ and, per column: report its answered/"
+            "distinct/excluded counts, have a model propose a category "
+            "scheme from a random sample, assign a disjoint held-out sample "
+            "against it in batches, and have a SECOND model re-assign a "
+            "subsample of the same held-out values for a self-consistency "
+            "check -- writes no pipeline artifact, only propose/assign/"
+            "check model calls"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--columns",
+        default=None,
+        help=(
+            "comma-separated column names to examine (default: all twelve, "
+            f"{','.join(VOCABULARY_COLUMNS)})"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--propose-n",
+        type=int,
+        default=None,
+        help=(
+            "how many values a random sample offers the model that proposes "
+            f"the category scheme (default: {DEFAULT_PROPOSE_N}, measured at "
+            "$0.026 for one column)"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--assign-n",
+        type=int,
+        default=None,
+        help=(
+            "how many further, disjoint values the held-out sample offers "
+            f"(default: {DEFAULT_ASSIGN_N})"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--answers-dir",
+        default=None,
+        help="override data/answers/ (default: resolved from config/pipeline.yaml)",
     )
 
     map_parser = subparsers.add_parser(
@@ -2861,6 +2925,29 @@ def _names_examine(min_cluster_sizes: str | None, min_samples: int | None) -> in
     return 0
 
 
+def _parse_vocabulary_columns(raw: str | None) -> list[str]:
+    if raw is None:
+        return list(VOCABULARY_COLUMNS)
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def _vocabulary_examine(
+    columns: str | None, propose_n: int | None, assign_n: int | None, answers_dir: str | None
+) -> int:
+    try:
+        stats = examine_vocabulary(
+            answers_dir=Path(answers_dir) if answers_dir is not None else None,
+            columns=_parse_vocabulary_columns(columns),
+            propose_n=propose_n if propose_n is not None else DEFAULT_PROPOSE_N,
+            assign_n=assign_n if assign_n is not None else DEFAULT_ASSIGN_N,
+        )
+    except SelfConsistencyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_vocabulary_report(stats))
+    return 0
+
+
 def _names_merge(
     min_cluster_size: int | None,
     min_samples: int | None,
@@ -3469,6 +3556,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "examine":
         return _names_examine(args.min_cluster_sizes, args.min_samples)
+
+    if args.command == "vocabulary" and args.vocabulary_command == "examine":
+        return _vocabulary_examine(
+            args.columns, args.propose_n, args.assign_n, args.answers_dir
+        )
 
     if args.command == "names" and args.names_command == "merge":
         return _names_merge(

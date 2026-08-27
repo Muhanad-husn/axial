@@ -1,0 +1,24 @@
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary examine --columns arguing_against --answers-dir data/answers
+
+arguing_against: 11950 answered value(s), 11742 distinct string(s), 347 excluded (abstention/[]/empty)
+  propose sample 400, assign (held-out) sample 400
+  10 category(ies) proposed:
+    - structural determinism: Claims that one factor (economy, war, technology, environment) mechanically causes a specific political or social outcome, leaving no room for contingency or agency. (31 member(s), 17 source(s))
+    - linear evolutionary models: Views that societies necessarily pass through fixed stages or that modern forms (state, nation, democracy) emerge in a predictable, unidirectional sequence. (19 member(s), 8 source(s))
+    - reduction of ideology to interest: Treating beliefs, religion, or nationalism as mere cover for material, geopolitical, or class interests, or as epiphenomenal. (30 member(s), 15 source(s))
+    - binary or dichotomous thinking: Posing a stark dualism—primitive/modern, coercion/consent, emotion/cognition, state/society—as exhaustive and exclusive. (31 member(s), 20 source(s))
+    - assumption of natural or primordial categories: Taking ethnic, national, or religious groups as given, timeless, internally unified, and automatically politically relevant. (30 member(s), 18 source(s))
+    - overgeneralization or universal theory: Imposing a single pattern (e.g., all wars build states, all revolutions follow one script, all Sufism is alike) across diverse cases. (35 member(s), 14 source(s))
+    - intentionalist or top-down agency: Attributing outcomes entirely to the will, calculation, or ideology of leaders, elites, or external powers, ignoring structural constraints or local dynamics. (27 member(s), 16 source(s))
+    - neglect of contingency and complexity: Explaining events through a single cause, ignoring multiple triggers, local variation, unintended consequences, or path dependence. (32 member(s), 15 source(s))
+    - harmony or automatic progress: Believing that independence, reform, or democratization naturally produce prosperity, fairness, or stability without struggle or cost. (32 member(s), 14 source(s))
+    - romanticizing or vilifying social actors: Portraying classes, movements, or nations as uniformly heroic, victimized, or evil, or attributing moral qualities to their actions. (20 member(s), 10 source(s))
+  assignment rate on held-out sample: 71.8%
+  categories with 5+ members: 10 (of those, spanning 2+ sources: 10)
+  largest category share: 8.8%
+  two-model agreement overall (subsample of 100): 64.0%
+  two-model agreement where the first model assigned a category (n=77): 61.0%
+  model: deepseek/deepseek-v4-flash (5 call(s), cost $0.0033); check model: openai/gpt-5.6-luna (1 call(s), cost $0.0019)
+
+$ echo $?
+0

@@ -408,3 +408,265 @@ def test_main_names_escalations_survives_non_utf8_stdout_json_and_text(tmp_path,
     exit_code, raw_bytes = run_with_cp1252_stdout([])
     assert exit_code == 0
     assert "an-Nizām" in raw_bytes.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# `axial vocabulary examine` (issue #805, derived-vocabulary slice 01):
+# read-only census over the twelve sentence-valued answer columns
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_recognises_vocabulary_examine_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "vocabulary",
+            "examine",
+            "--columns",
+            "mechanism",
+            "--propose-n",
+            "40",
+            "--assign-n",
+            "40",
+            "--answers-dir",
+            str(tmp_path / "answers"),
+        ]
+    )
+
+    assert args.command == "vocabulary"
+    assert args.vocabulary_command == "examine"
+    assert args.columns == "mechanism"
+    assert args.propose_n == 40
+    assert args.assign_n == 40
+    assert args.answers_dir == str(tmp_path / "answers")
+
+
+def _write_vocabulary_answers(answers_dir):
+    """A small `mechanism` population: five paraphrases of one recurring
+    mechanism, spread across three sources (so at least one group reaches a
+    second source), plus three one-off, unrelated sentences that must never
+    join any group."""
+    answers_dir.mkdir(parents=True, exist_ok=True)
+
+    repeated = [
+        "Extraction of rural surplus funds the central state's own army.",
+        "The state's army is funded by extracting surplus from the countryside.",
+        "Rural surplus, once extracted, pays for the central army.",
+        "Central military spending draws on surplus taken from rural producers.",
+        "The army is paid for out of surplus the state extracts from villages.",
+    ]
+    unrelated = [
+        "A shared script does not make two nationalisms the same movement.",
+        "Colonial borders were drawn without consulting the tribes they split.",
+        "Print capitalism let a reading public imagine itself as a nation.",
+    ]
+
+    _write_jsonl(
+        answers_dir / "alpha-2020.jsonl",
+        [
+            {"chunk_id": "alpha-2020_1", "source_id": "alpha-2020",
+             "answers": {"mechanism": repeated[0]}},
+            {"chunk_id": "alpha-2020_2", "source_id": "alpha-2020",
+             "answers": {"mechanism": repeated[1]}},
+            {"chunk_id": "alpha-2020_3", "source_id": "alpha-2020",
+             "answers": {"mechanism": unrelated[0]}},
+            # An abstention and the issue #810 literal-"[]" bug: both must
+            # be excluded from the population, not clustered.
+            {"chunk_id": "alpha-2020_4", "source_id": "alpha-2020",
+             "answers": {"mechanism": "not-in-passage"}},
+        ],
+    )
+    _write_jsonl(
+        answers_dir / "beta-2021.jsonl",
+        [
+            {"chunk_id": "beta-2021_1", "source_id": "beta-2021",
+             "answers": {"mechanism": repeated[2]}},
+            {"chunk_id": "beta-2021_2", "source_id": "beta-2021",
+             "answers": {"mechanism": repeated[3]}},
+            {"chunk_id": "beta-2021_3", "source_id": "beta-2021",
+             "answers": {"mechanism": unrelated[1]}},
+            {"chunk_id": "beta-2021_4", "source_id": "beta-2021",
+             "answers": {"mechanism": "[]"}},
+        ],
+    )
+    _write_jsonl(
+        answers_dir / "gamma-2022.jsonl",
+        [
+            {"chunk_id": "gamma-2022_1", "source_id": "gamma-2022",
+             "answers": {"mechanism": repeated[4]}},
+            {"chunk_id": "gamma-2022_2", "source_id": "gamma-2022",
+             "answers": {"mechanism": unrelated[2]}},
+        ],
+    )
+    return repeated, unrelated
+
+
+class _FakeVocabExamineClient:
+    """A minimal `LLMClient` for the CLI acceptance test: canned responses
+    queued per pass name, in the order the propose/assign/check calls are
+    expected to ask for them. Mirrors `axial.vocabulary.test_vocabulary.
+    _FakeVocabClient`, duplicated here (small, self-contained) rather than
+    imported across test modules -- no other test module in this repo
+    imports fixtures from another one."""
+
+    def __init__(self, responses_by_pass, models):
+        self._responses = {name: list(queue) for name, queue in responses_by_pass.items()}
+        self._models = models
+        self.prompts_by_pass = {}
+        self._calls = {}
+        self._cost = {}
+
+    def complete(self, prompt, pass_name=None):
+        self.prompts_by_pass.setdefault(pass_name, []).append(prompt)
+        self._calls[pass_name] = self._calls.get(pass_name, 0) + 1
+        self._cost[pass_name] = self._cost.get(pass_name, 0.0) + 0.001
+        queue = self._responses.get(pass_name)
+        if not queue:
+            raise AssertionError(f"_FakeVocabExamineClient: no response left for pass {pass_name!r}")
+        return queue.pop(0)
+
+    def model_for_pass(self, pass_name=None):
+        return self._models.get(pass_name, "fake/default")
+
+    def calls_for_pass(self, pass_name=None):
+        return self._calls.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name=None):
+        return self._cost.get(pass_name) if self._calls.get(pass_name, 0) else None
+
+
+def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_rate(
+    tmp_path, capsys, monkeypatch
+):
+    """The acceptance test (plan's gherkin, verbatim in intent): a store
+    with notes from more than one source, whose `mechanism` answers include
+    several paraphrases of the same mechanism and several unrelated ones,
+    and a model client that names categories when asked to propose and
+    assigns values when asked to assign. No test makes a model call -- the
+    client is injected by monkeypatching the same seam `axial.vocabulary.
+    examine_vocabulary`'s own `client=None` default resolves through
+    (`axial.vocabulary.get_client`)."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, unrelated = _write_vocabulary_answers(answers_dir)
+    # 8 answered values total (5 repeated + 3 unrelated); the abstention and
+    # the issue #810 "[]" literal are excluded from the population.
+
+    propose_response = json.dumps(
+        {
+            "categories": [
+                {
+                    "name": "Extraction funds central coercion",
+                    "gloss": "rural surplus, once extracted, pays for the state's own army",
+                }
+            ]
+        }
+    )
+    # F5 (PR #815 review): under seed 0, `draw_vocabulary_samples` puts
+    # indices 1, 2 and 4 of the held-out sample on a repeated-mechanism
+    # sentence and index 3 on one of the three deliberately unrelated ones
+    # (verified against `draw_vocabulary_samples` directly -- see the PR
+    # review). Scripting index 3 back as "none" makes the unrelated
+    # sentences do real work: the printed assignment rate and largest-
+    # category share come out at 75%, not the vacuous 100% every ratio
+    # showed before, and the "none" case still exercises the CLI's own
+    # rendering of a real refusal.
+    assign_response = json.dumps(
+        {
+            "assignments": [
+                {"n": 1, "category": "Extraction funds central coercion"},
+                {"n": 2, "category": "Extraction funds central coercion"},
+                {"n": 3, "category": "none"},
+                {"n": 4, "category": "Extraction funds central coercion"},
+            ]
+        }
+    )
+    check_response = json.dumps(
+        {
+            "assignments": [
+                {"n": 1, "category": "Extraction funds central coercion"},
+                {"n": 2, "category": "Extraction funds central coercion"},
+                {"n": 3, "category": "none"},
+                {"n": 4, "category": "Extraction funds central coercion"},
+            ]
+        }
+    )
+
+    client = _FakeVocabExamineClient(
+        responses_by_pass={
+            vocabulary_mod.EXAMINE_PASS_NAME: [propose_response, assign_response],
+            vocabulary_mod.CHECK_PASS_NAME: [check_response],
+        },
+        models={
+            vocabulary_mod.EXAMINE_PASS_NAME: "z-ai/glm-5.2",
+            vocabulary_mod.CHECK_PASS_NAME: "deepseek/deepseek-v4-pro",
+        },
+    )
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: client)
+
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+
+    exit_code = main(
+        [
+            "vocabulary",
+            "examine",
+            "--columns",
+            "mechanism",
+            "--propose-n",
+            "4",
+            "--assign-n",
+            "4",
+            "--answers-dir",
+            str(answers_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    # Names the column, its answered-value count, its distinct-string
+    # count, and how many values were excluded as abstentions.
+    assert "mechanism: 8 answered value(s)" in captured.out
+    assert "8 distinct string(s)" in captured.out
+    assert "2 excluded (abstention/[]/empty)" in captured.out
+
+    # Lists every category the model named, with its gloss, its member
+    # count and the number of distinct sources its members come from.
+    assert "Extraction funds central coercion" in captured.out
+    assert "rural surplus, once extracted, pays for the state's own army" in captured.out
+    assert "3 member(s)" in captured.out
+
+    # The share of the held-out sample assigned, the count of categories
+    # with 5+ members, how many of those span 2+ sources, and the largest
+    # category's share -- 3 of the 4 held-out values (the repeated
+    # mechanism), 1 the deliberately unrelated sentence scripted as "none".
+    assert "assignment rate on held-out sample: 75.0%" in captured.out
+    assert "categories with 5+ members: 0" in captured.out
+    assert "spanning 2+ sources: 0" in captured.out
+    assert "largest category share (of the held-out sample): 75.0%" in captured.out
+
+    # The share of a subsample on which a second, different model agrees
+    # with the first about which category a value belongs to -- the overall
+    # rate counts the shared "none" as agreement (4 of 4); the restricted
+    # rate is over the 3 entries the first model actually placed.
+    assert "two-model agreement overall (subsample of 4): 100.0%" in captured.out
+    assert (
+        "two-model agreement where the first model assigned a category (n=3): 100.0%"
+        in captured.out
+    )
+
+    # The model, the call count and the cost per column.
+    assert "z-ai/glm-5.2" in captured.out
+    assert "deepseek/deepseek-v4-pro" in captured.out
+    assert "2 call(s)" in captured.out  # examine: 1 propose + 1 assign batch
+    assert "1 call(s)" in captured.out  # check: 1 batch
+
+    # Writes nothing under the answer store or anywhere else in the tmp
+    # tree -- no pipeline artifact, not even a new empty directory.
+    after = sorted(str(p) for p in tmp_path.rglob("*"))
+    assert after == before
