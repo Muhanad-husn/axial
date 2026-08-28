@@ -1,11 +1,14 @@
 # Positions, not names
 
-**An architecture approach for Axial. Draft, 2026-08-28. Written to be argued
-with and edited, not to be implemented as it stands.**
+**An architecture approach for Axial. Drafted 2026-08-28, revised the same day
+after review (see
+[`approach-positions-not-names-review.md`](approach-positions-not-names-review.md)).
+This version is the buildable one: §13 is written to take a tdd-plan directly.**
 
 The map is right and stays. What was missing is a sense of what a passage is
 about, and the interrogation has been producing it all along. The map gets
-re-formed around it. The name pages go.
+re-formed around it. The name pages go — after the re-formed map is measured
+against the old one, not before.
 
 ---
 
@@ -44,10 +47,18 @@ predecessor.
 relations are the scholarship. It also measured better than the name layer on
 grounding, on fewer sources, which is the outcome that matters.
 
-**The map's manufacture is not.** See §5 for exactly how a position is formed
-today. The short version: the passages a model is allowed to read together are
-chosen by wording similarity, so the model is asked what recurs inside a group
-assembled on the wrong principle.
+**The map's manufacture is not — and this is now measured, not argued.** The
+passages a model is allowed to read together are chosen by wording similarity.
+Joining the current build's bag assignments against the mechanism categories
+(the one axis already assigned corpus-wide): only 13.9% of bags are pure on
+that axis, the median bag splits over three categories — and, the number that
+bites, **each mechanism category is scattered across a median of 92 bags**.
+Passages sharing a causal story are systematically never shown to the model
+together. That is why the same argument gets named out of many bags, why merge
+folds 2,206 raw positions to 1,937, and why the median position holds two
+passages. One caveat stands: mechanism is one axis, and the same cross-tab on
+the claim axis is unmeasured until the claim vocabulary is built — which is
+why it is the first slice of §13.
 
 ### The other defect is time
 
@@ -57,7 +68,10 @@ resolution tiers, the page index, and a tool loop that circles back many times.
 
 Measured over the same briefs at the same commit, a draw through the name layer
 ran roughly four times as long as the same draw through the map, and cost more
-than three times as much, with no advantage in grounding.
+than three times as much, with no advantage in grounding. To be exact about
+what that buys: the map arm is already the fast path today, without categories.
+What categories add to retrieval is an entry point and an address layer (§7),
+not the raw speed — that is already banked by entering through the map at all.
 
 ## 3. The substrate
 
@@ -68,7 +82,9 @@ what order, what does it name.
 That is what makes two passages comparable at all. Everything above reads it,
 and nothing above is worth keeping if it is disturbed.
 
-**The interrogation is the one layer this approach does not touch.**
+**The interrogation is the one layer this approach does not touch.** That
+sentence binds everything below it. In particular it settles *where* category
+assignment happens: not inside the interrogation prompt (§4).
 
 ## 4. Categorisation is curation, not research
 
@@ -80,38 +96,42 @@ simplification is largest.
 `config/domains/syria/codebook.yaml` holds **67 hand-written categories across
 five axes** — field, claim type, empirical scope, theory school, role in
 argument. Each carries a definition, a positive example, and a negative example
-naming which category it belongs to instead. Bellicist, neo-bellicist, external
-statebuilding, materialist.
+naming which category it belongs to instead. That is a codebook in the ordinary
+social-science sense: committed by a person, applied by a model.
 
-That is a codebook in the ordinary social-science sense. Data scientists have
-built these for decades. It is committed by a person, applied by the model
-**while it reads a passage**, and it has been in the repository the whole time.
-
-### What was built instead
-
-The derived-vocabulary work rebuilt the same idea from scratch for the twelve
-free-text answer columns: a separate pass proposes a category list from a
-sample, a person commits it, a second pass assigns the whole column, and the
-result is persisted as its own artifact.
-
-Two mechanisms for one job. And around the second one, a measurement apparatus —
-disjoint held-out samples, a second model cross-checking the first, a refusal if
-the two tiers resolve to the same model. That is instrumentation, not
-categorisation.
+`config/vocabulary.yaml` holds the first committed derived scheme — twenty
+mechanism categories, read and approved by a person — and
+`data/vocabulary/mechanism/` holds the corpus filed against them. That is the
+same idea, built the long way round.
 
 ### The simplification
 
-**Put the axes you want in the codebook, and have the interrogation assign them
-at read time.** One pass. No derive step, no assign step, no separate artifact.
+**One mechanism: a scheme is drafted from a sample, edited and committed by a
+person into configuration, and assigned by a cheap model pass over the answer
+column the interrogation already produced.** That is `vocabulary examine`
+(drafting), a founder edit, and `vocabulary build` (assigning) — all of which
+exist. What goes is everything else: the measurement apparatus inside examine
+(held-out scoring, the two-model cross-check), and the idea of a derived
+vocabulary as its own evolving artifact rather than committed configuration.
 
-A category list is a list of names with a definition and two examples each. It
-is written by a person who knows the field. A model can draft it from a sample
-in an afternoon, and that draft is a starting point for the person, not an
-output.
+**Assignment happens after reading, not during.** An earlier draft of this
+document proposed folding assignment into the interrogation at read time. That
+is rejected, for three reasons. It contradicts §3 — a changed prompt and output
+schema is the substrate disturbed. Every measured assignment rate came from the
+post-hoc path — categorising an answer already written — so read-time
+assignment is the unmeasured variant. And read-time closed-vocabulary tagging
+is precisely the v0.1 mechanism the spec retired (D4/D9): this repository has
+already watched tags-as-index die once. What is different this time, and the
+only reason to try again: the categories are derived from the corpus's own
+answers after reading, not imposed on the reading, and their job is grouping
+material for a model's judgment, never serving as retrieval bins directly.
+Assigning at read time would give back half of that difference.
 
-**The one honest cost:** notes already interrogated were never asked about the
-new axes, so each added axis needs a one-question re-ask over the corpus. The
-repository has already done exactly this once, for a question added late.
+The corollary is free: the existing corpus needs no re-ask for any axis whose
+question was already asked. Adding an axis over an existing answer column is
+one `vocabulary build` pass. Only a genuinely new question — an axis with no
+column — needs the one-question re-ask, and `position_backfill` is the
+precedent for that.
 
 ### Not all axes are equal
 
@@ -124,6 +144,12 @@ evidence it rests on, what it concedes.
 Only the constitutive axes should decide how passages are grouped. The
 descriptive ones narrow and address. Keeping that line is what stops the
 grouping from fragmenting.
+
+The constitutive candidates already measured categorisable: `claim` (10
+categories, 99.5% assigned, agreement 77%), `position` (15), `mechanism` (20).
+`arguing_against` passes the categorisation bar but with only 68.2% assigned
+and agreement inside its own noise — it may address, but it must not gate a
+grouping.
 
 ## 5. How a position is formed today
 
@@ -144,33 +170,68 @@ Four steps, run by `axial map build`.
    near-duplicate namings are folded by sentence similarity. 2,206 → **1,937
    positions**.
 
-### The correction this makes to an earlier reading
-
 Distance does **not** decide what a position is. The model already decides —
 step 3 is exactly the judgment call, with reasoning on, and it is already
-proven.
-
-What distance decides is **which passages the model is allowed to read
-together**. That is the defect. A bag is nine passages that *sound alike*, and
-inside a group assembled by wording there is often nothing that recurs beyond
-the wording. Hence 660 bags yielding 2,206 arguments, and a median position of
-two passages.
+proven. What distance decides is **which passages the model is allowed to read
+together**. That is the defect, and §2's cross-tab is its measurement.
 
 ## 6. The change
 
-**Swap the bagging criterion from wording similarity to shared categories.**
+**Swap the grouping criterion from wording similarity to shared categories —
+and redesign the extraction mechanics to survive the group sizes that swap
+produces.** An earlier draft said only step 2 moves and steps 3 and 4 stay
+exactly as they are. That was wrong, and here is why.
 
-Steps 1, 3 and 4 stay exactly as they are. Step 2 is the only thing that moves.
+Today's bags average nine passages, so nearly every bag fits one extraction
+slice and "what recurs here" is judged over the whole bag in a single call.
+Ten claim categories over six thousand passages is a mean bag of roughly six
+hundred and a largest bag over a thousand — dozens of slices. An argument
+recurring across slices would never be seen in one call, and the only thing
+reuniting its per-slice namings would be step 4's merge, which folds
+near-duplicate wordings. Wording similarity would not have been removed from
+the grouping principle; it would have moved from step 2 to step 4 and become
+*more* load-bearing. That failure mode is disqualifying, so the design must
+close it explicitly:
 
-The bag step embeds the `claim` field, so `claim` is the column whose categories
-decide whether this works at all — same field, grouping criterion swapped. It is
-the first axis to get right.
+**Grouping is two-level.** The constitutive category — `claim`'s scheme first —
+is the outer level. Inside a category, a cheap inner split brings groups down
+to readable size. Two candidate inner splits, to be decided by measurement in
+§13, not by taste here:
 
-A group is then passages that answer the same question the same way, which is a
-group where "what recurs here" is a real question with a real answer.
+- **A second constitutive axis.** `claim` × `mechanism` yields cells that fit
+  one or two slices. Cost: coverage multiplies down (two refusal rates
+  compound) and misassignment multiplies too.
+- **Wording similarity, demoted to sizing.** Embedding clustering *inside* a
+  category is harmless in a way it is not corpus-wide: every passage in the
+  cell already shares a stake, so the inner split only decides reading order
+  and batch boundaries, not who may ever meet whom — provided the level above
+  it gets a consolidation pass.
+
+**Extraction is two-pass wherever a category spans multiple groups.** The
+first pass is today's step 3, unchanged, per group. The second pass reads the
+first pass's arguments *within one category* and asks what recurs among them —
+the same judgment, one level up, replacing the embedding merge as the primary
+reunifier inside a category. Step 4's embedding merge survives only for its
+original job: folding near-duplicate namings across categories.
 
 This is a re-forming of the map, not a patch on it. Patching would leave nodes
 made on the wrong principle and merely merge some of them back together.
+
+### The noise policy
+
+Category assignment carries model disagreement — roughly one claim assignment
+in four is disputed between two models. Under embedding bagging a borderline
+passage lands near its neighbours; under category grouping a misassigned
+passage sits in the wrong bag with no path back, because merge reunites
+namings, never passages. The policy, stated rather than silent: **a passage is
+assigned to exactly one category per axis, the error rate is accepted, and it
+is quoted next to every comparison the re-formed map is judged by.** Dual
+membership is rejected — #822 measured what duplicate membership costs at
+assembly, and an assignment pass that hedges is a scheme that no longer
+partitions. If the measured loss from misassignment turns out to dominate the
+structural gains (§13 slice 5 would show it), a one-shot adjudication pass over
+borderline assignments is the fallback, and it is a new decision, not part of
+this design.
 
 ### What a position carries afterwards
 
@@ -182,8 +243,11 @@ The profile does two things:
 
 **It decides where to spend the model on relations.** The space of possible
 position pairs is far too large to ask about exhaustively, which is exactly why
-relations today are thin and partly incidental. Profiles rank the pairs: same
-region, opposed stance, different books is where a real disagreement is likely.
+relations today are thin and partly incidental — only 492 of 1,328 asserted
+relations cross authors, and the neighbourhoods they were asked in were built
+by argument-sentence similarity, the same wording trap as the bagging.
+Profiles rank the pairs: same region, opposed stance, different books is where
+a real disagreement is likely. The model still decides every relation (§10).
 
 **It gives the map an address.** A question lands on a region of the debate
 before it lands on any single position. The map gains a coarse layer it has
@@ -197,16 +261,18 @@ A question does not land on one axis. It lands on several at once.
 stance axis too. The intersection of two or three axes is small **before any
 model call happens**. Syria is applied at the end, to narrow what came back.
 
-### Why this is faster, structurally
-
 Today a query enters through the name, which is the **least** discriminating
 thing in the corpus — Syria appears in nearly every book — so everything after
 that is work spent narrowing. Reversed, the query enters through the most
-discriminating thing and narrows with the least.
+discriminating thing and narrows with the least. The walk becomes: question →
+region → positions → relations → passages. Bounded, few calls, no tool loop,
+and no round trips spent discovering that a name reached nothing.
 
-Same information, opposite order, far fewer steps. The walk becomes: question →
-region → positions → relations → passages. Bounded, few calls, no tool loop, and
-no round trips spent discovering that a name reached nothing.
+Honest accounting: the raw speed advantage over the name layer is already
+banked by the map arm as it exists. What this section adds is the *entry
+point* — a question addressed to the debate's structure instead of resolved
+through a name — and the removal of the machinery that made the name entrance
+necessary.
 
 ## 8. Names are demoted, not deleted
 
@@ -227,64 +293,76 @@ A name becomes a **filter over results**, never a join that forms them. It
 answers "where is this discussed" and never "what is being argued". The cherry,
 not the cake.
 
-## 9. What this lets go
+## 9. What this lets go, and when
 
 - The name pages as a structure, and the machinery that manufactures them.
 - The pass that reads across name pages looking for disagreement.
 - The tool-driven retrieval loop built to walk that structure.
 - The residue pass. It exists to rescue what the old clustering left out; once
-  categories decide what is comparable, there is no leftover of that kind.
+  categories decide what is comparable, there is no leftover of that kind —
+  and measured, the category path loses *fewer* passages than the bagging does
+  (a half-percent refusal on `claim` against several hundred passages the
+  current build places nowhere or leaves unassigned).
 - Embedding-based bagging as the thing that decides what gets read together.
-- The separate derive-and-assign vocabulary passes, folded into the codebook and
-  the interrogation.
-- The evaluation apparatus, which is a large share of the codebase and could not
-  tell three retrieval methods apart when it was finally asked to.
+  It survives only demoted, as an inner sizing split (§6), if measurement
+  picks that variant.
+- The separate derive-and-assign machinery's measurement apparatus. The
+  drafting tool and the assign pass stay (§4); the instrumentation goes.
+- The evaluation apparatus — **last, not first.** It could not tell three
+  retrieval methods apart when finally asked, which is exactly why the
+  re-formed map is validated structurally (§13) before any judged gate is
+  trusted again. Demolition of the eval code happens after the comparison has
+  been run with it available, not before.
 
-This is subtraction from a working system, not a rebuild. The substrate —
-extraction, chunking, interrogation — is sound, expensive to reproduce, and
-untouched.
+**Ordering rule for all of it: nothing on this list is deleted until the
+re-formed map has been built and compared against the current one.** The
+demolition comes after the comparison. This is subtraction from a working
+system, not a rebuild. The substrate — extraction, chunking, interrogation —
+is sound, expensive to reproduce, and untouched.
 
-## 10. Three conditions
+## 10. Four conditions
 
 **The category list is committed once and pinned.** The same prompt on the same
-model produced lists of different sizes on different runs — `position` five
-categories then fifteen, `stops_holding` seven then twenty, `mechanism`
-thirty-six then twenty. A category system that reshuffles between runs is not an
-index. It is committed configuration, versioned, changed deliberately or not at
-all.
+model produced lists of different sizes on different runs. A category system
+that reshuffles between runs is not an index. It is committed configuration,
+versioned, changed deliberately or not at all. (`config/vocabulary.yaml`
+already has this shape.)
 
 **A shared category is not a relation.** This is exactly where the last
 implementation went wrong: it treated a shared category as a connection between
 passages, which reproduces the name layer's mistake with better labels. Sharing
-a category says only that two things sit in the same region. That is a reason to
-ask whether they relate. It is never the answer.
+a category says only that two things sit in the same region. That is a reason
+to ask whether they relate. It is never the answer.
 
-**The model decides every relation.** Nothing mechanical may assert an argument.
-Categories select, rank and propose; a model reads two positions and says how
-they stand, or says they do not. The scholarship is in that judgment and cannot
-be produced by a join.
+**The model decides every relation.** Nothing mechanical may assert an
+argument. Categories select, rank and propose; a model reads two positions and
+says how they stand, or says they do not. The scholarship is in that judgment
+and cannot be produced by a join.
+
+**One passage, one category per axis.** The noise policy of §6: no dual
+membership, no hedged assignment, the error rate quoted rather than hidden.
 
 ## 11. What this does not settle
 
-**Which axes earn a place.** Not every question categorises usefully. Some
-produce one undifferentiated blob; some are refused too often to be an axis at
-all. The axes are the ones that survive that test, not the full list of
+**Which axes earn a place.** Not every question categorises usefully. The test
+already exists and is not to be reinvented: the five conditions of the
+categorisation run (coverage floor, blob condition, five-plus members crossing
+books, agreement floor) are the entrance exam, and seven of twelve columns
+pass it today. The axes are the survivors of that test, not the full list of
 questions.
 
 **How fine an axis should be.** Too coarse and every position sits in the same
-region, so the axis discriminates nothing. Too fine and it fragments the way the
-bagging already does. This is a judgment per axis and it needs a stated test for
-when a list is right.
-
-**What happens to passages that sit nowhere.** A passage with no category on any
-constitutive axis cannot be placed. Whether it stays reachable, and how, is
-unresolved. It is the residue problem returning under a new name, and it should
-be answered rather than assumed away.
+region; too fine and it fragments the way the bagging already does. Granularity
+was the dominant source of variance between runs of the same prompt. The
+committed scheme freezes one answer per axis; whether it is the *right* answer
+is judged by the same five conditions plus the structural comparison of §13,
+and refined by editing configuration, never by re-deriving.
 
 **Whether the codebook's existing five axes and the new ones are one system or
-two.** The codebook's axes are applied at read time and are tag-shaped. The new
-ones would be too, under this approach — which suggests one system, but the
-existing five were designed for a different job and may not carry this one.
+two.** Both are person-committed schemes a model applies. But the codebook's
+five were designed as reading context, and the new ones as grouping criteria —
+different jobs. Unify them only if a real need appears; nothing in §13 requires
+it.
 
 ## 12. What happens to the work already done
 
@@ -292,45 +370,102 @@ Five slices shipped between #805 and #809. One was the wrong idea; four hold.
 
 **Deleted — the category join (#807, PRs #821 and #823).**
 `axial.argmap.vocabulary_join` makes two passages meet because they share a
-category. That is the condition in §10 violated directly: a shared category is
-not a relation. It reproduces the name layer's mistake with better labels. The
+category. That violates §10 directly: a shared category is not a relation. The
 join goes, and the `map+vocab` arm goes with it. Tracked in
 [#825](https://github.com/Muhanad-husn/axial/issues/825).
 
 **Kept, and it is the valuable part — the mechanism category list (#806).**
 Twenty categories in `config/vocabulary.yaml`, read and approved by a person,
-and 5,315 passages already filed against them under `data/vocabulary/`. That is
-the curation work of §4, and it is exactly what a re-bagged map must be tested
-against.
+and the corpus already filed against them under `data/vocabulary/`. That is
+the curation work of §4, it is one of the two candidate inner axes of §6, and
+it is what §2's cross-tab was measured against.
 
 **Kept, demoted to a drafting tool — `vocabulary examine` (#805).** Somebody
-still has to draft a category list from a sample before a person edits it. That
-is all this does. The held-out scoring and the two-model cross-check inside it
-are measurement, not drafting, and can go.
+still has to draft a category list from a sample before a person edits it.
+That is all this does. The held-out scoring and the two-model cross-check
+inside it are measurement, not drafting, and can go.
 
-**Kept, probably as the backfill — `vocabulary build` (#806).** Adding an axis
-to an already-interrogated corpus means assigning existing notes against a list
-without re-reading every passage. That is this pass, and it is the same job
-`position_backfill` already does for a late-added question.
+**Kept, now load-bearing — `vocabulary build` (#806).** Under §4 this pass is
+*the* assignment mechanism, not a backfill afterthought: every axis, existing
+corpus and future books alike, is assigned by it over the answer column, after
+reading.
 
 **Kept, unrelated to any of it — the sweep's arm recording (#808) and
 `eval layers` (#809).** Which arm ran, at which commit, with how many distinct
-sources cited, and a table comparing arms. None of it is tied to the
-vocabulary, and any future comparison needs both.
+sources cited, and a table comparing arms. Any future comparison needs both.
 
 ### One thing to record before it is misquoted
 
-The three-arm comparison came back null: the grounding gate read a perfect score
-on thirteen of fifteen cells, and every source-count difference between `map`
-and `map+vocab` sat inside its own draw spread.
+The three-arm comparison came back null: the grounding gate read a perfect
+score on thirteen of fifteen cells, and every source-count difference between
+`map` and `map+vocab` sat inside its own draw spread.
 
 **That was a measurement of the join.** It says nothing about categories as a
-bagging criterion, which is the use this document proposes and which was never
+grouping criterion, which is the use this document proposes and which was never
 measured. Nobody should later cite the null as evidence against this approach.
-It tested a mechanism now agreed to be the wrong one.
+It tested a mechanism now agreed to be the wrong one. The same saturation also
+cuts the other way: that gate cannot *validate* this approach either, which is
+why §13 measures structure first.
+
+## 13. The work, in order
+
+Each step is cheap, each can kill the plan early, and nothing in the name
+layer is touched until the last. This is the section a tdd-plan starts from.
+
+**Slice 1 — the claim vocabulary is committed and assigned.** Run the drafting
+pass over the `claim` column, founder edits, the scheme is committed to
+`config/vocabulary.yaml`, `vocabulary build` files the corpus against it.
+Done when: `data/vocabulary/claim/` exists with its manifest, coverage and
+refusals reported, scheme version pinned.
+
+**Slice 2 — the diagnosis is confirmed or weakened on the claim axis.** Re-run
+§2's cross-tab: current bags against claim categories. Free, offline, no model
+calls. Done when: purity and scatter numbers for the claim axis sit in a run
+log next to the mechanism ones. If wording bags turn out pure on the claim
+axis, stop and rethink — the central diagnosis just weakened.
+
+**Slice 3 — the inner split is chosen by measurement.** Build both §6
+candidates offline over the claim cells — the `claim` × `mechanism`
+intersection, and per-category embedding sub-clustering — and compare group
+sizes, coverage lost to compounded refusals, and slice counts. No extraction
+calls yet. Done when: one inner split is chosen in writing, with the two
+tables beside the choice.
+
+**Slice 4 — the map is re-formed once.** `map build` variant: category
+grouping (outer axis + chosen inner split), per-group extraction unchanged,
+the new second consolidation pass per category, embedding merge retained
+across categories only. Run against the same corpus pin as the current build.
+Done when: a complete `positions.jsonl` exists under a variant directory,
+with the current build untouched beside it.
+
+**Slice 5 — the structural comparison decides.** No judged gate, structure
+only, both maps side by side: median and distribution of position size,
+cross-book position rate, how many positions the consolidation pass reunited,
+share of single-passage positions, and where misassigned passages landed
+(sampled by hand). Done when: a run log states the comparison and a verdict —
+denser and more cross-book, or not. This is the founder's go/no-go on
+everything after it.
+
+**Slice 6 — profiles and profile-ranked relations.** Positions inherit their
+passages' category values; relation neighbourhoods are proposed from profile
+rank (same region, opposed stance, different books) instead of
+argument-sentence similarity; the relate pass itself is unchanged. Done when:
+a relations build over the re-formed map reports its cross-author rate next
+to the current build's.
+
+**Slice 7 — retrieval enters through the map's address layer.** Question →
+region (axis intersection) → positions → relations → passages, names applied
+as a terminal filter. Done when: the sweep runs this arm end to end and
+records it like any other arm.
+
+**Slice 8 — demolition.** Only now, and only for what slices 5–7 made
+redundant: name pages, gather, the name-walking retrieval loop, the residue
+pass, the vocabulary measurement apparatus, and — last of all — the parts of
+the evaluation code nothing remaining reads. Each deletion cites the slice
+that made it safe.
 
 ---
 
-*Written after the session of 2026-08-28. Everything above is architecture and
-logic. Nothing here is an implementation plan, and the numbers quoted are
-measurements already taken, not projections.*
+*Revised after review, 2026-08-28. Everything above is architecture and logic;
+§13 is the build order. The numbers quoted are measurements already taken —
+including this revision's own cross-tab — not projections.*
