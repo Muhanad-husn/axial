@@ -618,3 +618,153 @@ def test_parse_named_pair_rejects_a_malformed_value():
         parse_named_pair("a,b,c")
     with pytest.raises(InvalidNamedPairError):
         parse_named_pair("a,")
+
+
+# ---------------------------------------------------------------------------
+# Issue #827 fix round, 2026-08-29: ranking pairs by raw count ranks them by
+# category PREVALENCE. `lift` (observed / expected under independence, over
+# presence among the multi-category bags specifically) is what separates
+# "these two categories are both common" from "these two categories actually
+# co-occur more than their own prevalence predicts."
+# ---------------------------------------------------------------------------
+
+
+def test_lift_flags_a_small_elevated_pair_and_clears_a_large_pair_at_chance(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+
+    # 12 multi-category bags. `big` sits in every one of them (a large,
+    # common category); `small` sits in exactly 3, always alongside `big`
+    # and nothing else -- their co-occurrence (3) matches what independence
+    # predicts EXACTLY (presence(big)=12, presence(small)=3, N=12 ->
+    # expected = 12*3/12 = 3), so lift is ~1.0. `catx`/`caty` are each as
+    # rare as `small` (presence 3) but co-occur together in all 3 of their
+    # bags -- far above the 0.75 independence predicts (lift = 4.0).
+    bag_state = {}
+    assignments = []
+    bag_label = 0
+    chunk_n = 0
+
+    def _next_chunk():
+        nonlocal chunk_n
+        chunk_n += 1
+        return f"c{chunk_n}"
+
+    # 6 bags: big + a unique filler category each.
+    for i in range(6):
+        bag_label += 1
+        big_chunk, filler_chunk = _next_chunk(), _next_chunk()
+        bag_state[big_chunk] = bag_label
+        bag_state[filler_chunk] = bag_label
+        assignments.append(_assignment(big_chunk, "big"))
+        assignments.append(_assignment(filler_chunk, f"filler{i}"))
+
+    # 3 bags: big + small.
+    for _ in range(3):
+        bag_label += 1
+        big_chunk, small_chunk = _next_chunk(), _next_chunk()
+        bag_state[big_chunk] = bag_label
+        bag_state[small_chunk] = bag_label
+        assignments.append(_assignment(big_chunk, "big"))
+        assignments.append(_assignment(small_chunk, "small"))
+
+    # 3 bags: big + catx + caty.
+    for _ in range(3):
+        bag_label += 1
+        big_chunk, x_chunk, y_chunk = _next_chunk(), _next_chunk(), _next_chunk()
+        bag_state[big_chunk] = bag_label
+        bag_state[x_chunk] = bag_label
+        bag_state[y_chunk] = bag_label
+        assignments.append(_assignment(big_chunk, "big"))
+        assignments.append(_assignment(x_chunk, "catx"))
+        assignments.append(_assignment(y_chunk, "caty"))
+
+    _write_bag_state(outdir, bag_state)
+    categories = [_category("big"), _category("small"), _category("catx"), _category("caty")]
+    categories += [_category(f"filler{i}") for i in range(6)]
+    vocabulary_dir = _write_vocabulary(tmp_path / "vocab", "claim", assignments, categories=categories)
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+
+    assert report.pairs.multi_category_bag_count == 12
+
+    by_key = {(p.category_a, p.category_b): p for p in report.pairs.pairs}
+    big_small = by_key[("big", "small")]
+    catx_caty = by_key[("catx", "caty")]
+
+    assert big_small.bag_count == 3
+    assert big_small.expected == pytest.approx(3.0)
+    assert big_small.lift == pytest.approx(1.0)
+
+    assert catx_caty.bag_count == 3
+    assert catx_caty.expected == pytest.approx(0.75)
+    assert catx_caty.lift == pytest.approx(4.0)
+
+    # The elevated small pair tops the lift ranking; the large/small pair
+    # sitting at chance does not, even though its raw count (3) ties catx-
+    # caty's raw count exactly.
+    assert report.pairs.pairs_by_lift[0].category_a == "catx"
+    assert report.pairs.pairs_by_lift[0].category_b == "caty"
+    lift_rank_by_key = {
+        (p.category_a, p.category_b): i for i, p in enumerate(report.pairs.pairs_by_lift, start=1)
+    }
+    assert lift_rank_by_key[("big", "small")] > 1
+
+
+def test_format_purity_report_prints_lift_and_a_separate_by_lift_ranking(tmp_path: Path):
+    from axial.argmap.purity import format_purity_report
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0, "n2": 0, "n3": 1, "n4": 1})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "claim",
+        [
+            _assignment("n1", "cat-a"),
+            _assignment("n2", "cat-b"),
+            _assignment("n3", "cat-a"),
+            _assignment("n4", "cat-b"),
+        ],
+        categories=[_category("cat-a"), _category("cat-b")],
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+    text = format_purity_report(report)
+
+    assert "expected 2.00, lift 1.00x" in text
+    assert "CATEGORY PAIR CO-OCCURRENCE BY LIFT" in text
+    assert "multi-category bags specifically" in text
+
+
+def test_named_pair_report_carries_its_own_lift_and_lift_rank(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0, "n2": 0, "n3": 1, "n4": 1})
+    id_a, id_b = NAMED_PAIRS[0]
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "claim",
+        [
+            _assignment("n1", id_a),
+            _assignment("n2", id_b),
+            _assignment("n3", id_a),
+            _assignment("n4", id_b),
+        ],
+        categories=[_category(id_a), _category(id_b)],
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+    named = report.pairs.named_pairs[0]
+
+    assert named.expected == pytest.approx(2.0)
+    assert named.lift == pytest.approx(1.0)

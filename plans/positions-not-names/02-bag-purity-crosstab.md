@@ -126,3 +126,19 @@ depends-on: 01-claim-vocabulary-committed
   and is retracted -- per categorised member, claim's own scatter is ~20-25%
   LOWER than mechanism's. Verdict unchanged: NOT killed, confirmed proceed.
   Fast tier: 2,548 passed, 1 skipped; ruff clean.
+- 2026-08-29 second fix round, PR #836 (founder finding, self-checked before
+  dispatch): the pair table's raw-count ranking ranks pairs by category
+  PREVALENCE -- the same confound reviewer F3 caught on the scatter
+  comparison, found again in the pair table by neither review lane. Added
+  `expected`/`lift` per pair (against independence over presence among the
+  multi-category bags specifically, stated in the report the way the
+  scatter header states its own base) and a second `pairs_by_lift` ranking,
+  both in `CategoryPair`/`PairCooccurrence` and the CLI report; named pairs
+  now carry their own lift and lift-rank too. On the live `claim` run, both
+  #826 pairs land at lift ~1.0 (1.03x, 1.02x), raw ranks 5/3 but lift ranks
+  24/25 of 36 -- in the middle of the spread, not near the top. **This
+  retracts the earlier "worth a precedence sentence" reading in this log's
+  own first entry and in `data/logs/2026-08-28-claim-bag-purity/summary.md`
+  (now corrected there in full)** -- the raw numbers were never wrong, only
+  that inference from them. 3 new unit tests. Fast tier: 2,551 passed,
+  1 skipped; ruff clean.

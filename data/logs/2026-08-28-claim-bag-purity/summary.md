@@ -16,6 +16,16 @@ from purity's `eligible_bag_count`) and a coverage count for chunks carrying
 F3 (see "Reading the scatter numbers across two different category counts").
 The verdict is unchanged.
 
+**Updated 2026-08-29, second fix round.** The pair table's raw-count ranking
+ranks pairs by category PREVALENCE, the same confound F3 caught on the
+scatter comparison -- it sat in the pair table too and neither review lane
+caught it there. The command now also prints `expected`/`lift` per pair and
+a second ranking by lift; the "what the pair table says about the two #826
+pairs" section below is corrected accordingly, and the earlier reading (a
+precedence sentence is worth costing out) is retracted -- see that section
+for why. Every raw count already in this log is unchanged and still correct;
+only the inference drawn from the pair table's raw ranking was wrong.
+
 ```
 uv run axial map purity --column claim --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
 uv run axial map purity --column mechanism --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
@@ -103,29 +113,60 @@ does, not more. Either reading keeps the same verdict: above chance, far
 below pure, and nowhere near the kill condition's "the bags already respect
 this axis."
 
-## What the pair table says about the two #826 pairs (raw counts)
+## What the pair table says about the two #826 pairs -- RETRACTED reading, corrected
 
-Issue #827's added clause: the ranked category-pair table, and the two pairs
-#826's verification flagged as ambiguous glosses, reported by name whether
-or not they rank. On `claim` (397 multi-category bags, 36 possible pairs,
-all 36 observed at least once):
+**The earlier version of this section was wrong and is retracted.** It
+reported the two #826 pairs at raw ranks 3 and 5 of 36 and read that as
+evidence a precedence sentence between the flagged glosses was worth
+costing out before slice 04. That reading rests on the raw-count ranking
+alone, and raw count ranks pairs by category PREVALENCE -- the same
+confound reviewer F3 caught on the scatter comparison two sections up. It
+sat in the pair table too, and neither review lane caught it there before
+this correction. Nothing measured was wrong; only the inference drawn from
+it was.
 
-| pair | bags | share of multi-category bags | rank of 36 |
-|---|---|---|---|
-| causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict | 112 | 28.2% | 5th |
-| characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim | 137 | 34.5% | 3rd |
+**The lift-corrected result.** For each pair, `expected` is what
+independence predicts over presence among the 397 `claim` multi-category
+bags specifically (`expected(A,B) = presence(A) x presence(B) / 397`,
+`presence(X)` = how many of those 397 bags hold category X at all -- not
+`claim`'s full 480 eligible or 650 scattered-bag populations, since a pair
+can only co-occur where both categories could co-occur in the first place),
+and `lift = observed / expected`:
 
-Both sit in the top quintile of 36 pairs, well above the median rank (18.5)
--- not "inside the spread of every other pair." Per the issue's own reading
-guide: this is evidence the two flagged glosses are splitting arguments that
-belong together, and a precedence sentence is worth costing out before
-slice 04 forms anything from these categories. That is a finding to hand to
-the founder, not a decision made here -- #827 measures, the glosses are the
-founder's call (issue comment's own scope note), and no scheme edit is made
-on this branch. (The fix round adds a `--named-pair` override so this check
-is not hardwired to these two claim-scheme ids for a future run against a
-different scheme; the default stays these two so the guarantee holds on a
-bare run.)
+| pair | bags | expected | lift | raw rank of 36 | lift rank of 36 |
+|---|---|---|---|---|---|
+| causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict | 112 | 108.6 | 1.03x | 5th | 24th |
+| characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim | 137 | 134.8 | 1.02x | 3rd | 25th |
+
+**Both sit at lift ~1.0 -- essentially exactly what independence predicts --
+and land in the middle of the 36-pair lift spread (median lift rank 18.5),
+not near the top.** Their high raw ranks are explained entirely by how
+common each of the four categories already is (`causal-argument-state-
+formation-or-power` alone is the single largest claim category, 27.5% of
+all categorised, bagged values); nothing about how often these specific
+pairs co-occur exceeds what their individual prevalence already predicts.
+
+**The conclusion the issue's own reading guide draws from this:** "If they
+sit inside the spread of every other pair, the ambiguity a reader can see
+is one the corpus does not express, and nothing is spent." That is where
+both #826 pairs land. **No precedence sentence is indicated by this
+measurement, and no scheme edit should be spent on either flagged pair on
+the strength of the pair table.** (The pairs that ARE genuinely elevated are
+small ones the gloss review never flagged -- `causal-argument-nationalism-
+or-identity` x `comparative-or-typological-classification` at 1.59x,
+`bibliographic-source-note-or-formal-description` x `methodological-
+preconditions` at 1.50x, `comparative-or-typological-classification` x
+`methodological-preconditions` at 1.45x -- noted here for completeness,
+not raised as a new finding to act on; nothing about them was flagged by
+#826's own gloss review either, and this log's job is the two pairs that
+were.)
+
+This is a finding to hand to the founder -- #827 measures, the glosses are
+the founder's call (issue comment's own scope note) -- and no scheme edit
+is made on this branch. (The fix round also adds a `--named-pair` override
+so this check is not hardwired to these two claim-scheme ids for a future
+run against a different scheme; the default stays these two so the
+guarantee holds on a bare run.)
 
 On `mechanism`, neither #826 pair applies -- neither category id exists in
 that column's own scheme -- and the command reports that explicitly rather
@@ -194,22 +235,28 @@ CATEGORY SCATTER (over 650 bag(s) holding at least one categorised member)
     bibliographic-source-note-or-formal-description: 69 bag(s), 175 member(s)
 
 CATEGORY PAIR CO-OCCURRENCE (397 multi-category bag(s))
-  1. causal-argument-state-formation-or-power x empirical-finding-without-causal-claim: 178 bag(s) (44.8%)
-  2. causal-argument-state-formation-or-power x characterization-of-regime-movement-or-system: 146 bag(s) (36.8%)
-  3. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%)
-  4. causal-argument-violence-war-or-conflict x empirical-finding-without-causal-claim: 120 bag(s) (30.2%)
-  5. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%)
-  6. critique-of-existing-theories-or-concepts x empirical-finding-without-causal-claim: 89 bag(s) (22.4%)
-  7. causal-argument-state-formation-or-power x critique-of-existing-theories-or-concepts: 88 bag(s) (22.2%)
-  8. causal-argument-violence-war-or-conflict x characterization-of-regime-movement-or-system: 86 bag(s) (21.7%)
-  9. causal-argument-nationalism-or-identity x empirical-finding-without-causal-claim: 79 bag(s) (19.9%)
-  10. characterization-of-regime-movement-or-system x critique-of-existing-theories-or-concepts: 69 bag(s) (17.4%)
-  ... (26 further pairs, 44 to 11 bags each; full ranking reproducible for $0 via the command above)
-  36. bibliographic-source-note-or-formal-description x comparative-or-typological-classification: 11 bag(s) (2.8%)
+  expected/lift are against independence over presence among these 397 multi-category bags specifically -- expected = presence(A) x presence(B) / that count, lift = observed / expected. Ranking by raw count ranks by category prevalence; a pair at the top of this list can sit at lift ~1.0 -- see the by-lift ranking below for the same pairs read the other way
+  1. causal-argument-state-formation-or-power x empirical-finding-without-causal-claim: 178 bag(s) (44.8%), expected 178.20, lift 1.00x
+  2. causal-argument-state-formation-or-power x characterization-of-regime-movement-or-system: 146 bag(s) (36.8%), expected 131.83, lift 1.11x
+  3. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), expected 134.84, lift 1.02x
+  4. causal-argument-violence-war-or-conflict x empirical-finding-without-causal-claim: 120 bag(s) (30.2%), expected 111.12, lift 1.08x
+  5. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), expected 108.64, lift 1.03x
+  ... (31 further pairs; full 36-pair ranking reproducible for $0 via the command above)
+  36. bibliographic-source-note-or-formal-description x comparative-or-typological-classification: 11 bag(s) (2.8%), expected 9.67, lift 1.14x
+
+CATEGORY PAIR CO-OCCURRENCE BY LIFT (same pairs, ranked by observed/expected instead of raw count)
+  1. causal-argument-nationalism-or-identity x comparative-or-typological-classification: lift 1.59x (33 bag(s) observed, 20.76 expected)
+  2. bibliographic-source-note-or-formal-description x methodological-preconditions: lift 1.50x (18 bag(s) observed, 11.97 expected)
+  3. comparative-or-typological-classification x methodological-preconditions: lift 1.45x (29 bag(s) observed, 19.95 expected)
+  ... (21 further pairs)
+  24. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: lift 1.03x (112 bag(s) observed, 108.64 expected)
+  25. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: lift 1.02x (137 bag(s) observed, 134.84 expected)
+  ... (9 further pairs)
+  36. causal-argument-nationalism-or-identity x methodological-preconditions: lift 0.86x (22 bag(s) observed, 25.69 expected)
 
 NAMED PAIRS (#826's verification -- reported whether or not they rank)
-  causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), rank 5
-  characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), rank 3
+  causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), raw rank 5, lift 1.03x (lift-rank 24 of 36)
+  characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), raw rank 3, lift 1.02x (lift-rank 25 of 36)
 ```
 
 ## Full command output, mechanism (baseline reproduction)
@@ -263,11 +310,19 @@ CATEGORY SCATTER (over 577 bag(s) holding at least one categorised member)
     demographic-and-ecological-pressures: 39 bag(s), 85 member(s)
 
 CATEGORY PAIR CO-OCCURRENCE (365 multi-category bag(s))
-  1. economic-dependency-and-structural-adjustment x elite-competition-and-coalition-formation: 76 bag(s) (20.8%)
-  2. elite-competition-and-coalition-formation x social-mobilization-and-collective-action: 74 bag(s) (20.3%)
-  3. elite-competition-and-coalition-formation x institutional-path-dependence-and-state-capacity: 73 bag(s) (20.0%)
-  ... (185 further pairs; full 190-pair ranking reproducible for $0 via the command above)
-  190. demographic-and-ecological-pressures x micro-interaction-and-symbolic-reciprocity: 1 bag(s) (0.3%)
+  expected/lift are against independence over presence among these 365 multi-category bags specifically -- expected = presence(A) x presence(B) / that count, lift = observed / expected. Ranking by raw count ranks by category prevalence; a pair at the top of this list can sit at lift ~1.0 -- see the by-lift ranking below for the same pairs read the other way
+  1. economic-dependency-and-structural-adjustment x elite-competition-and-coalition-formation: 76 bag(s) (20.8%), expected 53.59, lift 1.42x
+  2. elite-competition-and-coalition-formation x social-mobilization-and-collective-action: 74 bag(s) (20.3%), expected 55.38, lift 1.34x
+  3. elite-competition-and-coalition-formation x institutional-path-dependence-and-state-capacity: 73 bag(s) (20.0%), expected 55.38, lift 1.32x
+  ... (186 further pairs; full 190-pair ranking reproducible for $0 via the command above)
+  190. demographic-and-ecological-pressures x micro-interaction-and-symbolic-reciprocity: 1 bag(s) (0.3%), expected 3.35, lift 0.30x
+
+CATEGORY PAIR CO-OCCURRENCE BY LIFT (same pairs, ranked by observed/expected instead of raw count)
+  1. demographic-and-ecological-pressures x market-penetration-and-commodification: lift 2.95x (12 bag(s) observed, 4.07 expected)
+  2. demographic-and-ecological-pressures x resource-extraction-and-rentier-state: lift 2.69x (9 bag(s) observed, 3.35 expected)
+  3. market-penetration-and-commodification x technological-change-and-infrastructure: lift 2.50x (12 bag(s) observed, 4.81 expected)
+  ... (186 further pairs; full 190-pair ranking reproducible for $0 via the command above)
+  190. demographic-and-ecological-pressures x micro-interaction-and-symbolic-reciprocity: lift 0.30x (1 bag(s) observed, 3.35 expected)
 
 NAMED PAIRS (#826's verification -- reported whether or not they rank)
   causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: not applicable (not both in this column's scheme)

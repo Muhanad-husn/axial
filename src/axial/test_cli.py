@@ -1891,7 +1891,7 @@ def test_main_map_purity_prints_purity_scatter_pairs_and_coverage_for_bags_with_
     assert "CATEGORY SCATTER (over 2 bag(s) holding at least one categorised member)" in out
     assert "NAMED PAIRS" in out
     assert f"{id_a} x {id_b}" in out
-    assert "absent from the ranking (0 bags)" in out
+    assert "absent from the raw ranking (0 bags)" in out
 
 
 def test_main_map_purity_with_no_pin_uses_the_newest_map_directory(tmp_path, capsys):

@@ -219,7 +219,18 @@ class CategoryPair:
     when that is zero. `applicable` is `False` only for a named pair (see
     `NAMED_PAIRS`) whose id or ids are not part of THIS column's committed
     scheme -- reported anyway, marked, rather than silently dropping a
-    claim-axis pair from a mechanism-axis run."""
+    claim-axis pair from a mechanism-axis run.
+
+    `expected`/`lift` (issue #827 fix round, 2026-08-29): ranking pairs by
+    raw `bag_count` alone ranks them by category PREVALENCE -- a pair of two
+    common categories tops the table even at pure chance. `expected` is what
+    independence predicts (`presence(A) * presence(B) / multi_category_bag_
+    count`, where `presence` is how many of those same multi-category bags
+    hold that category at all), and `lift = bag_count / expected` is how far
+    observed co-occurrence sits above (>1) or below (<1) that. `None` for
+    both only when `multi_category_bag_count` is 0 or a category's own
+    `presence` is 0 (never true for a pair that has an observed `bag_count`
+    at all, since a nonzero count implies both categories were present)."""
 
     category_a: str
     category_b: str
@@ -227,6 +238,8 @@ class CategoryPair:
     name_b: str
     bag_count: int
     share: float | None
+    expected: float | None
+    lift: float | None
     applicable: bool = True
 
 
@@ -235,12 +248,20 @@ class PairCooccurrence:
     """The category-pair confusion table (issue #827 comment, added after
     #826's verification): every pair of categories that co-occurs in at
     least one bag holding 2+ categories among its own categorised members,
-    ranked by how many bags they share, plus the two pairs #826's
-    verification could not choose between -- always reported by name,
-    whether or not they rank."""
+    plus the two pairs #826's verification could not choose between --
+    always reported by name, whether or not they rank.
+
+    Two orderings of the SAME pairs (issue #827 fix round, 2026-08-29):
+    `pairs` by raw `bag_count` (which ranks by category prevalence -- two
+    common categories co-occur often even at pure chance), `pairs_by_lift`
+    by `CategoryPair.lift` (co-occurrence against what independence over
+    THESE `multi_category_bag_count` bags predicts). A pair topping `pairs`
+    can and does sit near 1.0 in `pairs_by_lift`; printing both is what lets
+    a reader see that rather than infer it."""
 
     multi_category_bag_count: int
     pairs: tuple[CategoryPair, ...]
+    pairs_by_lift: tuple[CategoryPair, ...]
     named_pairs: tuple[CategoryPair, ...]
 
 
@@ -335,6 +356,31 @@ def parse_named_pair(raw: str) -> tuple[str, str]:
     return (parts[0], parts[1])
 
 
+def _expected_and_lift(
+    observed: int,
+    category_a: str,
+    category_b: str,
+    presence: Mapping[str, int],
+    multi_category_bag_count: int,
+) -> tuple[float | None, float | None]:
+    """What independence predicts for `observed` (issue #827 fix round,
+    2026-08-29): `expected = presence(A) * presence(B) /
+    multi_category_bag_count`, `presence(X)` the count of THOSE multi-
+    category bags holding category X at all -- not the raw `bag_count`
+    reverse-table figure, which is over every populated bag, not just the
+    ones a pair could possibly co-occur in. `lift = observed / expected`.
+    Both `None` when there is nothing to divide by."""
+    if not multi_category_bag_count:
+        return None, None
+    presence_a = presence.get(category_a, 0)
+    presence_b = presence.get(category_b, 0)
+    if not presence_a or not presence_b:
+        return None, None
+    expected = presence_a * presence_b / multi_category_bag_count
+    lift = observed / expected if expected else None
+    return expected, lift
+
+
 def _named_pair(
     id_a: str,
     id_b: str,
@@ -342,11 +388,17 @@ def _named_pair(
     pair_counts: Mapping[tuple[str, str], int],
     multi_category_bag_count: int,
     known_category_ids: set[str],
+    presence: Mapping[str, int],
 ) -> CategoryPair:
     applicable = id_a in known_category_ids and id_b in known_category_ids
     key = tuple(sorted((id_a, id_b)))
     count = pair_counts.get(key, 0) if applicable else 0
     share = (count / multi_category_bag_count) if applicable and multi_category_bag_count else None
+    expected, lift = (
+        _expected_and_lift(count, key[0], key[1], presence, multi_category_bag_count)
+        if applicable
+        else (None, None)
+    )
     return CategoryPair(
         category_a=key[0],
         category_b=key[1],
@@ -354,6 +406,8 @@ def _named_pair(
         name_b=category_names.get(key[1], ""),
         bag_count=count,
         share=share,
+        expected=expected,
+        lift=lift,
         applicable=applicable,
     )
 
@@ -464,6 +518,12 @@ def compute_purity(
     )
     pair_counts: collections.Counter[tuple[str, str]] = collections.Counter()
     multi_category_bag_count = 0
+    # Issue #827 fix round, 2026-08-29: how many of the MULTI-CATEGORY bags
+    # (not every populated bag -- see `_expected_and_lift`) hold each
+    # category at all. The denominator `expected`/`lift` are computed
+    # against, since a pair can only co-occur where both categories could
+    # have co-occurred in the first place.
+    presence_in_multi_category_bags: collections.Counter[str] = collections.Counter()
 
     for bag_label, members in bag_members.items():
         categorised = [chunk_id for chunk_id in members if chunk_id in overlap_assigned]
@@ -485,6 +545,8 @@ def compute_purity(
 
         if len(category_counts) >= 2:
             multi_category_bag_count += 1
+            for category_id in category_counts:
+                presence_in_multi_category_bags[category_id] += 1
             for category_a, category_b in itertools.combinations(sorted(category_counts), 2):
                 pair_counts[(category_a, category_b)] += 1
 
@@ -526,24 +588,51 @@ def compute_purity(
         max_bag_count=max(populated_bag_counts) if populated_bag_counts else None,
     )
 
-    ranked_pairs = tuple(
-        CategoryPair(
+    pairs_by_key: dict[tuple[str, str], CategoryPair] = {}
+    for (category_a, category_b), count in pair_counts.items():
+        expected, lift = _expected_and_lift(
+            count, category_a, category_b, presence_in_multi_category_bags, multi_category_bag_count
+        )
+        pairs_by_key[(category_a, category_b)] = CategoryPair(
             category_a=category_a,
             category_b=category_b,
             name_a=category_names.get(category_a, ""),
             name_b=category_names.get(category_b, ""),
             bag_count=count,
             share=(count / multi_category_bag_count) if multi_category_bag_count else None,
+            expected=expected,
+            lift=lift,
         )
-        for (category_a, category_b), count in sorted(
-            pair_counts.items(), key=lambda item: (-item[1], item[0])
+
+    ranked_pairs = tuple(
+        pairs_by_key[key]
+        for key in sorted(pairs_by_key, key=lambda key: (-pairs_by_key[key].bag_count, key))
+    )
+    # Ties broken by the SAME raw-count-then-id key as `ranked_pairs`, not a
+    # third ordering: a pair `lift` cannot distinguish (equal lift) should
+    # still land in a stable, reproducible spot.
+    pairs_by_lift = tuple(
+        pairs_by_key[key]
+        for key in sorted(
+            pairs_by_key,
+            key=lambda key: (
+                -(pairs_by_key[key].lift if pairs_by_key[key].lift is not None else -1.0),
+                -pairs_by_key[key].bag_count,
+                key,
+            ),
         )
     )
 
     known_category_ids = set(category_names)
     named_pair_results = tuple(
         _named_pair(
-            id_a, id_b, category_names, pair_counts, multi_category_bag_count, known_category_ids
+            id_a,
+            id_b,
+            category_names,
+            pair_counts,
+            multi_category_bag_count,
+            known_category_ids,
+            presence_in_multi_category_bags,
         )
         for id_a, id_b in named_pairs
     )
@@ -560,6 +649,7 @@ def compute_purity(
         pairs=PairCooccurrence(
             multi_category_bag_count=multi_category_bag_count,
             pairs=ranked_pairs,
+            pairs_by_lift=pairs_by_lift,
             named_pairs=named_pair_results,
         ),
     )
@@ -571,6 +661,10 @@ def _pct(value: float | None) -> str:
 
 def _num(value: float | None) -> str:
     return f"{value:.2f}" if value is not None else "n/a"
+
+
+def _lift_text(value: float | None) -> str:
+    return f"{value:.2f}x" if value is not None else "n/a"
 
 
 def format_purity_report(report: PurityReport) -> str:
@@ -635,11 +729,32 @@ def format_purity_report(report: PurityReport) -> str:
     lines.append(
         f"CATEGORY PAIR CO-OCCURRENCE ({pairs.multi_category_bag_count} multi-category bag(s))"
     )
+    lines.append(
+        "  expected/lift are against independence over presence among these "
+        f"{pairs.multi_category_bag_count} multi-category bags specifically -- expected = "
+        "presence(A) x presence(B) / that count, lift = observed / expected. Ranking by raw "
+        "count ranks by category prevalence; a pair at the top of this list can sit at "
+        "lift ~1.0 -- see the by-lift ranking below for the same pairs read the other way"
+    )
     if pairs.pairs:
         for rank, pair in enumerate(pairs.pairs, start=1):
             lines.append(
                 f"  {rank}. {pair.category_a} x {pair.category_b}: {pair.bag_count} bag(s) "
-                f"({_pct(pair.share)})"
+                f"({_pct(pair.share)}), expected {_num(pair.expected)}, lift {_lift_text(pair.lift)}"
+            )
+    else:
+        lines.append("  no pair co-occurs in any bag")
+    lines.append("")
+
+    lines.append(
+        "CATEGORY PAIR CO-OCCURRENCE BY LIFT (same pairs, ranked by observed/expected "
+        "instead of raw count)"
+    )
+    if pairs.pairs_by_lift:
+        for rank, pair in enumerate(pairs.pairs_by_lift, start=1):
+            lines.append(
+                f"  {rank}. {pair.category_a} x {pair.category_b}: lift {_lift_text(pair.lift)} "
+                f"({pair.bag_count} bag(s) observed, {_num(pair.expected)} expected)"
             )
     else:
         lines.append("  no pair co-occurs in any bag")
@@ -647,6 +762,9 @@ def format_purity_report(report: PurityReport) -> str:
 
     lines.append("NAMED PAIRS (#826's verification -- reported whether or not they rank)")
     ranks_by_key = {(p.category_a, p.category_b): i for i, p in enumerate(pairs.pairs, start=1)}
+    lift_ranks_by_key = {
+        (p.category_a, p.category_b): i for i, p in enumerate(pairs.pairs_by_lift, start=1)
+    }
     for pair in pairs.named_pairs:
         if not pair.applicable:
             lines.append(
@@ -655,10 +773,16 @@ def format_purity_report(report: PurityReport) -> str:
             )
             continue
         rank = ranks_by_key.get((pair.category_a, pair.category_b))
-        rank_note = f"rank {rank}" if rank is not None else "absent from the ranking (0 bags)"
+        rank_note = f"raw rank {rank}" if rank is not None else "absent from the raw ranking (0 bags)"
+        lift_rank = lift_ranks_by_key.get((pair.category_a, pair.category_b))
+        lift_note = (
+            f"lift {_lift_text(pair.lift)} (lift-rank {lift_rank} of {len(pairs.pairs_by_lift)})"
+            if lift_rank is not None
+            else "lift n/a"
+        )
         lines.append(
             f"  {pair.category_a} x {pair.category_b}: {pair.bag_count} bag(s) "
-            f"({_pct(pair.share)}), {rank_note}"
+            f"({_pct(pair.share)}), {rank_note}, {lift_note}"
         )
 
     return "\n".join(lines).rstrip("\n")
