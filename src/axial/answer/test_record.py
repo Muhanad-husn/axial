@@ -24,7 +24,16 @@ from axial.answer.record import (
     build_record,
 )
 from axial.argmap.ask import AskResult, CorridorPosition, LandedPosition
-from axial.argmap.vocabulary_join import CategoryReach, VocabularyJoinResult, VocabularyPosition
+from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
+    REASON_ASSIGNED,
+    REASON_NOT_FOUND,
+    REASON_OUT_OF_SCHEME,
+    REASON_REFUSED,
+    CategoryReach,
+    VocabularyJoinResult,
+    VocabularyPosition,
+)
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
 from axial.llm import (
@@ -746,6 +755,14 @@ def _fake_ask_result(*, with_vocabulary: bool) -> AskResult:
                     authors=("other",),
                 ),
             ),
+            # issue #822: one landed note reached a category, one was
+            # refused, and out-of-scheme/not-found did not occur here.
+            reasons={
+                REASON_ASSIGNED: 1,
+                REASON_REFUSED: 1,
+                REASON_OUT_OF_SCHEME: 0,
+                REASON_NOT_FOUND: 0,
+            },
         )
         # The note only the vocabulary step reaches -- proof the assembled
         # evidence rests partly on a category edge, never on landing or the
@@ -830,6 +847,26 @@ def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, mo
     # The assembled evidence rests partly on a note reached ONLY through the
     # category edge -- neither `landed` nor `corridor` carries it.
     assert "fixmap-2021-a_1_s_002" in record["map_retrieval"]["assembled_chunk_ids"]
+
+
+def test_the_vocabulary_block_records_why_landed_notes_produced_no_edge(
+    tmp_path: Path, monkeypatch
+):
+    """issue #822, item 1. Every reason keeps a key even at zero, so a
+    reader of `map_retrieval.vocabulary` can tell "the scheme does not fit
+    this corpus" from "these notes were never assigned" -- the conflation
+    §7.18 records as having cost #805 a 50.7%-vs-88.5% misreading."""
+    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True)
+
+    reasons = result.record["map_retrieval"]["vocabulary"]["reasons"]
+
+    assert reasons == {
+        REASON_ASSIGNED: 1,
+        REASON_REFUSED: 1,
+        REASON_OUT_OF_SCHEME: 0,
+        REASON_NOT_FOUND: 0,
+    }
+    assert set(reasons) == set(ALL_REASONS)
 
 
 def test_run_brief_arm_map_records_no_vocabulary_block(tmp_path: Path, monkeypatch):

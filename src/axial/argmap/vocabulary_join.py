@@ -50,7 +50,7 @@ above)."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -89,6 +89,14 @@ REASON_ASSIGNED = "assigned"
 REASON_REFUSED = "refused"
 REASON_OUT_OF_SCHEME = "out-of-scheme"
 REASON_NOT_FOUND = "not-found"
+
+# Every reason, in the order a reader wants them: the one that produced an
+# edge first, then the three that did not. `VocabularyJoinResult.reasons` and
+# `_vocabulary_to_dict`'s own block (`axial.answer.record`) both key on this
+# so a reason that did not occur is reported as a zero rather than an absent
+# key -- an absent key reads as "not measured", which is the conflation
+# issue #822 exists to end.
+ALL_REASONS = (REASON_ASSIGNED, REASON_REFUSED, REASON_OUT_OF_SCHEME, REASON_NOT_FOUND)
 
 
 class VocabularyJoinError(Exception):
@@ -166,13 +174,23 @@ class VocabularyJoinResult:
     reached (`categories`, including one contributing zero neighbours), and
     the neighbour positions themselves (`positions`) -- already ordered
     (cross-source first) and already capped, ready to hand straight to
-    `assemble_map_evidence` alongside the landed and corridor positions."""
+    `assemble_map_evidence` alongside the landed and corridor positions.
+
+    `reasons` (issue #822) counts `landed`'s own distinct notes by
+    `category_for_note`'s own outcome, keyed on `ALL_REASONS` with every
+    reason present even at zero. It answers the first question anyone asks
+    of an underperforming run: whether the notes reached no category
+    because the scheme refused them, because the model answered outside
+    the scheme, or because they were never assigned at all. Defaults to an
+    empty mapping so a hand-built result (a test fixture) need not restate
+    it; `vocabulary_neighbours` always fills all four."""
 
     column: str
     level: int
     cap: int
     categories: tuple[CategoryReach, ...]
     positions: tuple[VocabularyPosition, ...]
+    reasons: Mapping[str, int] = field(default_factory=dict)
 
 
 def category_for_note(
@@ -308,10 +326,20 @@ def vocabulary_neighbours(
     # neighbours lead with books other than the one the ASKING note came
     # from, so the comparison set is the sources of the landed notes that
     # touched THIS category.
+    # **The reason is counted, not discarded (issue #822).** `category_for_
+    # note` distinguishes four outcomes and the join's first cut dropped
+    # three of them on the floor, so nothing in the recorded block said how
+    # many landed notes produced no edge or why. The counts are over
+    # `landed`'s own DISTINCT notes -- one vote each, the same set the join
+    # itself walks -- and every reason keeps a key even at zero, so
+    # "the scheme does not fit this corpus" (refused, out-of-scheme) reads
+    # differently from "these notes were never assigned" (not-found).
+    reasons: dict[str, int] = {reason: 0 for reason in ALL_REASONS}
     touched_category_ids: set[str] = set()
     landed_sources_by_category: dict[str, set[str]] = {}
     for chunk_id in landed_chunk_ids:
-        category_id, _reason = category_for_note(chunk_id, by_chunk)
+        category_id, reason = category_for_note(chunk_id, by_chunk)
+        reasons[reason] = reasons.get(reason, 0) + 1
         if category_id is None:
             continue
         touched_category_ids.add(category_id)
@@ -412,4 +440,5 @@ def vocabulary_neighbours(
         cap=cap,
         categories=tuple(categories),
         positions=tuple(vocabulary_positions),
+        reasons=reasons,
     )

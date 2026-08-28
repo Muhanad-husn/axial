@@ -116,7 +116,7 @@ from axial.argmap.ask import (
     resolve_pinned_map_dir,
     run_map_ask_for_brief,
 )
-from axial.argmap.vocabulary_join import VocabularyJoinResult
+from axial.argmap.vocabulary_join import ALL_REASONS, VocabularyJoinResult
 from axial.brief.fork import (
     ForkAnswer,
     ForkCheckError,
@@ -297,12 +297,24 @@ def _vocabulary_to_dict(
     the vocabulary step contributed 240 passages to an answer built from 90
     -- and issue #809 reads these figures to decide whether the derived
     vocabulary pays. `source_count` stays a count over what was OFFERED,
-    which is what the cap selected on."""
+    which is what the cap selected on.
+
+    **`reasons` says why the landed notes that produced no edge produced
+    none (issue #822).** One count per landed note, keyed on `ALL_REASONS`
+    with every reason present even at zero: `assigned` reached a category,
+    `refused` is the model declining, `out-of-scheme` is an answer naming
+    no committed category, `not-found` is a note never assigned in this
+    column at all. Without it a thin run is unreadable -- a scheme that
+    does not fit this corpus and a column half of whose notes were never
+    assigned produce the same small `categories` list, which is exactly the
+    conflation §7.18 records as having cost #805 a 50.7%-vs-88.5%
+    misreading. A zero is a measurement; an absent key would not be."""
     assembled = set(assembled_chunk_ids)
     return {
         "column": result.column,
         "level": result.level,
         "cap": result.cap,
+        "reasons": {reason: int(result.reasons.get(reason, 0)) for reason in ALL_REASONS},
         "categories": [
             {
                 "category_id": category.category_id,

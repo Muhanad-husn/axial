@@ -18,6 +18,7 @@ import pytest
 
 from axial.argmap.ask import LandedPosition
 from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
     REASON_ASSIGNED,
     REASON_NOT_FOUND,
     REASON_OUT_OF_SCHEME,
@@ -430,3 +431,77 @@ def test_cross_source_ordering_is_judged_per_category_not_against_every_landed_s
     war = next(c for c in result.categories if c.category_id == "war-and-state")
     assert war.chunk_ids == ("n3", "n2")
     assert [p.position_id for p in result.positions][0] == "pos-b-cross"
+
+
+# ---------------------------------------------------------------------------
+# The reason counts (issue #822, item 1): why each landed note produced no
+# edge, counted rather than discarded.
+# ---------------------------------------------------------------------------
+
+
+def test_the_four_reasons_are_counted_over_the_landed_notes(tmp_path: Path):
+    """A reader of the recorded block must be able to tell "the scheme does
+    not fit this corpus" (refused/out-of-scheme) from "these notes were never
+    assigned" (not-found) -- the conflation §7.18 records as having cost #805
+    a 50.7%-vs-88.5% misreading."""
+    pos_landed = _position("pos-landed", ["n1", "n2", "n3", "n4"], ["src-1"])
+    pos_other = _position("pos-other", ["n9"], ["src-2"])
+    positions = [pos_landed, pos_other]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),  # assigned
+            _assignment("n2", "src-1", None),  # refused
+            _assignment("n3", "src-1", None, out_of_scheme="a stray answer"),
+            # n4 has no record at all -- not-found
+            _assignment("n9", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert result.reasons == {
+        REASON_ASSIGNED: 1,
+        REASON_REFUSED: 1,
+        REASON_OUT_OF_SCHEME: 1,
+        REASON_NOT_FOUND: 1,
+    }
+
+
+def test_every_reason_key_is_present_even_at_zero(tmp_path: Path):
+    """An absent key would read as "not measured"; a zero says the reason
+    was looked for and did not occur."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_other = _position("pos-other", ["n2"], ["src-2"])
+    positions = [pos_landed, pos_other]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n2", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert set(result.reasons) == set(ALL_REASONS)
+    assert result.reasons[REASON_ASSIGNED] == 1
+    assert result.reasons[REASON_REFUSED] == 0
+    assert result.reasons[REASON_OUT_OF_SCHEME] == 0
+    assert result.reasons[REASON_NOT_FOUND] == 0
