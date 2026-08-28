@@ -814,11 +814,15 @@ def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, mo
     assert "vocabulary" in record["map_retrieval"]
     vocabulary = record["map_retrieval"]["vocabulary"]
     assert vocabulary["column"] == "mechanism"
+    # Two counts, not one (issue #807): what the join offered to assembly and
+    # how many of those the assembly cap kept. On the live corpus they differ
+    # by a factor of six, and #809 reads both.
     assert vocabulary["categories"] == [
         {
             "category_id": "war-and-state",
             "name": "War and state formation",
-            "note_count": 1,
+            "offered_note_count": 1,
+            "assembled_note_count": 1,
             "source_count": 1,
             "cap_applied": False,
         }

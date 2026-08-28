@@ -297,11 +297,29 @@ def vocabulary_neighbours(
     landed_chunk_ids = {chunk_id for position in landed for chunk_id in position.chunk_ids}
     landed_sources = {source for position in landed for source in position.sources}
 
+    # **Cross-source is judged per category, not against every landed source
+    # (issue #807, second cut).** The first cut ranked a candidate against
+    # the union of every landed position's sources. On the live run that was
+    # 22 landed positions over a 35-source corpus: the union covered most of
+    # the corpus, so almost no candidate could enter the preferred tier, and
+    # the cap filled by `position_id` ascending -- an arbitrary order with no
+    # book-diversity property at all, which is the opposite of what #651
+    # asks for. What the finding actually asks is that a category's
+    # neighbours lead with books other than the one the ASKING note came
+    # from, so the comparison set is the sources of the landed notes that
+    # touched THIS category.
     touched_category_ids: set[str] = set()
+    landed_sources_by_category: dict[str, set[str]] = {}
     for chunk_id in landed_chunk_ids:
         category_id, _reason = category_for_note(chunk_id, by_chunk)
-        if category_id is not None:
-            touched_category_ids.add(category_id)
+        if category_id is None:
+            continue
+        touched_category_ids.add(category_id)
+        records = by_chunk.get(chunk_id) or []
+        for record in records:
+            source_id = record.get("source_id")
+            if isinstance(source_id, str) and source_id:
+                landed_sources_by_category.setdefault(category_id, set()).add(source_id)
 
     categories: list[CategoryReach] = []
     # position_id -> {"categories": set[str], "chunk_ids": list[str], "position": dict}
@@ -320,10 +338,15 @@ def vocabulary_neighbours(
             candidates.append((chunk_id, source_id, position))
 
         # Cross-source first (issue #651: only 40.5% of argument-map edges
-        # reach another book), then a deterministic total order.
+        # reach another book), then a deterministic total order. The
+        # comparison set is this category's own landed sources (see above),
+        # falling back to every landed source when no assignment record
+        # named one -- a fallback that only ever makes the tier stricter, so
+        # it can never silently promote a same-book neighbour.
+        category_sources = landed_sources_by_category.get(category_id) or landed_sources
         candidates.sort(
             key=lambda item: (
-                0 if item[1] not in landed_sources else 1,
+                0 if item[1] not in category_sources else 1,
                 item[2]["position_id"],
                 item[0],
             )
@@ -331,14 +354,28 @@ def vocabulary_neighbours(
         cap_applied = len(candidates) > cap
         contributed = candidates[:cap]
 
-        for chunk_id, _source_id, position in contributed:
+        for chunk_id, source_id, position in contributed:
             position_id = position["position_id"]
             hit = hits.setdefault(
                 position_id,
-                {"categories": set(), "chunk_ids": [], "position": position},
+                {
+                    "categories": set(),
+                    "chunk_ids": [],
+                    "position": position,
+                    "cross_source": False,
+                },
             )
             hit["categories"].add(category_id)
             hit["chunk_ids"].append(chunk_id)
+            # Cross-source is a property of the EDGE, judged against the
+            # category that made it (issue #807). A position pulled in by two
+            # categories counts as cross-source if it is a different book
+            # from the asking note under either of them -- the same "several
+            # edges collapse to one position" reading `categories` itself
+            # keeps, rather than re-deciding the question against a union
+            # that no single edge was judged on.
+            if source_id not in category_sources:
+                hit["cross_source"] = True
 
         categories.append(
             CategoryReach(
@@ -350,6 +387,7 @@ def vocabulary_neighbours(
             )
         )
 
+    cross_source = {position_id: bool(hit["cross_source"]) for position_id, hit in hits.items()}
     vocabulary_positions = [
         VocabularyPosition(
             position_id=position_id,
@@ -362,9 +400,11 @@ def vocabulary_neighbours(
         )
         for position_id, hit in hits.items()
     ]
-    vocabulary_positions.sort(
-        key=lambda vp: (0 if set(vp.sources).isdisjoint(landed_sources) else 1, vp.position_id)
-    )
+    # Ordered by the same per-category judgment the cap already selected on
+    # (issue #807), not re-derived here against the union of every landed
+    # source -- two different answers to the same question in one function
+    # is how the cap and the order came to disagree in the first cut.
+    vocabulary_positions.sort(key=lambda vp: (0 if cross_source[vp.position_id] else 1, vp.position_id))
 
     return VocabularyJoinResult(
         column=column,

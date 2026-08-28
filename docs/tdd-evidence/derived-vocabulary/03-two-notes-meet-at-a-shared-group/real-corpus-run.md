@@ -86,3 +86,75 @@ Both are environment, not code, and both cost a paid `interrogate` call:
    — the absolute path, not the relative one, when running from a worktree.
 2. A plain `uv sync` omits `sentence_transformers`; the map arm needs it for
    `_default_encoder`. `uv sync --group distill --group service --group operator`.
+
+---
+
+# Second run, 2026-08-28: the assembly-order fix
+
+The first run above satisfied the acceptance criterion and missed its point. The
+38 category-edge notes all landed at assembly index 52 or later, synthesis's char
+budget cut 32 of them, and **the answer cited none of them** — 20 distinct cited
+chunks, zero from the category edge, highest cited index 45. `map` and
+`map+vocab` would have produced answers built from the same 52 passages, so #809
+would have measured nothing.
+
+Cause: `assemble_map_evidence` walks positions in the order given, one id per
+position per turn, under a cap of 90. With the vocabulary positions appended
+after landed and corridor, 22 + 30 map positions spent 52 slots on turn one
+alone. The step was behind the evidence budget, not inside it.
+
+Three changes, then the same brief re-run:
+
+1. **Vocabulary positions assemble before the corridor.** Landed still leads.
+2. **Cross-source is judged per category**, against the sources of the landed
+   notes that touched that category — not the union of every landed source,
+   which on 35 sources with 22 landed positions admits nobody to the preferred
+   tier and lets the cap fill in arbitrary id order.
+3. **Two counts per category in the record**, `offered_note_count` and
+   `assembled_note_count`. They differ by a factor of four to six.
+
+## Before and after, same brief, same corpus, same pin
+
+| | first run | after the fix |
+|---|---|---|
+| assembled | 90 | 90 |
+| of those, category-edge only | 38 | **63** |
+| their assembly indices | 52–89 | **27–89** |
+| composed into the prompt | 58 | 54 |
+| distinct cited chunks | 20 | 9 |
+| **cited via the category edge** | **0** | **2** |
+| categories reached | 12 | 13 |
+| offered / assembled | 240 / 38 | 260 / 63 |
+| cost | $0.081, 240s | $0.066, 218s |
+| claims (a/b/c) | 9 / 7 / 2 | 8 / 4 / 2 |
+| cross-source rate | 0.571 over 7 | 0.750 over 4 |
+| retrieval_hit | 0.833 | 0.667 |
+| sources cited | 6 | 6 |
+
+**Read this as n=1 against n=1.** Two live runs of one brief, on a pipeline
+already measured as non-reproducible at 19.3% overall and 36.1% on recorded
+disagreements (#700). The load-bearing number is the one that moved from a
+structural zero to a non-zero: 0 cited category-edge chunks became 2, and the
+zero was guaranteed by the ordering rather than sampled from it. Every other
+row in that table is inside the noise and none of it should be quoted as an
+effect of this change. `retrieval_hit` falling from 0.833 to 0.667 is one
+mechanical oracle hit on a 3-item denominator, not a regression signal.
+
+**The step now takes 70% of assembly (63 of 90), across 26 sources.** That is a
+large share and it is the intended direction — the category edge is what is
+under measurement — but it is also the number most likely to be misread. It does
+not mean the vocabulary found 63 passages the map could not reach; the map arm
+reached 217 candidates for 90 slots either way. It means the cap now cuts the
+corridor rather than the vocabulary. If #809 says the join does not pay, this
+ordering is the first thing to re-examine, not the last.
+
+**The arm is a substitution, not an addition.** The map arm alone reaches 202
+candidates against a cap of 90, so `map+vocab` cannot enlarge the evidence set —
+it changes which passages fill it. #809 therefore answers "are these 54 composed
+passages better than those 58", never "does more reach help". That framing is
+the thing to carry into the comparison; the number is uninterpretable without
+it.
+
+Record: `data/analyses/dae632c369c18ffc.json` (overwritten — the brief id is
+content-derived, so the second run replaced the first). Console:
+`console-ordered.log`.

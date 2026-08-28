@@ -385,3 +385,48 @@ def test_level_defaults_to_the_columns_manifest_max_level(tmp_path: Path):
 
     assert result.level == 1
     assert [p.position_id for p in result.positions] == ["pos-other"]
+
+
+def test_cross_source_ordering_is_judged_per_category_not_against_every_landed_source(
+    tmp_path: Path,
+):
+    """issue #807, second cut. The first cut ranked every candidate against
+    the union of all landed sources. With 22 landed positions over a
+    35-source corpus that union covers most of the corpus, so no candidate
+    can enter the preferred tier and the cap fills by `position_id`
+    ascending -- no book-diversity property at all, which is the opposite of
+    what #651 asks for.
+
+    Two landed positions, two categories, two books. `src-2` is a landed
+    source, but it is landed under the OTHER category, so for
+    `war-and-state` it is a genuinely different book and must lead. Under
+    the union rule `pos-cross` is disqualified and `pos-same` -- the asking
+    note's own book -- wins on `position_id`, which is exactly backwards."""
+    pos_landed_war = _position("pos-landed-war", ["n1"], ["src-1"])
+    pos_landed_econ = _position("pos-landed-econ", ["n9"], ["src-2"])
+    pos_same_source = _position("pos-a-same", ["n2"], ["src-1"])
+    pos_cross_source = _position("pos-b-cross", ["n3"], ["src-2"])
+    positions = [pos_landed_war, pos_landed_econ, pos_same_source, pos_cross_source]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n9", "src-2", "economic-dependency"),
+            _assignment("n2", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed_war), _landed(pos_landed_econ)],
+        {"pos-landed-war", "pos-landed-econ"},
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    war = next(c for c in result.categories if c.category_id == "war-and-state")
+    assert war.chunk_ids == ("n3", "n2")
+    assert [p.position_id for p in result.positions][0] == "pos-b-cross"

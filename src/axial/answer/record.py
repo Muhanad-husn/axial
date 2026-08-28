@@ -92,6 +92,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -278,13 +279,26 @@ def _claim_to_dict(claim: Claim) -> dict[str, Any]:
     }
 
 
-def _vocabulary_to_dict(result: VocabularyJoinResult) -> dict[str, Any]:
+def _vocabulary_to_dict(
+    result: VocabularyJoinResult, assembled_chunk_ids: Sequence[str]
+) -> dict[str, Any]:
     """The vocabulary step's own audit trail (issue #807), the `map+vocab`
     arm's counterpart to `landed`/`corridor` above: the column and level it
     joined on, the per-category cap it enforced, and every category the
     landed set's own notes reached -- including one that contributed zero
     neighbours (a real, reached, singleton category, `CategoryReach`'s own
-    docstring), never silently dropped from this list."""
+    docstring), never silently dropped from this list.
+
+    **Two counts per category, because they differ by a factor of six.**
+    `offered_note_count` is what the join handed to assembly; `assembled_
+    note_count` is how many of those the assembly cap actually kept. The
+    first live run offered 240 notes across twelve categories and assembled
+    38 of them. A single `note_count` invited exactly one misreading -- that
+    the vocabulary step contributed 240 passages to an answer built from 90
+    -- and issue #809 reads these figures to decide whether the derived
+    vocabulary pays. `source_count` stays a count over what was OFFERED,
+    which is what the cap selected on."""
+    assembled = set(assembled_chunk_ids)
     return {
         "column": result.column,
         "level": result.level,
@@ -293,7 +307,10 @@ def _vocabulary_to_dict(result: VocabularyJoinResult) -> dict[str, Any]:
             {
                 "category_id": category.category_id,
                 "name": category.category_name,
-                "note_count": len(category.chunk_ids),
+                "offered_note_count": len(category.chunk_ids),
+                "assembled_note_count": sum(
+                    1 for chunk_id in category.chunk_ids if chunk_id in assembled
+                ),
                 "source_count": category.source_count,
                 "cap_applied": category.cap_applied,
             }
@@ -339,7 +356,9 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
         "assembled_chunk_ids": list(ask_result.assembled_chunk_ids),
     }
     if ask_result.vocabulary is not None:
-        payload["vocabulary"] = _vocabulary_to_dict(ask_result.vocabulary)
+        payload["vocabulary"] = _vocabulary_to_dict(
+            ask_result.vocabulary, ask_result.assembled_chunk_ids
+        )
     return payload
 
 

@@ -221,3 +221,103 @@ def test_use_vocabulary_true_with_no_persisted_column_raises_naming_the_column(t
             vocabulary_column="mechanism",
             vocabulary_dir=tmp_path / "empty-vocab",
         )
+
+
+def test_vocabulary_positions_are_assembled_before_corridor_positions(tmp_path: Path):
+    """issue #807, second cut. `assemble_map_evidence` walks positions in the
+    order given and stops at `cap`, so the position type placed last is the
+    one the cap cuts. The first live run put the vocabulary step after the
+    corridor and measured the result: every vocabulary note landed at
+    assembly index 52 or later, synthesis's own char budget cut 32 of the 38
+    back off, and the answer cited none of them -- a step behind the budget
+    rather than inside it, which would have made #809's comparison read two
+    answers built from the same passages.
+
+    Landed still leads. Between the corridor and the vocabulary, the tested
+    reach goes first."""
+    argument = "States extract resources through coercion."
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"], argument)
+    pos_corridor = _position("pos-corridor", ["n2"], ["src-2"], "A rival account.")
+    pos_vocab = _position("pos-vocab", ["n3"], ["src-3"], "A shared mechanism.")
+    map_dir = _write_map(
+        tmp_path / "map",
+        [pos_landed, pos_corridor, pos_vocab],
+        relations=[
+            {
+                "from_position_id": "pos-landed",
+                "to_position_id": "pos-corridor",
+                "relation": "disagrees with",
+            }
+        ],
+    )
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-3", "war-and-state"),
+        ],
+    )
+    client = _DecomposeOnlyClient([argument])
+
+    result = run_map_ask_for_brief(
+        _brief(),
+        client=client,
+        map_dir=map_dir,
+        pin="pin",
+        encode=_fake_encode,
+        use_vocabulary=True,
+        vocabulary_dir=vocabulary_dir,
+        top_k=1,
+    )
+
+    assert [position.position_id for position in result.corridor] == ["pos-corridor"]
+    assert [position.position_id for position in result.vocabulary.positions] == ["pos-vocab"]
+    # Landed, then the category edge, then the corridor.
+    assert result.assembled_chunk_ids == ("n1", "n3", "n2")
+
+
+def test_the_vocabulary_step_wins_the_cap_over_the_corridor(tmp_path: Path):
+    """The ordering above only matters where the cap actually bites. With one
+    slot left after the landed position, it is the category edge that takes
+    it, not the corridor -- which is the whole substance of the change, since
+    on the real corpus the cap always bites (#807's own live run: 240 notes
+    offered into 90 slots)."""
+    argument = "States extract resources through coercion."
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"], argument)
+    pos_corridor = _position("pos-corridor", ["n2"], ["src-2"], "A rival account.")
+    pos_vocab = _position("pos-vocab", ["n3"], ["src-3"], "A shared mechanism.")
+    map_dir = _write_map(
+        tmp_path / "map",
+        [pos_landed, pos_corridor, pos_vocab],
+        relations=[
+            {
+                "from_position_id": "pos-landed",
+                "to_position_id": "pos-corridor",
+                "relation": "disagrees with",
+            }
+        ],
+    )
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-3", "war-and-state"),
+        ],
+    )
+    client = _DecomposeOnlyClient([argument])
+
+    result = run_map_ask_for_brief(
+        _brief(),
+        client=client,
+        map_dir=map_dir,
+        pin="pin",
+        encode=_fake_encode,
+        use_vocabulary=True,
+        vocabulary_dir=vocabulary_dir,
+        top_k=1,
+        assemble_cap=2,
+    )
+
+    assert result.assembled_chunk_ids == ("n1", "n3")

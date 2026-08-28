@@ -753,8 +753,29 @@ def run_map_ask_for_brief(
         )
         vocabulary_positions = vocabulary.positions
 
+    # **The vocabulary step goes BEFORE the corridor, not after it (issue
+    # #807).** `assemble_map_evidence` walks positions in the order given,
+    # one id per position per turn, and stops at `cap`. The first live run
+    # put the vocabulary positions last and measured the consequence: 22
+    # landed plus 30 corridor positions spent 52 of the 90 slots on turn one
+    # alone, the 38 vocabulary positions took exactly what was left, every
+    # one of them landed at assembly index 52 or later, and synthesis's own
+    # char budget (58 composed) then cut 32 of the 38 back off. The answer
+    # cited none of them. A step that can only ever fill the tail of the
+    # budget is not in the retrieval; it is behind it, and the #809
+    # comparison would have read two answers built from the same 52
+    # passages.
+    #
+    # Landed stays first -- those are the door's own hits, and nothing about
+    # this slice earns a place ahead of them. Between the corridor and the
+    # vocabulary the order is a real choice, and this is the one the feature
+    # exists to test: the corridor is the map's own second-tier reach and it
+    # already ships, the category edge is the thing under measurement, and
+    # putting the tested reach behind the untested one guarantees a null
+    # result rather than a measured one. Both still compete inside the same
+    # `cap`; this changes which of them the cap cuts.
     assembled = assemble_map_evidence(
-        (*landed, *corridor, *vocabulary_positions), cap=assemble_cap
+        (*landed, *vocabulary_positions, *corridor), cap=assemble_cap
     )
 
     return AskResult(
