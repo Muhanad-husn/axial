@@ -14,8 +14,10 @@ argument are systematically kept apart by the current grouping.
 
 Run first on `claim` (issue #826): the approach doc's own kill condition --
 high median purity, low scatter there -- would mean the diagnosis is wrong
-and the feature stops. The mechanism-axis baseline already measured
-(2026-08-28): median purity 0.5, 13.9% of bags pure, scatter median 92 bags.
+and the feature stops. The mechanism-axis baseline it is judged against is
+measured and recorded in `docs/approach-positions-not-names.md` §2 and
+this slice's own run log (`data/logs/2026-08-28-claim-bag-purity/`), not
+repeated here where a docstring number goes stale with nothing to catch it.
 
 Resolves the pin by the cheap route on purpose: `axial.argmap.build.
 _prior_pin_dir`'s own newest-by-`map.json`-mtime helper, reused as-is,
@@ -32,7 +34,7 @@ import json
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from axial.argmap.build import BAG_STATE_FILENAME, _bag_state_path, _prior_pin_dir
 from axial.argmap.vocabulary_join import NoVocabularyError
@@ -40,9 +42,13 @@ from axial.paths import default_map_dir
 from axial.vocabulary import ASSIGNMENTS_FILENAME, MANIFEST_FILENAME, ROOT_LEVEL, VOCABULARY_DIR
 
 # The two pairs #826's verification could not choose between (issue #827
-# comment, founder ruling 2026-08-28): always reported by name below,
-# whether or not they rank in the general pair table -- an absent pair is
-# the informative result and must read as one, not as a silent omission.
+# comment, founder ruling 2026-08-28): the DEFAULT for `compute_purity`'s
+# `named_pairs` parameter and the CLI's `--named-pair`, so a bare run keeps
+# checking them without a flag -- not a hardwired gate. These ids are
+# `claim`-scheme data (`config/vocabulary.yaml`), not a rule this module
+# enforces; `--named-pair` repeated on the CLI replaces this default
+# wholesale for a run against a different column or scheme (issue #827 fix
+# round, reviewer F6).
 NAMED_PAIRS: tuple[tuple[str, str], ...] = (
     (
         "causal-argument-state-formation-or-power",
@@ -87,13 +93,30 @@ class NoMapDirError(PurityError):
         super().__init__(message)
 
 
+class InvalidNamedPairError(PurityError):
+    """Raised by `parse_named_pair` when a `--named-pair` value is not
+    exactly two non-empty, comma-separated category ids. Named, with the
+    raw text, rather than an unpacking traceback."""
+
+    def __init__(self, raw: str) -> None:
+        self.raw = raw
+        super().__init__(
+            f"--named-pair {raw!r} is not two comma-separated category ids "
+            "(expected the shape 'id-a,id-b')"
+        )
+
+
 class NoBagStateError(PurityError):
     """Raised when the resolved pin directory has no `bag_state.json`
-    (issue #677) -- a build that finished before bag state was persisted, or
-    (measured on the real corpus, 2026-08-28) a pin directory that happens to
-    be newest by `map.json` mtime but was never bagged. Reported by name,
-    never a traceback: the fix is `--pin` naming a build that does carry
-    one."""
+    (issue #677): a build that finished before bag state was persisted, or a
+    pin directory that happens to be newest by `map.json` mtime but was
+    never bagged. On the corpus this shipped against, the newest build IS
+    the bagged one and the bare, no-`--pin` command resolves it and prints a
+    full report -- this class exists for the directory layout where that is
+    not true, not because it was observed to be. No newest-BAGGED fallback
+    is added to cover it: for an instrument, naming the missing bag state is
+    safer than silently measuring an older build. Reported by name, never a
+    traceback -- the fix is `--pin` naming a build that does carry one."""
 
     def __init__(self, pin: str, outdir: Path) -> None:
         self.pin = pin
@@ -110,7 +133,16 @@ class CoverageReport:
     silently dropped (the acceptance criterion's own third clause).
     `overlap_*` splits the chunks present on BOTH sides by what the
     vocabulary column made of them: assigned a category, genuinely refused,
-    or answered with a string naming no committed category."""
+    or answered with a string naming no committed category.
+
+    `overlap_multi_category_count` is the chunks among `overlap_assigned_
+    count` that carry MORE than one category at the resolved level -- only
+    possible for a list-valued column (`about`/`arguing_against`; neither
+    `claim` nor `mechanism` is list-valued, so this reads 0 on both today).
+    Inert now on purpose: purity's own denominator counts CHUNKS, and a
+    chunk contributing to two categories would inflate a bag's modal share
+    and enter the pair table under both categories at once without this
+    count on record to catch the day that stops being true."""
 
     bag_chunk_count: int
     vocabulary_chunk_count: int
@@ -120,6 +152,7 @@ class CoverageReport:
     overlap_assigned_count: int
     overlap_refused_count: int
     overlap_out_of_scheme_count: int
+    overlap_multi_category_count: int
 
 
 @dataclass(frozen=True)
@@ -146,7 +179,8 @@ class CategoryScatter:
     """One committed category's own standing in the join: how many bagged,
     categorised chunks it holds (`member_count`), and how many DISTINCT bags
     those chunks are spread across (`bag_count`) -- the scatter number the
-    approach doc's kill condition is stated in ("a median of 92 bags")."""
+    approach doc's kill condition (`docs/approach-positions-not-names.md`
+    §2) is stated in."""
 
     category_id: str
     category_name: str
@@ -161,9 +195,18 @@ class ScatterStats:
     `bag_count` over the categories that DO have at least one bagged member
     -- an empty category would only read as "scattered across zero bags"
     and drag the average toward a number that is not about scatter at
-    all."""
+    all.
+
+    `population_bag_count` is the number of bags a `bag_count` entry can
+    possibly land in: every bag holding at least one categorised member,
+    counted BEFORE `PurityStats`'s own `eligible_bag_count` filter (2+
+    categorised members) is applied. The two counts differ -- a bag with
+    exactly one categorised member is scattered but not purity-eligible --
+    and reporting only `eligible_bag_count` next to a `bag_count` invites
+    dividing by the wrong base."""
 
     categories: tuple[CategoryScatter, ...]
+    population_bag_count: int
     min_bag_count: int | None
     median_bag_count: float | None
     max_bag_count: int | None
@@ -281,6 +324,17 @@ def _load_bag_assignments(outdir: Path) -> dict[str, int]:
     return {str(chunk_id): int(label) for chunk_id, label in assignments.items()}
 
 
+def parse_named_pair(raw: str) -> tuple[str, str]:
+    """One `--named-pair id-a,id-b` value into the `(category_a, category_b)`
+    shape `compute_purity`'s own `named_pairs` parameter takes. Raises
+    `InvalidNamedPairError` naming the bad value -- never lets a malformed
+    flag reach `compute_purity` as a one-element or three-element tuple."""
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 2 or not all(parts):
+        raise InvalidNamedPairError(raw)
+    return (parts[0], parts[1])
+
+
 def _named_pair(
     id_a: str,
     id_b: str,
@@ -311,13 +365,22 @@ def compute_purity(
     pin: str | None = None,
     vocabulary_dir: Path | None = None,
     level: int | None = None,
+    named_pairs: Sequence[tuple[str, str]] = NAMED_PAIRS,
 ) -> PurityReport:
     """The full cross-tab (issue #827): resolves the map pin, reads its bag
     state, reads `column`'s built vocabulary, and joins the two. Raises
     `NoMapDirError`/`NoBagStateError` (this module) for anything wrong on
     the map side, `NoVocabularyError` (`axial.argmap.vocabulary_join`) when
     `column` has never been built. Zero model calls, zero network -- every
-    number here comes from two files already on disk."""
+    number here comes from two files already on disk.
+
+    `named_pairs` defaults to `NAMED_PAIRS` -- the two pairs #826's
+    verification flagged, always checked on a bare run so that guarantee
+    survives without a flag -- but is a plain parameter, not a constant
+    baked into the join itself: `config/vocabulary.yaml` is corpus-specific
+    data, and a scheme this command runs against later needs its own pair
+    or pairs of interest without a code change (`--named-pair` on the CLI,
+    `axial.cli._map_purity`)."""
     root = Path(map_dir) if map_dir is not None else default_map_dir()
     outdir, resolved_pin = resolve_map_pin_dir(root, pin)
     bag_assignments = _load_bag_assignments(outdir)
@@ -362,6 +425,14 @@ def compute_purity(
     overlap_assigned = {c for c in overlap if reason_by_chunk.get(c) == REASON_ASSIGNED}
     overlap_refused = {c for c in overlap if reason_by_chunk.get(c) == REASON_REFUSED}
     overlap_out_of_scheme = {c for c in overlap if reason_by_chunk.get(c) == REASON_OUT_OF_SCHEME}
+    # Issue #827 fix round, reviewer F4: a chunk carrying 2+ categories at
+    # this level (only possible on a list-valued column -- neither `claim`
+    # nor `mechanism` is one) would otherwise inflate purity's modal share
+    # and double-enter the pair table silently. Counted and printed even
+    # though it is 0 on both live columns today.
+    overlap_multi_category_count = sum(
+        1 for c in overlap_assigned if len(category_ids_by_chunk[c]) > 1
+    )
 
     coverage = CoverageReport(
         bag_chunk_count=len(bag_chunk_ids),
@@ -372,6 +443,7 @@ def compute_purity(
         overlap_assigned_count=len(overlap_assigned),
         overlap_refused_count=len(overlap_refused),
         overlap_out_of_scheme_count=len(overlap_out_of_scheme),
+        overlap_multi_category_count=overlap_multi_category_count,
     )
 
     bag_members: dict[int, list[str]] = collections.defaultdict(list)
@@ -381,6 +453,12 @@ def compute_purity(
     purities: list[float] = []
     distinct_counts: list[int] = []
     eligible_bag_count = 0
+    # Issue #827 fix round, reviewer F2: the population `bag_count` (below)
+    # is drawn from -- every bag holding at least one categorised member,
+    # BEFORE the 2+ eligibility filter purity applies. Tracked separately so
+    # the report never states a scatter count next to `eligible_bag_count`
+    # and lets a reader divide by the wrong base.
+    population_bag_count = 0
     category_reach: dict[str, dict[str, set]] = collections.defaultdict(
         lambda: {"chunk_ids": set(), "bag_labels": set()}
     )
@@ -389,6 +467,8 @@ def compute_purity(
 
     for bag_label, members in bag_members.items():
         categorised = [chunk_id for chunk_id in members if chunk_id in overlap_assigned]
+        if categorised:
+            population_bag_count += 1
         category_counts: collections.Counter[str] = collections.Counter()
         for chunk_id in categorised:
             for category_id in category_ids_by_chunk[chunk_id]:
@@ -440,6 +520,7 @@ def compute_purity(
     ]
     scatter = ScatterStats(
         categories=scatter_categories,
+        population_bag_count=population_bag_count,
         min_bag_count=min(populated_bag_counts) if populated_bag_counts else None,
         median_bag_count=statistics.median(populated_bag_counts) if populated_bag_counts else None,
         max_bag_count=max(populated_bag_counts) if populated_bag_counts else None,
@@ -460,11 +541,11 @@ def compute_purity(
     )
 
     known_category_ids = set(category_names)
-    named_pairs = tuple(
+    named_pair_results = tuple(
         _named_pair(
             id_a, id_b, category_names, pair_counts, multi_category_bag_count, known_category_ids
         )
-        for id_a, id_b in NAMED_PAIRS
+        for id_a, id_b in named_pairs
     )
 
     return PurityReport(
@@ -479,7 +560,7 @@ def compute_purity(
         pairs=PairCooccurrence(
             multi_category_bag_count=multi_category_bag_count,
             pairs=ranked_pairs,
-            named_pairs=named_pairs,
+            named_pairs=named_pair_results,
         ),
     )
 
@@ -513,6 +594,7 @@ def format_purity_report(report: PurityReport) -> str:
         f"  bag-only (no vocabulary record for this column): {coverage.bag_only_count}",
         f"  vocabulary-only (no bag): {coverage.vocabulary_only_count}",
         f"  overlap assigned a category: {coverage.overlap_assigned_count}",
+        f"  overlap assigned 2+ categories: {coverage.overlap_multi_category_count}",
         f"  overlap refused: {coverage.overlap_refused_count}",
         f"  overlap out-of-scheme: {coverage.overlap_out_of_scheme_count}",
         "",
@@ -532,7 +614,10 @@ def format_purity_report(report: PurityReport) -> str:
     ]
 
     scatter = report.scatter
-    lines.append("CATEGORY SCATTER (reverse table -- distinct bags each category reaches)")
+    lines.append(
+        "CATEGORY SCATTER (over "
+        f"{scatter.population_bag_count} bag(s) holding at least one categorised member)"
+    )
     min_text = scatter.min_bag_count if scatter.min_bag_count is not None else "n/a"
     max_text = scatter.max_bag_count if scatter.max_bag_count is not None else "n/a"
     lines.append(

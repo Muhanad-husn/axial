@@ -20,7 +20,14 @@ from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
-from axial.argmap.purity import PurityError, compute_purity, format_purity_report
+from axial.argmap.purity import (
+    NAMED_PAIRS,
+    InvalidNamedPairError,
+    PurityError,
+    compute_purity,
+    format_purity_report,
+    parse_named_pair,
+)
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
@@ -897,6 +904,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="the vocabulary level to join on (default: the column's own max_level)",
+    )
+    map_purity_parser.add_argument(
+        "--named-pair",
+        action="append",
+        dest="named_pairs",
+        metavar="ID_A,ID_B",
+        default=None,
+        help=(
+            "a category-id pair to check co-occurrence for by name, whether "
+            "or not it ranks in the general table; repeatable. Default (when "
+            "omitted): the two claim-scheme pairs #826's verification could "
+            "not choose between. Pass this to check a different pair, or a "
+            "pair from a different column's own scheme -- the default is "
+            "`claim`-specific data, not a rule this command enforces"
+        ),
     )
 
     eval_parser = subparsers.add_parser(
@@ -3684,10 +3706,21 @@ def _map_purity(
     map_dir: str | None,
     vocabulary_dir: str | None,
     level: int | None,
+    named_pairs: list[str] | None = None,
 ) -> int:
     """`axial map purity` (issue #827): a pure-function cross-tab, zero
     model calls -- no `run_context`, unlike every paid pass above, because
     nothing here is worth a run log or a resume ledger."""
+    try:
+        parsed_pairs = (
+            tuple(parse_named_pair(raw) for raw in named_pairs)
+            if named_pairs is not None
+            else NAMED_PAIRS
+        )
+    except InvalidNamedPairError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     try:
         report = compute_purity(
             column=column,
@@ -3695,6 +3728,7 @@ def _map_purity(
             map_dir=Path(map_dir) if map_dir is not None else None,
             vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
             level=level,
+            named_pairs=parsed_pairs,
         )
     except (PurityError, NoVocabularyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -4057,6 +4091,7 @@ def main(argv: list[str] | None = None) -> int:
             args.map_dir,
             args.vocabulary_dir,
             args.level,
+            args.named_pairs,
         )
 
     if args.command == "artifacts":

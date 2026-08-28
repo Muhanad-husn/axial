@@ -1884,6 +1884,11 @@ def test_main_map_purity_prints_purity_scatter_pairs_and_coverage_for_bags_with_
     assert "CATEGORY PAIR CO-OCCURRENCE" in out
     assert "bag-only (no vocabulary record for this column): 1" in out
     assert "vocabulary-only (no bag): 1" in out
+    assert "overlap assigned 2+ categories: 0" in out
+    # Issue #827 fix round (reviewer F2): the scatter table's own base is
+    # named, and it is NOT the same number as "eligible bags: 1" three lines
+    # above -- bag 1 (one categorised member) is scattered but not eligible.
+    assert "CATEGORY SCATTER (over 2 bag(s) holding at least one categorised member)" in out
     assert "NAMED PAIRS" in out
     assert f"{id_a} x {id_b}" in out
     assert "absent from the ranking (0 bags)" in out
@@ -1977,3 +1982,116 @@ def test_main_map_purity_reports_an_unbuilt_vocabulary_column_by_name(tmp_path, 
     assert exit_code == 1
     assert "claim" in captured.err
     assert "axial vocabulary build" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# `--named-pair` (issue #827 fix round, reviewer F6): the two #826 claim-
+# scheme ids are the CLI's default, never a hardwired gate.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_recognises_repeated_named_pair_flag(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "map",
+            "purity",
+            "--column",
+            "mechanism",
+            "--named-pair",
+            "cat-a,cat-b",
+            "--named-pair",
+            "cat-c,cat-d",
+        ]
+    )
+
+    assert args.named_pairs == ["cat-a,cat-b", "cat-c,cat-d"]
+
+
+def test_build_parser_map_purity_defaults_named_pair_to_none_so_the_827_default_applies(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["map", "purity", "--column", "claim"])
+
+    assert args.named_pairs is None
+
+
+def test_main_map_purity_forwards_named_pair_overrides_to_the_report(tmp_path, capsys):
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _purity_write_map_json(outdir)
+    _purity_write_bag_state(outdir, {"n1": 0, "n2": 0})
+    vocabulary_dir = tmp_path / "vocab"
+    _purity_write_vocabulary(
+        vocabulary_dir,
+        "mechanism",
+        [
+            _purity_assignment("n1", "war-and-state"),
+            _purity_assignment("n2", "elite-competition"),
+        ],
+        categories=[_purity_category("war-and-state"), _purity_category("elite-competition")],
+    )
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "mechanism",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+            "--named-pair",
+            "war-and-state,elite-competition",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    # `_named_pair` sorts the pair alphabetically, the same key shape the
+    # ranked table itself uses.
+    assert "elite-competition x war-and-state: 1 bag(s)" in out
+    # The module's own #826 claim-scheme default was NOT consulted.
+    assert "causal-argument-state-formation-or-power" not in out
+
+
+def test_main_map_purity_reports_a_malformed_named_pair_by_name_not_a_traceback(tmp_path, capsys):
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _purity_write_map_json(outdir)
+    _purity_write_bag_state(outdir, {"n1": 0})
+    vocabulary_dir = tmp_path / "vocab"
+    _purity_write_vocabulary(
+        vocabulary_dir, "claim", [_purity_assignment("n1", "cat-a")], [_purity_category("cat-a")]
+    )
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+            "--named-pair",
+            "only-one-id",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "only-one-id" in captured.err

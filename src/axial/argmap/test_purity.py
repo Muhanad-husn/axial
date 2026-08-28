@@ -15,9 +15,11 @@ import pytest
 
 from axial.argmap.purity import (
     NAMED_PAIRS,
+    InvalidNamedPairError,
     NoBagStateError,
     NoMapDirError,
     compute_purity,
+    parse_named_pair,
     resolve_map_pin_dir,
 )
 from axial.argmap.vocabulary_join import NoVocabularyError
@@ -443,3 +445,176 @@ def test_a_named_pair_whose_categories_are_not_in_this_columns_scheme_is_marked_
 
     assert all(not named.applicable for named in report.pairs.named_pairs)
     assert all(named.bag_count == 0 for named in report.pairs.named_pairs)
+
+
+# ---------------------------------------------------------------------------
+# Issue #827 fix round (reviewer F2): the scatter table's own population is
+# NOT the same base as purity's `eligible_bag_count`.
+# ---------------------------------------------------------------------------
+
+
+def test_scatter_population_differs_from_purity_eligible_bag_count(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    # bag 0: 2 categorised members -- purity-eligible AND scattered.
+    # bag 1: 1 categorised member -- scattered, but NOT purity-eligible.
+    # bag 2: 0 categorised members (refused) -- neither.
+    _write_bag_state(outdir, {"n1": 0, "n2": 0, "n3": 1, "n4": 2})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "claim",
+        [
+            _assignment("n1", "cat-a"),
+            _assignment("n2", "cat-a"),
+            _assignment("n3", "cat-a"),
+            _assignment("n4", None),
+        ],
+        categories=[_category("cat-a")],
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+
+    assert report.purity.eligible_bag_count == 1
+    assert report.scatter.population_bag_count == 2
+    assert report.scatter.population_bag_count != report.purity.eligible_bag_count
+
+
+def test_format_purity_report_names_the_scatter_tables_own_population(tmp_path: Path):
+    from axial.argmap.purity import format_purity_report
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0, "n2": 1})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "claim",
+        [_assignment("n1", "cat-a"), _assignment("n2", "cat-a")],
+        categories=[_category("cat-a")],
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+    text = format_purity_report(report)
+
+    assert "CATEGORY SCATTER (over 2 bag(s) holding at least one categorised member)" in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #827 fix round (reviewer F4): a chunk carrying 2+ categories is
+# counted into coverage, never silently folded into a chunk-count denominator
+# that assumes one category per chunk.
+# ---------------------------------------------------------------------------
+
+
+def test_a_chunk_carrying_two_categories_is_counted_in_coverage(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0, "n2": 0})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "about",
+        [
+            # n1 answers a list-valued column with two elements, each filed
+            # under a different category -- category_ids_by_chunk["n1"]
+            # ends up a 2-element frozenset.
+            _assignment("n1", "cat-a", element_index=0),
+            _assignment("n1", "cat-b", element_index=1),
+            _assignment("n2", "cat-a"),
+        ],
+        categories=[_category("cat-a"), _category("cat-b")],
+    )
+
+    report = compute_purity(
+        column="about", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+
+    assert report.coverage.overlap_multi_category_count == 1
+
+
+def test_no_multi_category_chunks_reads_as_an_explicit_zero_not_an_absent_key(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab", "claim", [_assignment("n1", "cat-a")], categories=[_category("cat-a")]
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+
+    assert report.coverage.overlap_multi_category_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #827 fix round (reviewer F6): the two #826 category ids are a
+# default, not a hardwired gate -- `named_pairs` overrides them.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_purity_accepts_a_named_pairs_override(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0, "n2": 0})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [_assignment("n1", "war-and-state"), _assignment("n2", "elite-competition")],
+        categories=[_category("war-and-state"), _category("elite-competition")],
+    )
+
+    report = compute_purity(
+        column="mechanism",
+        map_dir=map_dir,
+        pin="pin-1",
+        vocabulary_dir=vocabulary_dir,
+        named_pairs=(("war-and-state", "elite-competition"),),
+    )
+
+    assert len(report.pairs.named_pairs) == 1
+    named = report.pairs.named_pairs[0]
+    assert named.applicable is True
+    assert named.bag_count == 1
+    # The module's own NAMED_PAIRS default was NOT consulted -- nothing
+    # about the #826 claim-scheme ids appears in a mechanism-scheme report.
+    assert {p.category_a for p in report.pairs.named_pairs} == {"elite-competition"}
+
+
+def test_compute_purity_default_named_pairs_is_still_the_module_constant(tmp_path: Path):
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _write_map_json(outdir)
+    _write_bag_state(outdir, {"n1": 0})
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab", "claim", [_assignment("n1", "cat-a")], categories=[_category("cat-a")]
+    )
+
+    report = compute_purity(
+        column="claim", map_dir=map_dir, pin="pin-1", vocabulary_dir=vocabulary_dir
+    )
+
+    reported_ids = {(p.category_a, p.category_b) for p in report.pairs.named_pairs}
+    expected_ids = {tuple(sorted(pair)) for pair in NAMED_PAIRS}
+    assert reported_ids == expected_ids
+
+
+def test_parse_named_pair_splits_on_comma():
+    assert parse_named_pair("cat-a,cat-b") == ("cat-a", "cat-b")
+    assert parse_named_pair(" cat-a , cat-b ") == ("cat-a", "cat-b")
+
+
+def test_parse_named_pair_rejects_a_malformed_value():
+    with pytest.raises(InvalidNamedPairError):
+        parse_named_pair("only-one-id")
+    with pytest.raises(InvalidNamedPairError):
+        parse_named_pair("a,b,c")
+    with pytest.raises(InvalidNamedPairError):
+        parse_named_pair("a,")

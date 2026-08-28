@@ -9,6 +9,13 @@ both runs -- a pure join over `data/map/9b796b3a6312b329/bag_state.json` and
 `data/vocabulary/<column>/assignments.jsonl`, both already on disk and paid
 for by earlier slices (#677's bagging, #806/#826's vocabulary build).
 
+**Updated 2026-08-28, fix round on PR #836** (reviewer + verifier findings):
+the command now also reports the scatter table's own population (distinct
+from purity's `eligible_bag_count`) and a coverage count for chunks carrying
+2+ categories, both printed below; the prose here is corrected per reviewer
+F3 (see "Reading the scatter numbers across two different category counts").
+The verdict is unchanged.
+
 ```
 uv run axial map purity --column claim --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
 uv run axial map purity --column mechanism --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
@@ -21,26 +28,80 @@ uv run axial map purity --column mechanism --map-dir D:/axial/data/map --pin 9b7
 > measured 2026-08-28: median purity 0.5, 13.9% pure, scatter median 92 bags.
 
 **Verdict: NOT killed. Confirmed, proceed.** Claim-axis median purity is
-0.56 -- barely above the mechanism baseline's 0.50, nowhere near "high" (a
-bag whose categorised members split roughly 56/44 between two categories on
-average is not a bag that already respects the axis). Pure-bag share is
-17.3%, still a small minority. And scatter is not low -- it is higher than
-mechanism's: median 141 bags per populated category on `claim` against 92
-on `mechanism` (9 categories spread thinner across fewer, wider categories
-than mechanism's 20 spread across more, narrower ones). The diagnosis in
-`docs/approach-positions-not-names.md` section 2 -- wording similarity does
-not respect a constitutive axis, and the mismatch is not an artifact of
-which axis was picked -- holds on the second axis measured. Nothing here
-changes the plan for slice 03 onward.
+0.56. Read against a chance-level floor (below), that is real signal, not
+nothing -- but 0.56 is nowhere near "high" under any reading: a bag whose
+categorised members split roughly 56/44 between two categories on average is
+not a bag that already respects the axis, and only 17.3% of eligible bags
+are fully pure. The diagnosis in `docs/approach-positions-not-names.md`
+section 2 -- wording similarity does not respect a constitutive axis --
+holds on the second axis measured. Nothing here changes the plan for slice
+03 onward.
 
 | | claim (9 categories) | mechanism (20 categories, baseline) |
 |---|---|---|
 | median purity | 0.5578 | 0.5 |
 | mean purity | 0.6233 | 0.55 |
 | pure bags (purity == 1.0) | 83 / 480 (17.3%) | 59 / 424 (13.9%) |
-| median distinct categories per bag | 2.0 | 3.0 |
-| scatter min / median / max (bags) | 69 / 141 / 356 | 39 / 91.5 / 181 |
+| median distinct categories/bag | 2.0 | 3.0 |
+| scatter min / median / max (bags, raw) | 69 / 141 / 356 | 39 / 91.5 / 181 |
+| scatter population (bags with 1+ categorised member) | 650 | 577 |
 | overlap (bagged + categorised) | 6,010 | 5,724 |
+| overlap chunks with 2+ categories | 0 | 0 |
+
+## Reading the scatter numbers across two different category counts (reviewer F3, corrected)
+
+The first version of this log said claim's scatter was "higher" than
+mechanism's because its raw median (141 bags/category) exceeds mechanism's
+(92 bags/category baseline; 91.5 exact on this run). **That comparison is
+confounded and the earlier wording overstated it.** `claim` has 9 categories,
+`mechanism` has 20, over the same ~660 bags and roughly the same pool of
+categorised chunks (5,993 vs 5,222) -- fewer categories means each one
+necessarily absorbs a larger and more scattered slice of the corpus, which
+is arithmetic, not a property of the axis.
+
+Normalised per categorised member, `claim` scatters LESS, not more:
+
+| | claim | mechanism |
+|---|---|---|
+| aggregate bags-per-member (total scatter bag-slots / total members) | 0.268 | 0.356 |
+| mean per-category bags-per-member | 0.328 | 0.410 |
+| median per-category bags-per-member | 0.315 | 0.399 |
+
+`claim`'s own scatter, once you divide out the fact that it has fewer,
+bigger categories, is about 20-25% lower than `mechanism`'s. This does not
+change the verdict -- median purity (0.56) is still the deciding number, and
+it is nowhere close to "the bags already respect this axis" -- but the raw
+"claim scatters worse" framing in the first version of this log was wrong
+and is retracted here.
+
+## A scale for 0.56: the prevalence-weighted chance-level modal share
+
+Purity numbers only mean something next to a baseline for "no signal at
+all." The corpus's own category sizes are already unequal (`claim`'s
+largest category, `causal-argument-state-formation-or-power`, holds 1,648 of
+5,993 categorised, bagged values, 27.5%) -- a bag assembled with NO regard
+for topic at all would still look partly "pure" by that skew alone. The
+standard way to state that floor is the Herfindahl concentration index over
+category prevalence, `H = sum(share_i^2)`: the probability that two
+categorised chunks, picked at random from the corpus with no bag structure
+whatsoever, land in the same category purely by how common each category
+already is.
+
+| | claim | mechanism |
+|---|---|---|
+| H (chance-level pairwise match probability) | 0.166 | 0.070 |
+| observed median purity | 0.558 | 0.500 |
+| purity / H (how far above chance) | 3.4x | 7.1x |
+
+Both axes sit well above their own chance floor -- wording similarity is not
+capturing *zero* topical signal, which is consistent with bags being formed
+from real text rather than noise. But `mechanism`'s purity clears its own,
+much lower, chance floor by a wider margin (7.1x) than `claim`'s clears its
+higher one (3.4x): `claim`'s 9, coarser categories are easier to land in by
+chance, so 0.56 represents LESS above-chance structure than mechanism's 0.50
+does, not more. Either reading keeps the same verdict: above chance, far
+below pure, and nowhere near the kill condition's "the bags already respect
+this axis."
 
 ## What the pair table says about the two #826 pairs (raw counts)
 
@@ -61,7 +122,10 @@ belong together, and a precedence sentence is worth costing out before
 slice 04 forms anything from these categories. That is a finding to hand to
 the founder, not a decision made here -- #827 measures, the glosses are the
 founder's call (issue comment's own scope note), and no scheme edit is made
-on this branch.
+on this branch. (The fix round adds a `--named-pair` override so this check
+is not hardwired to these two claim-scheme ids for a future run against a
+different scheme; the default stays these two so the guarantee holds on a
+bare run.)
 
 On `mechanism`, neither #826 pair applies -- neither category id exists in
 that column's own scheme -- and the command reports that explicitly rather
@@ -79,11 +143,16 @@ NAMED PAIRS (#826's verification -- reported whether or not they rank)
 (0 bag-only); 687 vocabulary-side chunks have no bag (chunks the map's own
 selection/bagging step excluded -- abstentions, back matter, argue-nothing
 passages -- that the vocabulary build still answered). Of the 6,010-chunk
-overlap: 5,993 assigned a category, 17 refused, 0 out-of-scheme.
+overlap: 5,993 assigned a category, 17 refused, 0 out-of-scheme, and 0
+carrying 2+ categories at once (`claim` is not a list-valued column, so this
+is an inert check on this run -- reviewer F4 -- printed anyway so a future
+list-valued column cannot silently break the chunk-count assumption purity's
+denominator makes).
 
 `mechanism`: 5,724 overlap (286 bag-only, 147 vocabulary-only -- `mechanism`
 has its own, larger refusal population per issues #697/#815, 502 of the
-overlap refused here against `claim`'s 17).
+overlap refused here against `claim`'s 17; 0 carrying 2+ categories, same
+reason).
 
 ## Full command output, claim
 
@@ -99,6 +168,7 @@ COVERAGE
   bag-only (no vocabulary record for this column): 0
   vocabulary-only (no bag): 687
   overlap assigned a category: 5993
+  overlap assigned 2+ categories: 0
   overlap refused: 17
   overlap out-of-scheme: 0
 
@@ -111,7 +181,7 @@ PURITY (bags with 2+ categorised members)
   median distinct categories per bag: 2.00
   mean distinct categories per bag: 2.99
 
-CATEGORY SCATTER (reverse table -- distinct bags each category reaches)
+CATEGORY SCATTER (over 650 bag(s) holding at least one categorised member)
   min/median/max bags per populated category: 69 / 141.00 / 356
     empirical-finding-without-causal-claim: 356 bag(s), 1131 member(s)
     causal-argument-state-formation-or-power: 309 bag(s), 1648 member(s)
@@ -156,6 +226,7 @@ COVERAGE
   bag-only (no vocabulary record for this column): 286
   vocabulary-only (no bag): 147
   overlap assigned a category: 5222
+  overlap assigned 2+ categories: 0
   overlap refused: 502
   overlap out-of-scheme: 0
 
@@ -168,7 +239,7 @@ PURITY (bags with 2+ categorised members)
   median distinct categories per bag: 3.00
   mean distinct categories per bag: 4.03
 
-CATEGORY SCATTER (reverse table -- distinct bags each category reaches)
+CATEGORY SCATTER (over 577 bag(s) holding at least one categorised member)
   min/median/max bags per populated category: 39 / 91.50 / 181
     elite-competition-and-coalition-formation: 181 bag(s), 460 member(s)
     ideological-persuasion-and-legitimation: 165 bag(s), 617 member(s)
