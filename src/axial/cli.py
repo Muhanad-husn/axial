@@ -20,6 +20,14 @@ from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
+from axial.argmap.purity import (
+    NAMED_PAIRS,
+    InvalidNamedPairError,
+    PurityError,
+    compute_purity,
+    format_purity_report,
+    parse_named_pair,
+)
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
@@ -854,6 +862,62 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "bounded concurrent resolve-target workers (this pass is "
             f"I/O-bound, like 'map build') (default: {MAP_RESIDUE_DEFAULT_WORKERS})"
+        ),
+    )
+
+    map_purity_parser = map_subparsers.add_parser(
+        "purity",
+        help=(
+            "issue #827: a pure-function cross-tab, zero model calls and no "
+            "network -- joins a map build's own bag assignments "
+            "(bag_state.json, issue #677) against a built derived-vocabulary "
+            "column (data/vocabulary/<column>/, issue #806) and reports how "
+            "impure the wording bags are on that axis, how widely each "
+            "category is scattered across bags, and which category pairs "
+            "co-occur in a bag most often. The claim-axis run is the "
+            "feature's first kill switch (docs/approach-positions-not-names."
+            "md §2)"
+        ),
+    )
+    map_purity_parser.add_argument(
+        "--column",
+        required=True,
+        help="the built vocabulary column to cross-tab against the map's bags (e.g. claim, mechanism)",
+    )
+    map_purity_parser.add_argument(
+        "--pin",
+        default=None,
+        help="the map pin to read (default: the newest completed build under --map-dir)",
+    )
+    map_purity_parser.add_argument(
+        "--map-dir",
+        default=None,
+        help="override data/map/ (default: paths.map_dir from config/pipeline.yaml)",
+    )
+    map_purity_parser.add_argument(
+        "--vocabulary-dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path)",
+    )
+    map_purity_parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="the vocabulary level to join on (default: the column's own max_level)",
+    )
+    map_purity_parser.add_argument(
+        "--named-pair",
+        action="append",
+        dest="named_pairs",
+        metavar="ID_A,ID_B",
+        default=None,
+        help=(
+            "a category-id pair to check co-occurrence for by name, whether "
+            "or not it ranks in the general table; repeatable. Default (when "
+            "omitted): the two claim-scheme pairs #826's verification could "
+            "not choose between. Pass this to check a different pair, or a "
+            "pair from a different column's own scheme -- the default is "
+            "`claim`-specific data, not a rule this command enforces"
         ),
     )
 
@@ -3636,6 +3700,43 @@ def _map_residue(*, workers: int = MAP_RESIDUE_DEFAULT_WORKERS) -> int:
     return 0
 
 
+def _map_purity(
+    column: str,
+    pin: str | None,
+    map_dir: str | None,
+    vocabulary_dir: str | None,
+    level: int | None,
+    named_pairs: list[str] | None = None,
+) -> int:
+    """`axial map purity` (issue #827): a pure-function cross-tab, zero
+    model calls -- no `run_context`, unlike every paid pass above, because
+    nothing here is worth a run log or a resume ledger."""
+    try:
+        parsed_pairs = (
+            tuple(parse_named_pair(raw) for raw in named_pairs)
+            if named_pairs is not None
+            else NAMED_PAIRS
+        )
+    except InvalidNamedPairError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        report = compute_purity(
+            column=column,
+            pin=pin,
+            map_dir=Path(map_dir) if map_dir is not None else None,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            level=level,
+            named_pairs=parsed_pairs,
+        )
+    except (PurityError, NoVocabularyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_purity_report(report))
+    return 0
+
+
 def _eval_coherence(sample_path: str, *, reviewers: int, out_path: str | None) -> int:
     """The §10.2 coherence eval track: a committed sample spec in, a per-
     stratum report out. Offline instrument, same as `_panel_run` below:
@@ -3982,6 +4083,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "residue":
         return _map_residue(workers=args.workers)
+
+    if args.command == "map" and args.map_command == "purity":
+        return _map_purity(
+            args.column,
+            args.pin,
+            args.map_dir,
+            args.vocabulary_dir,
+            args.level,
+            args.named_pairs,
+        )
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

@@ -1,0 +1,118 @@
+$ uv run axial map purity --column claim --map-dir D:/axial/data/map --vocabulary-dir D:/axial/data/vocabulary
+pin: 9b796b3a6312b329 (D:\axial\data\map\9b796b3a6312b329)
+column: claim (level 1)
+vocabulary: D:\axial\data\vocabulary\claim
+
+COVERAGE
+  bag-side chunks: 6010
+  vocabulary-side chunks: 6697
+  overlap (joinable both sides): 6010
+  bag-only (no vocabulary record for this column): 0
+  vocabulary-only (no bag): 687
+  overlap assigned a category: 5993
+  overlap assigned 2+ categories: 0
+  overlap refused: 17
+  overlap out-of-scheme: 0
+
+PURITY (bags with 2+ categorised members)
+  eligible bags: 480
+  excluded (fewer than 2 categorised members): 180
+  median purity: 0.56
+  mean purity: 0.62
+  pure bags (purity == 1.0): 83 (17.3%)
+  median distinct categories per bag: 2.00
+  mean distinct categories per bag: 2.99
+
+CATEGORY SCATTER (over 650 bag(s) holding at least one categorised member)
+  min/median/max bags per populated category: 69 / 141.00 / 356
+    empirical-finding-without-causal-claim (empirical finding or observation without causal claim): 356 bag(s), 1131 member(s)
+    causal-argument-state-formation-or-power (causal argument about state formation or state power): 309 bag(s), 1648 member(s)
+    characterization-of-regime-movement-or-system (characterization of a regime, movement, or political system): 214 bag(s), 755 member(s)
+    causal-argument-violence-war-or-conflict (causal argument about violence, war, or conflict dynamics): 187 bag(s), 906 member(s)
+    critique-of-existing-theories-or-concepts (critique of existing theories or concepts): 141 bag(s), 441 member(s)
+    methodological-preconditions (methodological preconditions): 128 bag(s), 269 member(s)
+    causal-argument-nationalism-or-identity (causal argument about nationalism, identity, or nation-building): 112 bag(s), 511 member(s)
+    comparative-or-typological-classification (comparative or typological classification): 87 bag(s), 157 member(s)
+    bibliographic-source-note-or-formal-description (bibliographic, source note, or formal description of the text itself): 69 bag(s), 175 member(s)
+
+CATEGORY PAIR CO-OCCURRENCE (397 multi-category bag(s))
+  expected/lift are against independence over presence among these 397 multi-category bags specifically -- expected = presence(A) x presence(B) / that count, lift = observed / expected. Ranking by raw count ranks by category prevalence; a pair at the top of this list can sit at lift ~1.0 -- see the by-lift ranking below for the same pairs read the other way
+  1. causal-argument-state-formation-or-power x empirical-finding-without-causal-claim: 178 bag(s) (44.8%), expected 178.20, lift 1.00x
+  2. causal-argument-state-formation-or-power x characterization-of-regime-movement-or-system: 146 bag(s) (36.8%), expected 131.83, lift 1.11x
+  3. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), expected 134.84, lift 1.02x
+  4. causal-argument-violence-war-or-conflict x empirical-finding-without-causal-claim: 120 bag(s) (30.2%), expected 111.12, lift 1.08x
+  5. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), expected 108.64, lift 1.03x
+  6. critique-of-existing-theories-or-concepts x empirical-finding-without-causal-claim: 89 bag(s) (22.4%), expected 84.70, lift 1.05x
+  7. causal-argument-state-formation-or-power x critique-of-existing-theories-or-concepts: 88 bag(s) (22.2%), expected 82.81, lift 1.06x
+  8. causal-argument-violence-war-or-conflict x characterization-of-regime-movement-or-system: 86 bag(s) (21.7%), expected 82.21, lift 1.05x
+  9. causal-argument-nationalism-or-identity x empirical-finding-without-causal-claim: 79 bag(s) (19.9%), expected 69.79, lift 1.13x
+  10. characterization-of-regime-movement-or-system x critique-of-existing-theories-or-concepts: 69 bag(s) (17.4%), expected 62.66, lift 1.10x
+  11. empirical-finding-without-causal-claim x methodological-preconditions: 67 bag(s) (16.9%), expected 67.08, lift 1.00x
+  12. causal-argument-nationalism-or-identity x causal-argument-state-formation-or-power: 66 bag(s) (16.6%), expected 68.23, lift 0.97x
+  13. causal-argument-state-formation-or-power x comparative-or-typological-classification: 60 bag(s) (15.1%), expected 53.00, lift 1.13x
+  14. causal-argument-nationalism-or-identity x characterization-of-regime-movement-or-system: 59 bag(s) (14.9%), expected 51.63, lift 1.14x
+  15. causal-argument-state-formation-or-power x methodological-preconditions: 59 bag(s) (14.9%), expected 65.58, lift 0.90x
+  16. characterization-of-regime-movement-or-system x comparative-or-typological-classification: 57 bag(s) (14.4%), expected 40.10, lift 1.42x
+  17. comparative-or-typological-classification x empirical-finding-without-causal-claim: 57 bag(s) (14.4%), expected 54.21, lift 1.05x
+  18. causal-argument-violence-war-or-conflict x critique-of-existing-theories-or-concepts: 54 bag(s) (13.6%), expected 51.64, lift 1.05x
+  19. causal-argument-nationalism-or-identity x causal-argument-violence-war-or-conflict: 52 bag(s) (13.1%), expected 42.55, lift 1.22x
+  20. characterization-of-regime-movement-or-system x methodological-preconditions: 44 bag(s) (11.1%), expected 49.62, lift 0.89x
+  21. critique-of-existing-theories-or-concepts x methodological-preconditions: 44 bag(s) (11.1%), expected 31.17, lift 1.41x
+  22. causal-argument-violence-war-or-conflict x methodological-preconditions: 41 bag(s) (10.3%), expected 40.90, lift 1.00x
+  23. causal-argument-nationalism-or-identity x critique-of-existing-theories-or-concepts: 38 bag(s) (9.6%), expected 32.43, lift 1.17x
+  24. causal-argument-violence-war-or-conflict x comparative-or-typological-classification: 38 bag(s) (9.6%), expected 33.05, lift 1.15x
+  25. comparative-or-typological-classification x critique-of-existing-theories-or-concepts: 35 bag(s) (8.8%), expected 25.19, lift 1.39x
+  26. causal-argument-nationalism-or-identity x comparative-or-typological-classification: 33 bag(s) (8.3%), expected 20.76, lift 1.59x
+  27. bibliographic-source-note-or-formal-description x empirical-finding-without-causal-claim: 32 bag(s) (8.1%), expected 32.52, lift 0.98x
+  28. bibliographic-source-note-or-formal-description x causal-argument-state-formation-or-power: 29 bag(s) (7.3%), expected 31.80, lift 0.91x
+  29. comparative-or-typological-classification x methodological-preconditions: 29 bag(s) (7.3%), expected 19.95, lift 1.45x
+  30. bibliographic-source-note-or-formal-description x characterization-of-regime-movement-or-system: 22 bag(s) (5.5%), expected 24.06, lift 0.91x
+  31. causal-argument-nationalism-or-identity x methodological-preconditions: 22 bag(s) (5.5%), expected 25.69, lift 0.86x
+  32. bibliographic-source-note-or-formal-description x critique-of-existing-theories-or-concepts: 21 bag(s) (5.3%), expected 15.11, lift 1.39x
+  33. bibliographic-source-note-or-formal-description x causal-argument-violence-war-or-conflict: 19 bag(s) (4.8%), expected 19.83, lift 0.96x
+  34. bibliographic-source-note-or-formal-description x causal-argument-nationalism-or-identity: 18 bag(s) (4.5%), expected 12.45, lift 1.45x
+  35. bibliographic-source-note-or-formal-description x methodological-preconditions: 18 bag(s) (4.5%), expected 11.97, lift 1.50x
+  36. bibliographic-source-note-or-formal-description x comparative-or-typological-classification: 11 bag(s) (2.8%), expected 9.67, lift 1.14x
+
+CATEGORY PAIR CO-OCCURRENCE BY LIFT (same pairs, ranked by observed/expected instead of raw count)
+  1. causal-argument-nationalism-or-identity x comparative-or-typological-classification: lift 1.59x (33 bag(s) observed, 20.76 expected)
+  2. bibliographic-source-note-or-formal-description x methodological-preconditions: lift 1.50x (18 bag(s) observed, 11.97 expected)
+  3. comparative-or-typological-classification x methodological-preconditions: lift 1.45x (29 bag(s) observed, 19.95 expected)
+  4. bibliographic-source-note-or-formal-description x causal-argument-nationalism-or-identity: lift 1.45x (18 bag(s) observed, 12.45 expected)
+  5. characterization-of-regime-movement-or-system x comparative-or-typological-classification: lift 1.42x (57 bag(s) observed, 40.10 expected)
+  6. critique-of-existing-theories-or-concepts x methodological-preconditions: lift 1.41x (44 bag(s) observed, 31.17 expected)
+  7. comparative-or-typological-classification x critique-of-existing-theories-or-concepts: lift 1.39x (35 bag(s) observed, 25.19 expected)
+  8. bibliographic-source-note-or-formal-description x critique-of-existing-theories-or-concepts: lift 1.39x (21 bag(s) observed, 15.11 expected)
+  9. causal-argument-nationalism-or-identity x causal-argument-violence-war-or-conflict: lift 1.22x (52 bag(s) observed, 42.55 expected)
+  10. causal-argument-nationalism-or-identity x critique-of-existing-theories-or-concepts: lift 1.17x (38 bag(s) observed, 32.43 expected)
+  11. causal-argument-violence-war-or-conflict x comparative-or-typological-classification: lift 1.15x (38 bag(s) observed, 33.05 expected)
+  12. causal-argument-nationalism-or-identity x characterization-of-regime-movement-or-system: lift 1.14x (59 bag(s) observed, 51.63 expected)
+  13. bibliographic-source-note-or-formal-description x comparative-or-typological-classification: lift 1.14x (11 bag(s) observed, 9.67 expected)
+  14. causal-argument-state-formation-or-power x comparative-or-typological-classification: lift 1.13x (60 bag(s) observed, 53.00 expected)
+  15. causal-argument-nationalism-or-identity x empirical-finding-without-causal-claim: lift 1.13x (79 bag(s) observed, 69.79 expected)
+  16. causal-argument-state-formation-or-power x characterization-of-regime-movement-or-system: lift 1.11x (146 bag(s) observed, 131.83 expected)
+  17. characterization-of-regime-movement-or-system x critique-of-existing-theories-or-concepts: lift 1.10x (69 bag(s) observed, 62.66 expected)
+  18. causal-argument-violence-war-or-conflict x empirical-finding-without-causal-claim: lift 1.08x (120 bag(s) observed, 111.12 expected)
+  19. causal-argument-state-formation-or-power x critique-of-existing-theories-or-concepts: lift 1.06x (88 bag(s) observed, 82.81 expected)
+  20. comparative-or-typological-classification x empirical-finding-without-causal-claim: lift 1.05x (57 bag(s) observed, 54.21 expected)
+  21. critique-of-existing-theories-or-concepts x empirical-finding-without-causal-claim: lift 1.05x (89 bag(s) observed, 84.70 expected)
+  22. causal-argument-violence-war-or-conflict x characterization-of-regime-movement-or-system: lift 1.05x (86 bag(s) observed, 82.21 expected)
+  23. causal-argument-violence-war-or-conflict x critique-of-existing-theories-or-concepts: lift 1.05x (54 bag(s) observed, 51.64 expected)
+  24. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: lift 1.03x (112 bag(s) observed, 108.64 expected)
+  25. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: lift 1.02x (137 bag(s) observed, 134.84 expected)
+  26. causal-argument-violence-war-or-conflict x methodological-preconditions: lift 1.00x (41 bag(s) observed, 40.90 expected)
+  27. causal-argument-state-formation-or-power x empirical-finding-without-causal-claim: lift 1.00x (178 bag(s) observed, 178.20 expected)
+  28. empirical-finding-without-causal-claim x methodological-preconditions: lift 1.00x (67 bag(s) observed, 67.08 expected)
+  29. bibliographic-source-note-or-formal-description x empirical-finding-without-causal-claim: lift 0.98x (32 bag(s) observed, 32.52 expected)
+  30. causal-argument-nationalism-or-identity x causal-argument-state-formation-or-power: lift 0.97x (66 bag(s) observed, 68.23 expected)
+  31. bibliographic-source-note-or-formal-description x causal-argument-violence-war-or-conflict: lift 0.96x (19 bag(s) observed, 19.83 expected)
+  32. bibliographic-source-note-or-formal-description x characterization-of-regime-movement-or-system: lift 0.91x (22 bag(s) observed, 24.06 expected)
+  33. bibliographic-source-note-or-formal-description x causal-argument-state-formation-or-power: lift 0.91x (29 bag(s) observed, 31.80 expected)
+  34. causal-argument-state-formation-or-power x methodological-preconditions: lift 0.90x (59 bag(s) observed, 65.58 expected)
+  35. characterization-of-regime-movement-or-system x methodological-preconditions: lift 0.89x (44 bag(s) observed, 49.62 expected)
+  36. causal-argument-nationalism-or-identity x methodological-preconditions: lift 0.86x (22 bag(s) observed, 25.69 expected)
+
+NAMED PAIRS (#826's verification -- reported whether or not they rank)
+  causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), raw rank 5, lift 1.03x (lift-rank 24 of 36)
+  characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), raw rank 3, lift 1.02x (lift-rank 25 of 36)
+exit=0

@@ -5,7 +5,7 @@
 - **Issue:** [#827](https://github.com/Muhanad-husn/axial/issues/827)
 - **Branch:** feat/positions-not-names/02-bag-purity-crosstab
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ built, awaiting review/PR
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -85,13 +85,60 @@ depends-on: 01-claim-vocabulary-committed
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] Claim-axis run done, log written, kill condition explicitly judged in the summary.
-- [ ] Evidence collected and PR opened into main (`safe-pr`).
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI (`tdd-ci`) -- PR #836, CI green on `d5f8a3e`.
+- [x] Claim-axis run done, log written, kill condition explicitly judged in the summary.
+- [x] Evidence collected and PR opened into main (`safe-pr`) -- PR #836.
 
 ## Status / progress log
 
 - 2026-08-28 planned.
+- 2026-08-28 built: `src/axial/argmap/purity.py` + `test_purity.py` (14 unit
+  tests), `axial map purity` wired into `cli.py`/`test_cli.py` (5 CLI-level
+  tests), fast tier green. Claim-axis run against `D:/axial/data` (pin
+  `9b796b3a6312b329`): median purity 0.56, 17.3% pure, scatter median 141
+  bags -- kill condition NOT met (mechanism baseline: 0.5 / 13.9% / 92). Log:
+  `data/logs/2026-08-28-claim-bag-purity/`. The two #826 pairs rank 3rd and
+  5th of 36 claim-axis pairs by co-occurrence -- flagged for the founder, no
+  scheme edit made. **Test count correction:** the "2,478 tests" figure in
+  this line's first draft was an unchecked recollection from a global memory
+  note, not a captured run; the actual captured full-suite run at that
+  commit (`docs/tdd-evidence/positions-not-names/02-bag-purity-crosstab/
+  test-run.txt`) shows 2,536 passed, 1 skipped -- that number is the current
+  one.
+- 2026-08-28 fix round, PR #836 (reviewer + verifier both DONE_WITH_CONCERNS):
+  four changes on top of `d5f8a3e`, none behind main -- (1) the scatter
+  table now names its own population (bags with 1+ categorised member,
+  distinct from purity's `eligible_bag_count`); (2) coverage now counts
+  chunks assigned 2+ categories at once (0 on both live columns, printed
+  rather than assumed); (3) `NoBagStateError`'s docstring no longer claims a
+  real-corpus measurement it never made -- the bare no-`--pin` command was
+  re-verified live and resolves the bagged pin, exit 0; (4) the two #826
+  category ids are now `compute_purity`'s `named_pairs` DEFAULT, not a
+  hardwired constant -- `--named-pair A,B` (repeatable) overrides them for a
+  different scheme, and the measured mechanism baseline numbers moved out of
+  the module's own docstrings (the issue/plan/run log already carry them).
+  8 new unit tests, 4 new CLI tests. `data/logs/2026-08-28-claim-bag-purity/
+  summary.md` corrected per reviewer F3: the earlier "claim scatters worse
+  than mechanism" line compared 9 categories against 20 without normalising
+  and is retracted -- per categorised member, claim's own scatter is ~20-25%
+  LOWER than mechanism's. Verdict unchanged: NOT killed, confirmed proceed.
+  Fast tier: 2,548 passed, 1 skipped; ruff clean.
+- 2026-08-29 second fix round, PR #836 (founder finding, self-checked before
+  dispatch): the pair table's raw-count ranking ranks pairs by category
+  PREVALENCE -- the same confound reviewer F3 caught on the scatter
+  comparison, found again in the pair table by neither review lane. Added
+  `expected`/`lift` per pair (against independence over presence among the
+  multi-category bags specifically, stated in the report the way the
+  scatter header states its own base) and a second `pairs_by_lift` ranking,
+  both in `CategoryPair`/`PairCooccurrence` and the CLI report; named pairs
+  now carry their own lift and lift-rank too. On the live `claim` run, both
+  #826 pairs land at lift ~1.0 (1.03x, 1.02x), raw ranks 5/3 but lift ranks
+  24/25 of 36 -- in the middle of the spread, not near the top. **This
+  retracts the earlier "worth a precedence sentence" reading in this log's
+  own first entry and in `data/logs/2026-08-28-claim-bag-purity/summary.md`
+  (now corrected there in full)** -- the raw numbers were never wrong, only
+  that inference from them. 3 new unit tests. Fast tier: 2,551 passed,
+  1 skipped; ruff clean.

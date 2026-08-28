@@ -20,7 +20,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | # | Slice | Goal (one line) | Status | PR |
 |---|-------|-----------------|--------|----|
 | 01 [#826](https://github.com/Muhanad-husn/axial/issues/826) | [claim-vocabulary-committed](01-claim-vocabulary-committed.md) | The claim column has a founder-committed category scheme and the corpus is filed against it | ☑ PR open | [#834](https://github.com/Muhanad-husn/axial/pull/834) |
-| 02 [#827](https://github.com/Muhanad-husn/axial/issues/827) | [bag-purity-crosstab](02-bag-purity-crosstab.md) | `axial map purity` measures how badly wording bags shred any categorised axis — the go/stop check on the diagnosis | ☐ todo | — |
+| 02 [#827](https://github.com/Muhanad-husn/axial/issues/827) | [bag-purity-crosstab](02-bag-purity-crosstab.md) | `axial map purity` measures how badly wording bags shred any categorised axis — the go/stop check on the diagnosis | ☑ PR open | [#836](https://github.com/Muhanad-husn/axial/pull/836) |
 | 03 [#828](https://github.com/Muhanad-husn/axial/issues/828) | [inner-split-chosen](03-inner-split-chosen.md) | The two candidate inner splits are computed offline over real data and the founder picks one | ☐ todo | — |
 | 04 [#829](https://github.com/Muhanad-husn/axial/issues/829) | [reformed-build-groups](04-reformed-build-groups.md) | `axial map build --grouping category` runs extraction over category groups into a variant artifact, current build untouched | ☐ todo | — |
 | 05 [#830](https://github.com/Muhanad-husn/axial/issues/830) | [category-consolidation](05-category-consolidation.md) | A second extraction pass per category reunites per-group namings; embedding merge demoted to cross-category folding | ☐ todo | — |
