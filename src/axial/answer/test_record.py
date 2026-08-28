@@ -26,6 +26,8 @@ from axial.answer.record import (
 from axial.argmap.ask import AskResult, CorridorPosition, LandedPosition
 from axial.argmap.vocabulary_join import (
     ALL_REASONS,
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
     REASON_ASSIGNED,
     REASON_NOT_FOUND,
     REASON_OUT_OF_SCHEME,
@@ -955,3 +957,53 @@ def test_run_brief_arm_name_wins_over_use_map_true(tmp_path: Path, monkeypatch):
     record = result.record
     assert record["map_retrieval"] is None
     assert record["trajectory"] == trajectory
+
+
+def test_run_brief_forwards_all_four_vocabulary_knobs_verbatim(tmp_path: Path, monkeypatch):
+    """issue #822, item 2. Before this, `run_brief` carried `vocabulary_dir`
+    alone and the other three stopped at `run_map_ask_for_brief` -- so the
+    per-category cap, the one knob the live run showed binding on every
+    category, could not be set from anywhere a measurement runs."""
+    captured: dict = {}
+    ask_result = _fake_ask_result(with_vocabulary=True)
+    vault_dir = _write_vault(tmp_path, list(ask_result.assembled_chunk_ids))
+
+    def _fake_run_map_ask_for_brief(brief, **kwargs):
+        captured.update(kwargs)
+        return ask_result
+
+    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fake_run_map_ask_for_brief)
+
+    synthesize_response = json.dumps({"claims": []})
+    record_module.run_brief(
+        _vocab_brief(),
+        client=_ArmScriptedClient(synthesize_response),
+        vault_dir=vault_dir,
+        arm=MAP_VOCAB_ARM,
+        vocabulary_column="stops_holding",
+        vocabulary_level=2,
+        vocabulary_dir=tmp_path / "somewhere" / "vocab",
+        vocabulary_cap=7,
+    )
+
+    assert captured["vocabulary_column"] == "stops_holding"
+    assert captured["vocabulary_level"] == 2
+    assert captured["vocabulary_dir"] == tmp_path / "somewhere" / "vocab"
+    assert captured["vocabulary_cap"] == 7
+
+
+def test_run_brief_vocabulary_knob_defaults_match_the_map_ask_declaration(
+    tmp_path: Path, monkeypatch
+):
+    """A default restated in a second place is a default that will drift.
+    `run_brief` passes exactly what `run_map_ask_for_brief` already
+    declares (issue #822)."""
+    captured: dict = {}
+    _run_scripted_arm(
+        tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True, captured=captured
+    )
+
+    assert captured["vocabulary_column"] == DEFAULT_VOCABULARY_COLUMN
+    assert captured["vocabulary_level"] is None
+    assert captured["vocabulary_dir"] is None
+    assert captured["vocabulary_cap"] == PER_CATEGORY_CAP

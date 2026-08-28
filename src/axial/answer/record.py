@@ -116,7 +116,12 @@ from axial.argmap.ask import (
     resolve_pinned_map_dir,
     run_map_ask_for_brief,
 )
-from axial.argmap.vocabulary_join import ALL_REASONS, VocabularyJoinResult
+from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    VocabularyJoinResult,
+)
 from axial.brief.fork import (
     ForkAnswer,
     ForkCheckError,
@@ -648,7 +653,10 @@ def run_brief(
     map_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_pin: str | None = None,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
     vocabulary_dir: Path | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
     on_event: EventCallback | None = None,
     session_id: str | None = None,
     on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
@@ -746,8 +754,16 @@ def run_brief(
     the join is a deterministic step in the map arm's own walk (module
     docstring's "the join is a step, not a tool"), never a tool a caller
     could otherwise silently mis-name into the name-layer default.
-    `vocabulary_dir` is forwarded to `run_map_ask_for_brief` verbatim,
-    ignored on every arm but `map+vocab`."""
+    **All four `vocabulary_*` arguments are forwarded to `run_map_ask_for_
+    brief` verbatim (issue #822)**, and every one of them is ignored on any
+    arm but `map+vocab`: which column to join on, which level of its
+    scheme, where the built vocabulary lives, and how many neighbours one
+    category may hand to assembly. The first cut carried `vocabulary_dir`
+    alone, which was the wrong one to pick -- the live run showed the cap
+    binding on every category, so it is the knob a measurement actually
+    turns, and #809 turns it. Their defaults are `run_map_ask_for_brief`'s
+    own, named here from the same constants rather than restated as
+    literals."""
     if arm is not None and arm not in KNOWN_ARMS:
         raise UnknownArmError(arm)
     resolved_use_map = use_map if arm is None else (arm != NAME_ARM)
@@ -805,7 +821,10 @@ def run_brief(
                     config_path=config_path,
                     pin=map_pin,
                     use_vocabulary=resolved_use_vocabulary,
+                    vocabulary_column=vocabulary_column,
+                    vocabulary_level=vocabulary_level,
                     vocabulary_dir=vocabulary_dir,
+                    vocabulary_cap=vocabulary_cap,
                 )
             model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
             evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)

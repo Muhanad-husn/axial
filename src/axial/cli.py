@@ -11,7 +11,11 @@ from typing import Any, Callable
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.argmap.ask import AskError, run_map_ask
-from axial.argmap.vocabulary_join import NoVocabularyError
+from axial.argmap.vocabulary_join import (
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    NoVocabularyError,
+)
 from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
@@ -1255,6 +1259,49 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # The four vocabulary knobs (issue #822). #809 measures the `map+vocab`
+    # arm next and the per-category cap binds on every category, so a knob
+    # only settable in code would force an edit mid-measurement. Every one
+    # is ignored on any arm but `map+vocab`, and every default is
+    # `axial.argmap.vocabulary_join`'s own constant rather than a literal
+    # restated here.
+    brief_run_parser.add_argument(
+        "--vocabulary-column",
+        dest="vocabulary_column",
+        default=DEFAULT_VOCABULARY_COLUMN,
+        help=(
+            "derived-vocabulary column the join reads (issue #806/#807; "
+            f"default: {DEFAULT_VOCABULARY_COLUMN}) -- only used on --arm map+vocab"
+        ),
+    )
+    brief_run_parser.add_argument(
+        "--vocabulary-level",
+        dest="vocabulary_level",
+        type=int,
+        default=None,
+        help=(
+            "level of that column's scheme to join at (default: the "
+            "column's finest level, read off its own manifest)"
+        ),
+    )
+    brief_run_parser.add_argument(
+        "--vocabulary-dir",
+        dest="vocabulary_dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path)",
+    )
+    brief_run_parser.add_argument(
+        "--vocabulary-cap",
+        dest="vocabulary_cap",
+        type=int,
+        default=PER_CATEGORY_CAP,
+        help=(
+            "most neighbours ONE category may hand to assembly (default: "
+            f"{PER_CATEGORY_CAP}, against the shared assembly cap of 90) -- the "
+            "selection rule in practice, not a safety valve"
+        ),
+    )
+
     brief_validate_parser = brief_subparsers.add_parser(
         "validate",
         help=(
@@ -1355,6 +1402,49 @@ def build_parser() -> argparse.ArgumentParser:
         # if the two calls were ever swapped.
         default="name",
         help="alias for --arm map (issue #572), kept so no existing invocation breaks",
+    )
+
+    # The four vocabulary knobs (issue #822). #809 measures the `map+vocab`
+    # arm next and the per-category cap binds on every category, so a knob
+    # only settable in code would force an edit mid-measurement. Every one
+    # is ignored on any arm but `map+vocab`, and every default is
+    # `axial.argmap.vocabulary_join`'s own constant rather than a literal
+    # restated here.
+    brief_sweep_parser.add_argument(
+        "--vocabulary-column",
+        dest="vocabulary_column",
+        default=DEFAULT_VOCABULARY_COLUMN,
+        help=(
+            "derived-vocabulary column the join reads (issue #806/#807; "
+            f"default: {DEFAULT_VOCABULARY_COLUMN}) -- only used on --arm map+vocab"
+        ),
+    )
+    brief_sweep_parser.add_argument(
+        "--vocabulary-level",
+        dest="vocabulary_level",
+        type=int,
+        default=None,
+        help=(
+            "level of that column's scheme to join at (default: the "
+            "column's finest level, read off its own manifest)"
+        ),
+    )
+    brief_sweep_parser.add_argument(
+        "--vocabulary-dir",
+        dest="vocabulary_dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path)",
+    )
+    brief_sweep_parser.add_argument(
+        "--vocabulary-cap",
+        dest="vocabulary_cap",
+        type=int,
+        default=PER_CATEGORY_CAP,
+        help=(
+            "most neighbours ONE category may hand to assembly (default: "
+            f"{PER_CATEGORY_CAP}, against the shared assembly cap of 90) -- the "
+            "selection rule in practice, not a safety valve"
+        ),
     )
 
     brief_smoke_parser = brief_subparsers.add_parser(
@@ -2426,7 +2516,16 @@ _ARM_DISPLAY = {
 }
 
 
-def _brief_run(brief_path: str, *, use_map: bool = False, arm: str | None = None) -> int:
+def _brief_run(
+    brief_path: str,
+    *,
+    use_map: bool = False,
+    arm: str | None = None,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
+    vocabulary_dir: str | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
+) -> int:
     try:
         brief = load_brief(brief_path)
     except BriefError as exc:
@@ -2444,6 +2543,10 @@ def _brief_run(brief_path: str, *, use_map: bool = False, arm: str | None = None
             case_id=Path(brief_path).stem,
             use_map=use_map,
             arm=arm,
+            vocabulary_column=vocabulary_column,
+            vocabulary_level=vocabulary_level,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            vocabulary_cap=vocabulary_cap,
             on_event=_print_event,
         )
     except (
@@ -2863,7 +2966,16 @@ def _brief_usage(pin: str | None) -> int:
 
 
 def _brief_sweep(
-    worklist_path: str, draws: int, sweep_dir: str, workers: int, *, arm: str = "name"
+    worklist_path: str,
+    draws: int,
+    sweep_dir: str,
+    workers: int,
+    *,
+    arm: str = "name",
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
+    vocabulary_dir: str | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
 ) -> int:
     try:
         summary = run_sweep(
@@ -2872,6 +2984,10 @@ def _brief_sweep(
             sweep_dir=Path(sweep_dir),
             workers=workers,
             arm=arm,
+            vocabulary_column=vocabulary_column,
+            vocabulary_level=vocabulary_level,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            vocabulary_cap=vocabulary_cap,
         )
     except SweepError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -3847,7 +3963,15 @@ def main(argv: list[str] | None = None) -> int:
         return _brief_examine(args.brief_path)
 
     if args.command == "brief" and args.brief_command == "run":
-        return _brief_run(args.brief_path, use_map=args.use_map, arm=args.arm)
+        return _brief_run(
+            args.brief_path,
+            use_map=args.use_map,
+            arm=args.arm,
+            vocabulary_column=args.vocabulary_column,
+            vocabulary_level=args.vocabulary_level,
+            vocabulary_dir=args.vocabulary_dir,
+            vocabulary_cap=args.vocabulary_cap,
+        )
 
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)
@@ -3860,7 +3984,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "brief" and args.brief_command == "sweep":
         return _brief_sweep(
-            args.worklist_path, args.draws, args.sweep_dir, args.workers, arm=args.arm
+            args.worklist_path,
+            args.draws,
+            args.sweep_dir,
+            args.workers,
+            arm=args.arm,
+            vocabulary_column=args.vocabulary_column,
+            vocabulary_level=args.vocabulary_level,
+            vocabulary_dir=args.vocabulary_dir,
+            vocabulary_cap=args.vocabulary_cap,
         )
 
     if args.command == "brief" and args.brief_command == "smoke":
