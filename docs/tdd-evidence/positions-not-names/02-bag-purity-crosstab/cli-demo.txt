@@ -1,4 +1,4 @@
-$ uv run axial map purity --column claim --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
+$ uv run axial map purity --column claim --map-dir D:/axial/data/map --vocabulary-dir D:/axial/data/vocabulary
 pin: 9b796b3a6312b329 (D:\axial\data\map\9b796b3a6312b329)
 column: claim (level 1)
 vocabulary: D:\axial\data\vocabulary\claim
@@ -10,6 +10,7 @@ COVERAGE
   bag-only (no vocabulary record for this column): 0
   vocabulary-only (no bag): 687
   overlap assigned a category: 5993
+  overlap assigned 2+ categories: 0
   overlap refused: 17
   overlap out-of-scheme: 0
 
@@ -22,7 +23,7 @@ PURITY (bags with 2+ categorised members)
   median distinct categories per bag: 2.00
   mean distinct categories per bag: 2.99
 
-CATEGORY SCATTER (reverse table -- distinct bags each category reaches)
+CATEGORY SCATTER (over 650 bag(s) holding at least one categorised member)
   min/median/max bags per populated category: 69 / 141.00 / 356
     empirical-finding-without-causal-claim (empirical finding or observation without causal claim): 356 bag(s), 1131 member(s)
     causal-argument-state-formation-or-power (causal argument about state formation or state power): 309 bag(s), 1648 member(s)
