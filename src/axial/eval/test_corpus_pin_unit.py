@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from axial.argmap.build import compute_corpus_pin
 from axial.envelope import compute_source_id
 from axial.eval.corpus_pin import (
     AmbiguousCorpusPinError,
@@ -53,6 +54,7 @@ from axial.eval.corpus_pin import (
     _load_canonical_names,
     ingest_code_sha,
     resolve_pin_id,
+    unresolvable_sources,
     write_pin,
 )
 from axial.vault import render_note
@@ -1026,3 +1028,121 @@ def test_resolve_pin_id_missing_when_only_archived_pins_exist(tmp_path: Path):
 
     with pytest.raises(MissingCorpusPinError):
         resolve_pin_id(pin_dir)
+
+
+# --- unresolvable_sources ----------------------------------------------------
+#
+# The pin's own precondition, asked without raising (issue #819): every
+# envelope `_build_sources` could not resolve a raw source file for. It is
+# what `axial sources` reports as `missing`, so it must agree with
+# `compute_corpus_pin` on the same corpus in every case below.
+
+
+def test_unresolvable_sources_is_empty_when_the_pin_can_be_computed(tmp_path: Path):
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    _write_envelope_for_source(envelopes_dir, sources_dir, "book-b")
+
+    assert unresolvable_sources(envelopes_dir, sources_dir) == []
+    # And the pin really does compute, so the empty answer was not a false
+    # all-clear.
+    assert compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_names_an_envelope_whose_raw_file_is_gone(tmp_path: Path):
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    _, source_id = _write_envelope_for_source(envelopes_dir, sources_dir, "gone")
+    (sources_dir / "gone.pdf").unlink()
+
+    unresolved = unresolvable_sources(envelopes_dir, sources_dir)
+
+    assert [entry[0] for entry in unresolved] == [source_id]
+    assert "no raw source file" in unresolved[0][1]
+    # The pin agrees: this is exactly the state that kills it.
+    with pytest.raises(MissingSourceFileError):
+        compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_names_every_one_not_only_the_first(tmp_path: Path):
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _, kept = _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    for stem in ("gone-one", "gone-two"):
+        _write_envelope_for_source(envelopes_dir, sources_dir, stem)
+        (sources_dir / f"{stem}.pdf").unlink()
+
+    unresolved = unresolvable_sources(envelopes_dir, sources_dir)
+
+    # The pin raises on the first it reaches; this reports both, which is
+    # the whole point -- restoring one file at a time and re-running a paid
+    # draw to find the next is the expensive version of this answer.
+    assert len(unresolved) == 2
+    assert kept not in {entry[0] for entry in unresolved}
+
+
+def test_unresolvable_sources_does_not_fire_on_a_re_sourced_file(tmp_path: Path):
+    """A file replaced with different bytes gets a NEW source_id, leaving the
+    old envelope behind under the same stem. The pin resolves BY STEM, so it
+    still computes -- and a check that reported that stale envelope
+    `missing` would fail an operator's command forever over a state the pin
+    does not care about."""
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    _write_envelope_raw(envelopes_dir, "book-a-000000000000")
+
+    assert unresolvable_sources(envelopes_dir, sources_dir) == []
+    assert compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_names_an_ambiguous_stem(tmp_path: Path):
+    """Both a .pdf and a .docx under one stem: the pin refuses rather than
+    picking, and the forward walk cannot see it either -- it reports two
+    perfectly ordinary sources."""
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _, source_id = _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    (sources_dir / "book-a.docx").write_bytes(b"a second file under the same stem")
+
+    unresolved = unresolvable_sources(envelopes_dir, sources_dir)
+
+    assert [entry[0] for entry in unresolved] == [source_id]
+    assert "ambiguous" in unresolved[0][1].lower()
+    with pytest.raises(AmbiguousSourceFileError):
+        compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_names_a_source_id_of_a_retired_shape(tmp_path: Path):
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    _write_envelope_raw(envelopes_dir, "a-long-retired-identifier-with-no-digest")
+
+    unresolved = unresolvable_sources(envelopes_dir, sources_dir)
+
+    assert [entry[0] for entry in unresolved] == ["a-long-retired-identifier-with-no-digest"]
+    with pytest.raises(UnresolvableSourceIdError):
+        compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_names_a_malformed_envelope_rather_than_raising(tmp_path: Path):
+    envelopes_dir = tmp_path / "envelopes"
+    sources_dir = tmp_path / "sources"
+    _write_envelope_for_source(envelopes_dir, sources_dir, "book-a")
+    envelopes_dir.mkdir(parents=True, exist_ok=True)
+    (envelopes_dir / "broken-2001-abcdefabcdef.json").write_text("{ not json", encoding="utf-8")
+
+    unresolved = unresolvable_sources(envelopes_dir, sources_dir)
+
+    assert [entry[0] for entry in unresolved] == ["broken-2001-abcdefabcdef"]
+    with pytest.raises(MalformedEnvelopeError):
+        compute_corpus_pin(envelopes_dir, sources_dir)
+
+
+def test_unresolvable_sources_returns_empty_list_for_an_absent_envelopes_dir(tmp_path: Path):
+    """Nothing ingested, so nothing can be unresolvable -- `compute_corpus_pin`
+    raises here, but the check is asked on corpora that may not exist yet."""
+    assert unresolvable_sources(tmp_path / "nowhere", tmp_path / "sources") == []

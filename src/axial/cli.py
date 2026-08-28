@@ -151,7 +151,13 @@ from axial.run import (
 )
 from axial.runlog import RunNotFoundError, follow_run, list_runs, load_run, run_context
 from axial.schema import SchemaError, load_schema
-from axial.sources import render_report, resolve_backend, scan_local, sync_local
+from axial.sources import (
+    render_report,
+    resolve_backend,
+    scan_local,
+    scan_orphaned_envelopes,
+    sync_local,
+)
 from axial.sources import CHANGED as SOURCES_CHANGED
 from axial.sources import NEW as SOURCES_NEW
 from axial.sources import PARTIAL as SOURCES_PARTIAL
@@ -2125,14 +2131,36 @@ def _sources(backend_override: str | None, check: bool) -> int:
     `_sources_local`/`_sources_drive` for each backend's own cost."""
     backend = backend_override or resolve_backend()
     if backend == "local":
-        return _sources_local(check)
-    if backend == "drive":
-        return _sources_drive(check)
-    print(
-        f"error: unknown sources backend {backend!r} (expected 'local' or 'drive')",
-        file=sys.stderr,
-    )
-    return 1
+        exit_code = _sources_local(check)
+    elif backend == "drive":
+        exit_code = _sources_drive(check)
+    else:
+        print(
+            f"error: unknown sources backend {backend!r} (expected 'local' or 'drive')",
+            file=sys.stderr,
+        )
+        return 1
+
+    # The reverse pass, after whichever backend reported (issue #819). It is
+    # not a `--check`-only extra and not backend-specific: both backends
+    # ingest into the same `data/sources`, and an envelope the corpus pin
+    # cannot resolve a raw file for kills the pin whatever put it there.
+    # Silent when the corpus is sound, so the healthy output is unchanged.
+    #
+    # To STDERR, not stdout, and after the backend's own report: stdout is a
+    # single tab-separated table with one header row, and anything parsing
+    # it must not break on the corpus state it most needs to detect. The
+    # unknown-backend error above goes to stderr for the same reason.
+    orphans = scan_orphaned_envelopes()
+    if orphans:
+        print(
+            "error: the corpus pin cannot be computed -- "
+            f"{len(orphans)} ingested source(s) have no raw file:",
+            file=sys.stderr,
+        )
+        print(render_report(orphans), file=sys.stderr)
+        return 1
+    return exit_code
 
 
 def _sources_local(check: bool) -> int:

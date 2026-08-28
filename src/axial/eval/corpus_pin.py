@@ -425,6 +425,71 @@ def _build_sources(envelopes_dir: Path, sources_dir: Path) -> list[dict[str, str
     return entries
 
 
+def unresolvable_sources(
+    envelopes_dir: Path,
+    sources_dir: Path,
+) -> list[tuple[str, str]]:
+    """Every envelope `_build_sources` above could not resolve a raw source
+    file for, as `(source_id, reason)` pairs sorted by `source_id`. An empty
+    list means the pin can be computed; a non-empty one lists exactly what
+    stops it.
+
+    This is `_build_sources`'s own precondition asked without committing to
+    the answer -- same envelope enumeration, same `_stem_from_source_id`,
+    same `_resolve_source_file` -- so a caller can never disagree with the
+    pin about whether a corpus is analysable (issue #819, after #816 left
+    the corpus unanalysable for sixteen days with every operator-facing
+    report saying it was fine).
+
+    Two differences from `_build_sources`, both deliberate:
+
+    - It **collects rather than raises**, so one call names every broken
+      source. The pin raises on the first it reaches, which turns repairing
+      a corpus into restore-one-file-then-pay-for-another-draw.
+    - It **hashes nothing**. Resolution is by filename stem, so existence is
+      the whole question; `_build_sources` only reads bytes afterwards, to
+      build the digest this never needs.
+
+    Resolution is by STEM, exactly as the pin does it, so replacing a source
+    file with different bytes -- which moves its `source_id` and leaves the
+    old envelope behind under the same stem -- is NOT reported. The pin
+    still computes there, and reporting it would fail an operator's command
+    forever over a state the pin does not care about.
+
+    An absent `envelopes_dir` yields an empty list rather than
+    `MissingEnvelopesDirError`: nothing is ingested, so nothing can be
+    unresolvable, and this is asked on corpora that may not exist yet.
+    """
+    if not envelopes_dir.is_dir():
+        return []
+
+    unresolved: list[tuple[str, str]] = []
+    for envelope_path in sorted(envelopes_dir.glob("*.json")):
+        try:
+            envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            unresolved.append((envelope_path.stem, f"envelope is not parseable JSON: {exc}"))
+            continue
+        if not isinstance(envelope, dict):
+            unresolved.append(
+                (
+                    envelope_path.stem,
+                    f"envelope did not parse to a mapping, got {type(envelope).__name__}",
+                )
+            )
+            continue
+
+        source_id = envelope.get("source_id") or envelope_path.stem
+        try:
+            stem = _stem_from_source_id(source_id, envelope_path)
+            _resolve_source_file(source_id, stem, sources_dir)
+        except (UnresolvableSourceIdError, MissingSourceFileError, AmbiguousSourceFileError) as exc:
+            unresolved.append((source_id, str(exc)))
+
+    unresolved.sort(key=lambda entry: entry[0])
+    return unresolved
+
+
 def _split_frontmatter(text: str, note_path: Path) -> dict[str, Any]:
     """Parse a vault note's leading `---`-delimited YAML frontmatter block
     (`axial.vault.render_note`'s own shape) into a mapping. Raises

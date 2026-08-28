@@ -1,0 +1,45 @@
+=== The healthy corpus: 35 raw files, 35 envelopes ===================
+
+$ ls data/sources | wc -l ; ls data/envelopes | wc -l
+35
+35
+
+$ uv run axial sources --backend local --check > out.txt 2> err.txt ; echo $?
+0
+
+$ tail -3 out.txt ; wc -c err.txt
+white-2011.pdf	done	
+wimmer-2013.pdf	done	
+zaum-2007.pdf	done	
+0
+
+Exit 0, stderr empty: a sound corpus prints exactly what it always did.
+
+=== The real break, reproduced: beshara-2011.pdf withheld ============
+
+34 of the 35 real sources are hardlinked into a scratch directory -- no
+bytes copied, data/sources never touched -- and the real CLI entrypoint
+runs against it with only axial.sources.CORPUS_SOURCES_DIR repointed.
+The real data/envelopes/ is read as-is, all 35 of them.
+
+$ python -c "cli.main([\"sources\", \"--backend\", \"local\", \"--check\"])"
+error: the corpus pin cannot be computed -- 1 ingested source(s) have no raw file:
+name	status	reason
+beshara-2011-8410a9059300	missing	no raw source file found for source_id 'beshara-2011-8410a9059300' under D:\tmp-819-fake-sources (looked for .docx, .pdf); place the original source file there before running `axial pin write`
+exit code: 1      (34 raw files against 35 envelopes, 0.61s for the whole command)
+
+(stdout above suppressed -- it is the same 34-row table. The three lines
+ shown are the whole of stderr.)
+
+=== The reverse pass alone, timed ===================================
+
+healthy (35 files)     0 orphan(s)  25.4 ms
+withheld (34 files)    1 orphan(s)  26.9 ms
+
+=== The check and the pin agree, on the real corpus ==================
+
+healthy (35 files)     check: 0 orphan(s)   pin: computes: 9b796b3a6312b329
+withheld (34 files)    check: 1 orphan(s)   pin: MissingSourceFileError
+
+The healthy pin is 9b796b3a6312b329 -- the map build already on disk from
+2026-08-06, so this is the real corpus and the real pin, not a fixture.

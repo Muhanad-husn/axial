@@ -24,6 +24,7 @@ from axial.sources import (
     DEFAULT_DONE_PASS,
     DEFAULT_INGEST_PASSES,
     DONE,
+    MISSING,
     NEW,
     PARTIAL,
     REJECTED,
@@ -31,6 +32,7 @@ from axial.sources import (
     render_report,
     resolve_backend,
     scan_local,
+    scan_orphaned_envelopes,
     sync_local,
 )
 
@@ -565,3 +567,166 @@ def test_the_ingest_chain_runs_artifacts_and_the_done_pass_names_its_end():
     assert DEFAULT_INGEST_PASSES == ("extract", "envelope", "chunk", "interrogate", "artifacts")
     assert DEFAULT_DONE_PASS == DEFAULT_INGEST_PASSES[-1]
     assert "vault-write" not in DEFAULT_INGEST_PASSES
+
+
+# --- scan_orphaned_envelopes -------------------------------------------------
+#
+# The reverse pass (issue #819): `scan_local` walks `sources_dir` forward and
+# so cannot see an ingested source whose raw file is gone. The predicate is
+# the corpus pin's own -- `axial.eval.corpus_pin.unresolvable_sources`, which
+# carries its agreement tests -- so these cover the adapter and the wiring,
+# not the rule. Every test builds its own dirs under `tmp_path`, for the same
+# reason the module's other tests do.
+
+
+def _write_envelope(envelopes_dir: Path, source_id: str) -> None:
+    envelopes_dir.mkdir(parents=True, exist_ok=True)
+    (envelopes_dir / f"{source_id}.json").write_text(
+        f'{{"source_id": "{source_id}"}}', encoding="utf-8"
+    )
+
+
+def test_scan_orphaned_envelopes_is_empty_when_every_envelope_has_its_raw_file(tmp_path):
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "alpha.pdf")
+    _write_envelope(tmp_path / "envelopes", compute_source_id(path))
+
+    assert scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes") == []
+
+
+def test_scan_orphaned_envelopes_reports_an_envelope_whose_raw_file_is_gone(tmp_path):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    _write_envelope(tmp_path / "envelopes", "beshara-2011-8410a9059300")
+
+    records = scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes")
+
+    assert len(records) == 1
+    assert records[0].name == "beshara-2011-8410a9059300"
+    assert records[0].status == MISSING
+    # The reason is the pin's own, naming the directory actually searched.
+    assert "no raw source file" in records[0].reason
+    assert str(sources_dir) in records[0].reason
+
+
+def test_scan_orphaned_envelopes_names_every_missing_source_not_only_the_first(tmp_path):
+    sources_dir = tmp_path / "sources"
+    present = _write_source(sources_dir, "alpha.pdf")
+    for source_id in (
+        compute_source_id(present),
+        "zulu-2020-ffffffffffff",
+        "bravo-1999-000000000000",
+    ):
+        _write_envelope(tmp_path / "envelopes", source_id)
+
+    records = scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes")
+
+    # Sorted, so the report reads the same way twice, and BOTH orphans are
+    # named -- the live failure raised on the first one it reached.
+    assert [record.name for record in records] == [
+        "bravo-1999-000000000000",
+        "zulu-2020-ffffffffffff",
+    ]
+    assert {record.status for record in records} == {MISSING}
+
+
+def test_scan_orphaned_envelopes_does_not_fire_on_a_re_sourced_file(tmp_path):
+    """Replacing a source with different bytes moves its `source_id` and
+    leaves the old envelope behind under the same stem. The pin resolves by
+    stem and still computes, so this must stay silent -- a check that fired
+    here would fail `axial sources` forever over a state the pin does not
+    care about, and the operator would have no way to know which envelope to
+    delete."""
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "alpha.pdf", content=b"the corrected scan")
+    _write_envelope(tmp_path / "envelopes", compute_source_id(path))
+    _write_envelope(tmp_path / "envelopes", "alpha-000000000000")
+
+    assert scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes") == []
+
+
+def test_scan_orphaned_envelopes_returns_empty_list_for_absent_envelopes_dir(tmp_path):
+    assert scan_orphaned_envelopes(tmp_path / "sources", tmp_path / "nowhere") == []
+
+
+def test_scan_orphaned_envelopes_ignores_non_json_files_in_the_envelopes_dir(tmp_path):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "README.md").write_text("not an envelope", encoding="utf-8")
+    (envelopes_dir / "nested").mkdir()
+
+    assert scan_orphaned_envelopes(sources_dir, envelopes_dir) == []
+
+
+def test_scan_orphaned_envelopes_reports_a_malformed_envelope_rather_than_raising(tmp_path):
+    """The pin raises `MalformedEnvelopeError` here. The check must not: an
+    operator asking "is my corpus sound" gets an answer, not a traceback."""
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "alpha-2001-abcdefabcdef.json").write_text("{ not json", encoding="utf-8")
+
+    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+
+    assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
+    assert records[0].status == MISSING
+
+
+def test_scan_orphaned_envelopes_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """`CORPUS_SOURCES_DIR` is looked up when the function runs, not bound
+    once as a default parameter value -- the trap `_ARTIFACT_PATH_FNS`'s own
+    comment names. A default binding made the CLI read the real corpus while
+    a demo thought it had repointed the module, and the command exited 0 on
+    a corpus with a missing raw file."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    _write_envelope(tmp_path / "envelopes", "alpha-2001-abcdefabcdef")
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+
+    records = scan_orphaned_envelopes(envelopes_dir=tmp_path / "envelopes")
+
+    assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
+    assert str(sources_dir) in records[0].reason
+
+
+def test_scan_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """The same call-time resolution as `scan_orphaned_envelopes` above, so
+    repointing the module constant moves BOTH halves of the report and a
+    demo or operator script cannot end up driving one against a fixture and
+    the other against the real corpus."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "alpha.pdf")
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+
+    assert scan_local(ledger_path=tmp_path / "ledger.tsv") == [SourceRecord("alpha.pdf", NEW)]
+
+
+def test_sync_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """And the third: `sync_local` is the half that WRITES. A script that
+    repointed the module and ran a plain `axial sources` would otherwise
+    scan the fixture and ingest from the real corpus."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "alpha.pdf")
+    seen: list[Path] = []
+
+    def _record_pass(pass_name, *, worklist_path=None, corpus=False, sources_dir=None, **kwargs):
+        seen.append(sources_dir)
+        return RunSummary(
+            pass_name=pass_name, outcomes=[], total=0, ok_count=0, fail_count=0, skip_count=0
+        ), 0
+
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+    monkeypatch.setattr(sources_mod, "run_pass", _record_pass)
+
+    sync_local(ledger_path=tmp_path / "ledger.tsv", client=object())
+
+    assert seen and all(seen_dir == sources_dir for seen_dir in seen)

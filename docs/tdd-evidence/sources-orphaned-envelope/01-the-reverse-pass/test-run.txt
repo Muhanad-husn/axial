@@ -1,0 +1,14 @@
+$ uv run pytest src/axial/eval/test_corpus_pin_unit.py -k unresolvable   # the predicate, vs the pin
+9 passed in 6.66s
+
+$ uv run pytest src/axial/test_sources.py -k "orphaned or resolves"
+10 passed in 18.68s
+
+$ uv run pytest src/axial/test_cli.py -k main_sources
+5 passed in 20.01s
+
+$ uv run pytest        # full fast tier (src, not slow, xdist)
+2621 passed in 40.98s
+
+$ uv run ruff check
+All checks passed!
