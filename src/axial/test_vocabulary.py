@@ -16,6 +16,7 @@ import pytest
 from axial.vocabulary import (
     CategoryReport,
     ColumnVocabularyStats,
+    DEFAULT_VOCABULARY_SCHEME_PATH,
     PopulationEntry,
     SelfConsistencyError,
     VocabularyExamineStats,
@@ -23,7 +24,9 @@ from axial.vocabulary import (
     draw_vocabulary_samples,
     examine_vocabulary,
     format_vocabulary_report,
+    load_vocabulary_scheme,
     read_column,
+    scheme_columns,
 )
 import axial.vocabulary as vocabulary_mod
 
@@ -730,6 +733,60 @@ def test_format_report_flags_a_proposal_failure_instead_of_reporting_numbers():
     assert "PROPOSAL FAILED" in report
     assert "assignment rate" not in report
     assert "two-model agreement" not in report
+
+
+# ---------------------------------------------------------------------------
+# The committed `claim` scheme (issue #826, positions-not-names slice 01)
+# ---------------------------------------------------------------------------
+
+# The nine ids the founder approved 2026-08-28 -- a pin against silent
+# drift in `config/vocabulary.yaml`.
+_CLAIM_SCHEME_IDS = {
+    "causal-argument-state-formation-or-power",
+    "empirical-finding-without-causal-claim",
+    "characterization-of-regime-movement-or-system",
+    "causal-argument-violence-war-or-conflict",
+    "critique-of-existing-theories-or-concepts",
+    "bibliographic-source-note-or-formal-description",
+    "causal-argument-nationalism-or-identity",
+    "methodological-preconditions",
+    "comparative-or-typological-classification",
+}
+
+
+def test_the_committed_claim_scheme_parses_with_unique_ids_names_glosses_and_own_version():
+    claim = load_vocabulary_scheme("claim", DEFAULT_VOCABULARY_SCHEME_PATH)
+    mechanism = load_vocabulary_scheme("mechanism", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert claim.version
+    # A scheme edit is a version bump -- two columns must never share one,
+    # or a mismatch in one would silently read as settled by the other's.
+    assert claim.version != mechanism.version
+
+    ids = [category.id for category in claim.categories]
+    names = [category.name for category in claim.categories]
+    assert len(ids) == len(set(ids))
+    assert all(category.name.strip() for category in claim.categories)
+    assert all(category.gloss.strip() for category in claim.categories)
+    assert len(names) == len(set(names))
+
+
+def test_scheme_columns_returns_claim_alongside_mechanism():
+    columns = scheme_columns(DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert "mechanism" in columns
+    assert "claim" in columns
+
+
+def test_the_committed_claim_scheme_pins_nine_categories_and_their_exact_ids():
+    """A pin against silent drift: the founder approved exactly these nine
+    categories 2026-08-28, folding the drafted tenth (below the 5-member
+    bar) into the bibliographic/formal-description category rather than
+    dropping it."""
+    claim = load_vocabulary_scheme("claim", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert len(claim.categories) == 9
+    assert {category.id for category in claim.categories} == _CLAIM_SCHEME_IDS
 
 
 def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_zero():

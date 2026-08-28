@@ -103,6 +103,11 @@ depends-on: 08-retrieval-address-arm
 3. The eval apparatus goes last, and only the parts nothing remaining reads —
    `eval layers` and the arm recording stay (approach §12).
 4. Spec update rides in the same branch (behaviour moved, spec moves with it).
+5. While in `src/axial/vocabulary.py`, take **#835** with you — a one-word fix
+   in the build report, where `built: N newly assigned` (values processed) sits
+   one line above `M assigned to a category` and both are called "assigned".
+   Found by the verifier on #826. This slice is the only planned opener of that
+   file, so the fix rides here rather than earning its own branch.
 
 ## Out of scope for this slice (deferred)
 

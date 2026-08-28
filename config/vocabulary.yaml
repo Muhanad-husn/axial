@@ -155,3 +155,98 @@ columns:
         gloss: >-
           Answers link inventions (military, agricultural, communication) to
           shifts in power, economy, or social organization.
+
+  claim:
+    # Proposed by the examine pass over a random 400-value sample of the
+    # column, 2026-08-27 (data/logs/2026-08-27-vocabulary-categorise-v2/
+    # console-claim.log): 10 categories, 99.5% of a disjoint 400 the model
+    # had never seen fell into them, largest category 21.2%, two-model
+    # agreement 77.0% on a 100-value subsample of that 400.
+    #
+    # Those three figures were measured on the ten-category DRAFT, before
+    # the founder's edit below. The nine committed here have never been
+    # scored on held-out data. The edit folded one category of 398 into
+    # another, so the difference should be small, but it was not measured
+    # and nothing here should be read as if it had been.
+    #
+    # The founder approved this scheme 2026-08-28 with one edit: the
+    # drafted tenth category, "Acknowledgment or credit statement" (1
+    # member, 1 source on the held-out sample), sits below the 5-member
+    # bar the run itself uses to call a category real rather than noise.
+    # It is folded into the bibliographic/formal-description category
+    # below rather than deleted outright -- deleting it would leave the
+    # assigning model nowhere to put an acknowledgment and it would answer
+    # with a refusal instead, which is a worse outcome than one category
+    # covering two related things. That category's gloss carries the
+    # folded-in clause below; the other eight glosses are the drafting
+    # run's own words, verbatim.
+    #
+    # One property of this axis a reader should know before using it: it
+    # mixes kind-of-claim categories (empirical finding, critique,
+    # methodological preconditions, comparative/typological
+    # classification, characterization) with three topical ones (state
+    # formation, violence/conflict, nationalism/identity). An answer
+    # arguing causally about state formation satisfies both readings, and
+    # the assigning model picks one. That was committed deliberately
+    # rather than tidied up, because the mixture is measurable and was not
+    # worth guessing at.
+    version: "2026-08-28-claim-v1"
+    categories:
+      - id: causal-argument-state-formation-or-power
+        name: "causal argument about state formation or state power"
+        gloss: >-
+          Answers that propose a driver or mechanism for the construction,
+          strengthening, or transformation of state structures, including
+          fiscal-military extraction, war, ideology, or institutional
+          change.
+      - id: empirical-finding-without-causal-claim
+        name: "empirical finding or observation without causal claim"
+        gloss: >-
+          Answers that report what happened, what a source says, or what a
+          dataset shows, without arguing why it happened or what it
+          implies for theory.
+      - id: characterization-of-regime-movement-or-system
+        name: "characterization of a regime, movement, or political system"
+        gloss: >-
+          Answers that describe the nature, strategy, or social base of a
+          state, party, or armed group, without advancing a causal
+          argument about its origins or effects.
+      - id: causal-argument-violence-war-or-conflict
+        name: "causal argument about violence, war, or conflict dynamics"
+        gloss: >-
+          Answers that explain why violence occurs, how it is organized, or
+          what shapes its patterns, including micro-level mechanisms, elite
+          strategies, and structural conditions.
+      - id: critique-of-existing-theories-or-concepts
+        name: "critique of existing theories or concepts"
+        gloss: >-
+          Answers that identify errors, omissions, or biases in a specific
+          scholar's framework, school of thought, or received category,
+          rather than proposing an alternative explanation.
+      - id: bibliographic-source-note-or-formal-description
+        name: "bibliographic, source note, or formal description of the text itself"
+        gloss: >-
+          Answers that list references, describe the book's structure, or
+          state that the passage makes no substantive claim, as opposed to
+          advancing an argument. Acknowledgments and credit statements --
+          thanking individuals or institutions, or noting intellectual
+          debts -- belong here too.
+      - id: causal-argument-nationalism-or-identity
+        name: "causal argument about nationalism, identity, or nation-building"
+        gloss: >-
+          Answers that explain the emergence, content, or political
+          salience of national or ethnic identities and nationalist
+          movements, as distinct from documenting their expressions.
+      - id: methodological-preconditions
+        name: "methodological preconditions"
+        gloss: >-
+          Answers that specify how research should be designed, what
+          analytical steps are required, or what conditions must hold for
+          valid causal inference, as distinct from answers that report
+          empirical findings or historical narratives.
+      - id: comparative-or-typological-classification
+        name: "comparative or typological classification"
+        gloss: >-
+          Answers that sort cases, actors, or phenomena into categories or
+          ideal types, or that contrast cases to highlight differences in
+          kind.
