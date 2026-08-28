@@ -23,7 +23,7 @@ same column, and 88.5% of the unseen values fell into them.
 
 - **Slug:** derived-vocabulary
 - **Created:** 2026-08-27
-- **Status:** 01 done (#815 merged); 02 rewritten after 01 ran; 03 aligned; 04 and 05 unchanged
+- **Status:** 01, 02 and 04 done and closed; 03 corrected 2026-08-28 before building; 05 open
 - **New system?** no
 - **Project directory:** .
 
@@ -78,9 +78,9 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | Issue | Slice | Goal (one line) | Status | PR |
 |-------|-------|-----------------|--------|----|
 | [#805](https://github.com/Muhanad-husn/axial/issues/805) | [the-sentence-columns-are-counted](01-the-sentence-columns-are-counted.md) | An operator can see, per sentence column, the categories a model named from reading a sample, and how many answers it never saw fall into them | ☑ **done**, read 2026-08-27 | [#815](https://github.com/Muhanad-husn/axial/pull/815) |
-| [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | A frozen category scheme in `config/vocabulary.yaml`, every `mechanism` value assigned against it, on disk, and a second run that re-assigns nothing | ☑ **built** on the real corpus 2026-08-28 | [#817](https://github.com/Muhanad-husn/axial/pull/817) |
+| [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | A frozen category scheme in `config/vocabulary.yaml`, every `mechanism` value assigned against it, on disk, and a second run that re-assigns nothing | ☑ **done**, closed 2026-08-28 | [#817](https://github.com/Muhanad-husn/axial/pull/817) |
 | [#807](https://github.com/Muhanad-husn/axial/issues/807) | [two-notes-meet-at-a-shared-group](03-two-notes-meet-at-a-shared-group.md) | A brief runs through `--arm map+vocab`, and two passages meet at a shared mechanism the way they meet at a shared name today | ☐ todo | — |
-| [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☐ todo | — |
+| [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☑ **done**, closed 2026-08-27 | [#818](https://github.com/Muhanad-husn/axial/pull/818) |
 | [#809](https://github.com/Muhanad-husn/axial/issues/809) | [the-two-arms-are-compared](05-the-two-arms-are-compared.md) | `axial eval layers` reads three sweep directories and reports grounding and sources cited per arm, with each brief's draw spread | ☐ todo | — |
 
 ## Three arms, and the two questions they answer
@@ -93,13 +93,23 @@ builds nor anything that used it.
 |---|---|---|
 | `name` | the name-layer loop | today |
 | `map` | the argument map | today |
-| `map+vocab` | the argument map plus the derived join | slice 03 builds it |
+| `map+vocab` | the argument map plus the derived join, as a deterministic step in the map walk | slice 03 builds it |
 
 - `name` against `map` asks whether the argument map beats the name layer.
 - `map` against `map+vocab` asks whether the derived vocabulary adds anything.
 
 The second is what this feature exists to answer. Slice 05 prints both
 comparisons in one table and answers neither. The founder does.
+
+**The derived join is a step in the map walk, not a tool offered to a model.**
+Corrected 2026-08-28, before slice 03 was built. `run_map_ask_for_brief` is fully
+deterministic after the door call — land, corridor, assemble — with no tool loop,
+and `axial.answer.record` writes an honest empty trajectory for that arm. An
+earlier draft of slice 03 gave the join a `ToolSpec`, edited
+`src/axial/retrieve/dispatcher.py`, and asserted on a trajectory entry; none of
+the three has any meaning on the arm it targeted. The join sits between the
+corridor and assembly, and its audit trail is the record's `map_retrieval` block.
+`src/axial/retrieve/` is not touched by this feature at all.
 
 **What the whole feature costs.** Every figure below is measured or derived from
 a measured one, and nothing here is a pass over the corpus.

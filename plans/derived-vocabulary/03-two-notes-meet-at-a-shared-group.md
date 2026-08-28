@@ -8,15 +8,27 @@
 - **Status:** ☐ todo
 - **Walking skeleton?** no
 
+> **Corrected 2026-08-28, before building.** The previous version of this plan
+> made the derived join a **tool offered to the model**, with a `ToolSpec`, an
+> edit to `src/axial/retrieve/dispatcher.py`, and an acceptance criterion
+> reading "the trajectory records at least one call to the derived-join tool".
+> That cannot work on the arm it targets. `run_map_ask_for_brief` is fully
+> deterministic after `decompose_brief` — land, corridor, assemble — with no
+> tool loop at all, and `axial.answer.record` writes an honest empty trajectory
+> for it, recording what the map did in a `map_retrieval` block instead. A
+> trajectory entry is not the observable on this arm, and there is no loop to
+> offer a tool to. The join is a **deterministic step in the map walk**. See
+> "The join is a step, not a tool" below.
+
 ## Goal — the minimum testable behaviour
 
 A brief can be run through a retrieval arm that reaches passages by what they
-share in meaning: `axial brief run <brief> --arm map+vocab`. Two passages meet
-at a shared mechanism the way they meet at a shared name today, and the run's
-own trajectory shows it happened.
+share in meaning: `axial brief run <brief> --arm map+vocab`. Two passages meet at
+a shared mechanism the way they meet at a shared name today, and the run's own
+record shows which categories did it.
 
 The column is a parameter, so this works on whatever slice 02 has assigned.
-Slice 02 assigns `mechanism` first and the other six cleared columns only if
+Slice 02 assigned `mechanism` first and the other six cleared columns only if
 slice 05 says the join pays, so `mechanism` is what this slice is exercised on.
 
 ## Why this slice exists
@@ -26,37 +38,82 @@ feature measurable. Everything before it produces an artifact. Without a
 retrieval arm carrying the derived join, slice 05 would compare two layers that
 both exist today and its number could not be attributed to anything built here.
 
-An earlier draft of this plan added the tool to the surface and deliberately
-left it unwired. Review and independent verification both found the same
-consequence: the decision would have come out the same if slices 01 to 03 were
-never built. Wiring it is what closes that.
+An earlier draft added the tool to the surface and deliberately left it unwired.
+Review and independent verification both found the same consequence: the
+decision would have come out the same if slices 01 to 03 were never built.
+Wiring it is what closes that.
 
-## INVEST check
+## The join is a step, not a tool
 
-- **Independent:** depends on slice 02's artifact and on nothing else. Adds a
-  new arm value beside the existing ones; the `name` and `map` arms are
-  untouched, so nothing already in the pipeline changes behaviour.
-- **Valuable:** an analyst can follow a mechanism across books for the first
-  time, through a real command, before any comparison run.
-- **Small:** one query module, one `ToolSpec`, one arm value threaded through
-  the retrieval dispatcher. The store it reads is slice 02's artifact.
-- **Testable:** observable at the CLI, in the answer and in the trajectory log
-  the run already writes.
+The map arm has no tool loop. `run_map_ask_for_brief` runs one model call, the
+door (`decompose_brief`), and everything after it is deterministic:
+
+```
+door -> landing -> corridor -> assembly
+```
+
+`map+vocab` adds one deterministic step in that walk:
+
+```
+door -> landing -> corridor -> vocabulary neighbours -> assembly
+```
+
+Where the corridor pulls in positions that **argue with** what landed, the
+vocabulary step pulls in positions that **share a category** with what landed.
+Both are deterministic, both feed the same `assemble_map_evidence`.
+
+**The precedent is already in the file.** `MatchedPosition` and `positions_on`
+(#650) are a position type reached by a table lookup — nothing encoded, nothing
+scored, no model call, joining `positions.chunk_ids` against `note_names`. This
+step is that shape with the vocabulary assignment in place of the name table,
+and `assemble_map_evidence` already takes a union of position types, so a fourth
+member fits its signature without widening anything.
+
+Three things follow, and all three are improvements on the tool version:
+
+- **A deterministic step cannot be declined.** The recorded finding that four of
+  eight query tools returned zero stops being a risk here, because no model
+  chooses whether to take this edge.
+- **The acceptance criterion is checkable without a model in the loop.** Only the
+  door makes a call; the join is a table join.
+- **The arm plumbing already exists.** #808 shipped `arm` as a pass-through
+  rather than an enum, and says so in its own module docstring: a slice adding a
+  real third arm does it by teaching a lower layer what that string means. This
+  slice is that lower layer.
+
+**Observability goes in `map_retrieval`, never in the trajectory.**
+`_map_retrieval_to_dict` in `src/axial/answer/record.py` is the map arm's audit
+trail and already carries `asks`, `landed`, `corridor` and the assembled ids. The
+join adds a `vocabulary` block beside them: the categories reached, how many
+notes each contributed, and how many distinct sources those notes came from.
+Writing a fabricated trajectory entry to keep a downstream reader fed is exactly
+what that function's docstring refuses to do, and this slice does not start.
+
+**Cap what the step pulls in.** A `mechanism` category holds roughly 295 notes
+against a corridor bounded by relation count. Uncapped, one category would swamp
+the landed positions in assembly. `assemble_map_evidence`'s round-robin protects
+the *order* but not the total, so the step takes a per-category cap, prefers
+sources other than the landed position's, and records the cap it applied. A cap
+that bit is a fact about the run and belongs in the record.
 
 ## Acceptance criterion (outer loop — the failing e2e/integration test)
 
 ```gherkin
-Given  a persisted derived vocabulary in which a mechanism group holds notes
-       from three different sources, and a brief those notes bear on
+Given  a persisted derived vocabulary in which a mechanism category holds notes
+       from three different sources, and a brief whose landed positions carry
+       notes in that category
 When   an operator runs `uv run axial brief run <brief> --arm map+vocab`
 Then   the run completes and persists an analysis record
-And    the retrieval trajectory records at least one call to the derived-join
-       tool, with the group's label and the count of distinct sources it spans
-And    evidence assembled through that call reaches the record, so the answer
-       rests partly on passages that met at a shared mechanism rather than a
-       shared name
-And    the same brief run with `--arm map` produces a trajectory with no call
-       to that tool
+And    the record's `map_retrieval` carries a `vocabulary` block naming the
+       categories reached, the notes each contributed, and the distinct sources
+       those notes came from
+And    the assembled evidence contains at least one chunk that reached it only
+       through the category edge, so the answer rests partly on passages that
+       met at a shared mechanism rather than a shared name
+And    the same brief run with `--arm map` assembles without that step and
+       records no `vocabulary` block
+And    neither arm's trajectory is written to; both stay the honest empty list
+       the map path already produces
 ```
 
 - **Boundary / endpoint:** CLI — `uv run axial brief run <brief> --arm map+vocab`
@@ -71,62 +128,66 @@ slice: 03-two-notes-meet-at-a-shared-group
 edits: src/axial/cli.py
 edits: src/axial/test_cli.py
 edits: src/axial/test_cli_ask.py
-edits: src/axial/retrieve/tools.py
-edits: src/axial/retrieve/test_tools.py
-edits: src/axial/retrieve/dispatcher.py
-creates: src/axial/query/vocabulary.py
-creates: src/axial/query/test_vocabulary.py
+edits: src/axial/argmap/ask.py
+edits: src/axial/argmap/test_ask.py
+edits: src/axial/answer/record.py
+edits: src/axial/answer/test_record.py
+creates: src/axial/argmap/vocabulary_join.py
+creates: src/axial/argmap/test_vocabulary_join.py
 depends-on: 02-a-derived-vocabulary-is-persisted
 ```
 
+`src/axial/retrieve/tools.py` and `src/axial/retrieve/dispatcher.py` are **not**
+edited. They are the name-layer loop's tool surface, and this arm has no loop.
+
 ## Inner loop — initial unit test list
 
-- [ ] Given a note and a column, the query returns the other members of that
-      note's group, each with source id and answer sentence.
-- [ ] The result carries the group's label and the count of distinct sources
-      the group spans.
-- [ ] A note whose value the scheme refused returns no members and a stated
-      reason, distinct from a category holding exactly one member, from "no
+- [ ] Given a landed position and a column, the step returns the other positions
+      whose notes share a category with it, each carrying the category, the
+      contributing chunk ids, and its own sources.
+- [ ] A position already landed, or already in the corridor, is not returned
+      again — the same guard `build_corridor` already applies.
+- [ ] A note whose value the scheme refused contributes no edge, and the reason
+      is distinguishable from a category holding exactly one member, from "no
       such note", and from "no such column".
-- [ ] Members are ordered so that sources other than the asking note's come
-      first.
-- [ ] Asking for a column with no persisted vocabulary fails with a message
-      naming the column, not with a stack trace or an empty success.
-- [ ] The tool is offered to the model only on the `map+vocab` arm; the `name`
-      and `map` arms see the tool list they see today.
+- [ ] Neighbours are ordered so that sources other than the landed position's
+      come first.
+- [ ] The per-category cap is applied, and the record says it was applied and at
+      what value.
+- [ ] Asking for a column with no persisted vocabulary fails naming the column,
+      not with a stack trace and not with an empty success.
+- [ ] The step runs on the `map+vocab` arm and not on `map`; the `name` arm is
+      untouched.
 - [ ] An unknown `--arm` value is refused, naming the arms that exist.
+- [ ] The trajectory stays empty on both map arms.
 
 ## Design notes for the executor
 
-- **One tool, not twelve.** The column is a parameter. Twelve near-identical
-  specs would push the tool surface past what a model reliably chooses between,
-  and the recorded finding is that four of eight query tools already returned
-  zero.
-- **The level is a parameter too, for the same reason.** The founder's
-  2026-08-28 ruling makes the vocabulary a tree; slice 02 ships depth 1 with a
-  shape that admits depth 2. This tool takes the level, or resolves to the finest
-  level the column has, so a second level becomes reachable without a second
-  tool.
-- **`--arm` is a pass-through, not an enum each caller re-declares.** Slice 04
-  puts the same selector on `brief sweep`. If the arm list lives in one place,
-  a new arm becomes available everywhere at once and the two slices stay
-  independent of each other. If it is re-declared per command, they do not.
-- **Read the existing tools first.** `_where_names_meet`, `_positions_on` and
-  `_find_notes` in `src/axial/retrieve/tools.py` establish the return shape,
-  the detail-string helpers, and how a result reports its own span. Match them.
-- **A repeat means nowhere else to go.** 91% of re-asks hit a `total == count`
-  result. Return the totals a caller needs to know it has exhausted a group,
-  rather than letting it discover that by asking twice.
+- **One step, not twelve.** The column is a parameter. A separate code path per
+  column would be twelve near-identical joins over one table.
+- **The level is a parameter too.** The founder's 2026-08-28 ruling makes the
+  vocabulary a tree; slice 02 shipped depth 1 with a shape that admits depth 2.
+  The step takes the level, or resolves to the finest level the column has, so a
+  second level becomes reachable without a second code path.
+- **`--arm` is a pass-through, not an enum each caller re-declares.** #808 already
+  established this and `brief sweep --arm` already accepts `map+vocab`. This
+  slice teaches the lower layer what the string means; it does not add a second
+  arm registry.
+- **Read `positions_on` and `MatchedPosition` first** (`src/axial/argmap/ask.py`,
+  #650). They establish the return shape for a position reached by a table
+  lookup rather than a score, which is exactly what this is.
 - **Cross-book neighbours come first.** Only 40.5% of argument-map edges reach
-  another book. Ordering, and the source-span count in the result, are what let
-  a caller see a group is one book talking to itself.
+  another book (#651). Ordering, the per-category cap, and the source count in
+  the record are what let a reader see a category is one book talking to itself.
 
 ## Out of scope for this slice (deferred)
 
-- Changing the `name` or `map` arms, the step budget, or which tool the loop
-  reaches for first on either of them.
-- Building any page or vault artifact from a group.
+- Changing the `name` or `map` arms, the step budget, or the assembly cap on
+  either.
+- Any change to `src/axial/retrieve/`. The name-layer tool surface is not touched.
+- Building any page or vault artifact from a category.
 - Cross-column joins: notes sharing both a mechanism and an assumption.
+- Building depth 2 of the vocabulary. Slice 02's own out-of-scope note holds.
 - Removing or demoting any name-keyed tool.
 
 ## Definition of done
@@ -142,8 +203,8 @@ depends-on: 02-a-derived-vocabulary-is-persisted
       confirm they are actually saying the same thing. A model agreeing with the
       scheme it was handed is not evidence that a category means anything, and
       slice 01 measured that agreement at 61.4% on this column. One real brief
-      run on the `map+vocab` arm, with the trajectory inspected. Log to
-      `data/logs/<YYYY-MM-DD>-vocabulary-tool/`.
+      run on the `map+vocab` arm, with the persisted `map_retrieval` block
+      inspected. Log to `data/logs/<YYYY-MM-DD>-vocabulary-join/`.
 - [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
 
 ## Status / progress log
@@ -158,3 +219,9 @@ depends-on: 02-a-derived-vocabulary-is-persisted
   cosine threshold anywhere in this feature any more, so a group is a category a
   model assigned and a note without one is a refusal, not a singleton. Exercised
   on `mechanism`, which is the column slice 02 assigns first.
+- 2026-08-28 corrected before building, after the executing session read the map
+  arm's code: the arm is deterministic after the door and has no tool loop, so a
+  `ToolSpec`, a `dispatcher.py` edit and a trajectory assertion were all wrong.
+  The join is a deterministic step between the corridor and assembly, its
+  observable is the record's `map_retrieval` block, and `src/axial/retrieve/` is
+  no longer touched at all.
