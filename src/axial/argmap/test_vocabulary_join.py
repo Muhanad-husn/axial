@@ -505,3 +505,107 @@ def test_every_reason_key_is_present_even_at_zero(tmp_path: Path):
     assert result.reasons[REASON_REFUSED] == 0
     assert result.reasons[REASON_OUT_OF_SCHEME] == 0
     assert result.reasons[REASON_NOT_FOUND] == 0
+
+
+# ---------------------------------------------------------------------------
+# A note can sit in more than one position (issue #822, item 3). Measured
+# against every built map on disk: `data/map/9b796b3a6312b329/positions.jsonl`
+# holds 1,937 positions over 5,596 distinct chunks, 344 of which appear in 2
+# to 5 positions; the two older builds show 278/5,177 and 263/5,509, max
+# multiplicity 5 in all three. The positions do NOT partition the notes.
+# ---------------------------------------------------------------------------
+
+
+def test_an_edge_survives_when_only_the_first_position_holding_the_note_is_excluded(
+    tmp_path: Path,
+):
+    """The dropped edge. `pos-first` comes first in `positions.jsonl` order
+    and is already in the corridor; `pos-second` holds the same note and is
+    not excluded, so the category still reaches it. Keeping only the first
+    position per chunk lost this edge silently, and made which position a
+    category hit was attributed to depend on file order."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_first = _position("pos-first", ["n3"], ["src-2"])
+    pos_second = _position("pos-second", ["n3"], ["src-2"])
+    positions = [pos_landed, pos_first, pos_second]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        {"pos-first"},
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert [p.position_id for p in result.positions] == ["pos-second"]
+    assert result.positions[0].chunk_ids == ("n3",)
+
+
+def test_each_surviving_position_holding_a_matched_note_is_its_own_edge(tmp_path: Path):
+    """When several of a note's positions all survive exclusion, each is its
+    own edge: the note is genuinely part of two arguments and assembly picks
+    per position. The category still reports the NOTE once -- `chunk_ids`
+    counts distinct notes offered, not edges."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_a = _position("pos-a", ["n3"], ["src-2"])
+    pos_b = _position("pos-b", ["n3"], ["src-2"])
+    positions = [pos_landed, pos_a, pos_b]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert sorted(p.position_id for p in result.positions) == ["pos-a", "pos-b"]
+    assert result.categories[0].chunk_ids == ("n3",)
+
+
+def test_the_per_category_cap_counts_edges_not_distinct_notes(tmp_path: Path):
+    """The budget contract does not move (issue #822): the cap still counts
+    what a category hands to assembly, and each surviving position is one of
+    those. One note in three positions spends three of the cap."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    others = [_position(f"pos-{letter}", ["n3"], ["src-2"]) for letter in "abc"]
+    positions = [pos_landed, *others]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+        cap=2,
+    )
+
+    assert len(result.positions) == 2
+    assert result.categories[0].cap_applied is True

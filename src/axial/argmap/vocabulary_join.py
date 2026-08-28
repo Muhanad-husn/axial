@@ -25,6 +25,15 @@ column the same way at all. The join reads each of `landed`'s own notes'
 assignment records and only follows the categories THAT note was filed
 under.
 
+**A note is not in exactly one position.** The map's positions overlap:
+across all three builds on disk, 263-344 chunks of ~5,200-5,600 sit in 2 to
+5 positions each (issue #822). The join indexes each chunk to EVERY position
+holding it and applies `excluded_position_ids` per position, so an edge is
+never lost because the note's first-listed position happened to be landed or
+in the corridor. Where several of a note's positions survive, each is its
+own edge -- the note really is part of more than one argument, and assembly
+walks positions.
+
 **The per-category cap.** A `mechanism` category holds 309-623 notes
 (measured, #806's own manifest) against `assemble_map_evidence`'s shared
 `ASSEMBLE_CAP = 90` (`axial.argmap.ask`) -- uncapped, a single category
@@ -153,6 +162,13 @@ class CategoryReach:
     `cap_applied` whether more candidates existed than `cap` let through --
     a fact about this run, recorded in `_map_retrieval_to_dict`
     (`axial.answer.record`) rather than left to be inferred.
+
+    **`chunk_ids` counts notes; the cap counts edges (issue #822).** The
+    map's positions do not partition the notes, so one note can be offered
+    through two of its own positions. That is two things handed to
+    assembly, which is what the cap governs, and one note reached, which is
+    what this field reports. The two figures differ only for a note sitting
+    in several surviving positions.
 
     A category with exactly one member -- the landed note itself -- is
     still reported here, with `chunk_ids` empty: reached, but with nobody
@@ -307,10 +323,21 @@ def vocabulary_neighbours(
             source_id = str(record.get("source_id", ""))
             members_by_category.setdefault(category_id, []).append((chunk_id, source_id))
 
-    position_by_chunk: dict[str, Mapping[str, Any]] = {}
+    # **A note can sit in more than one position (issue #822).** The first
+    # cut kept only the first position holding each chunk, which assumes the
+    # map's positions partition the notes. They do not: measured against
+    # every built map on disk, `data/map/9b796b3a6312b329/positions.jsonl`
+    # holds 1,937 positions over 5,596 distinct chunks and 344 of those
+    # chunks appear in 2 to 5 positions; the two older builds show 278/5,177
+    # and 263/5,509, with the same maximum multiplicity of 5. Under the old
+    # rule a candidate whose FIRST position happened to be landed or in the
+    # corridor was dropped even though another, unexcluded position also
+    # held it, and which position a category hit was attributed to depended
+    # on file order.
+    positions_by_chunk: dict[str, list[Mapping[str, Any]]] = {}
     for position in positions:
         for chunk_id in position["chunk_ids"]:
-            position_by_chunk.setdefault(chunk_id, position)
+            positions_by_chunk.setdefault(chunk_id, []).append(position)
 
     landed_chunk_ids = {chunk_id for position in landed for chunk_id in position.chunk_ids}
     landed_sources = {source for position in landed for source in position.sources}
@@ -359,11 +386,24 @@ def vocabulary_neighbours(
         for chunk_id, source_id in members_by_category.get(category_id, []):
             if chunk_id in landed_chunk_ids or chunk_id in seen_chunk_ids:
                 continue
-            position = position_by_chunk.get(chunk_id)
-            if position is None or position["position_id"] in excluded_position_ids:
+            # Exclusion is applied per position, not to the chunk. When
+            # several of a note's positions survive, EACH is its own edge:
+            # the note is genuinely part of more than one argument, and
+            # assembly walks positions, so collapsing them would silently
+            # pick one argument for the reader. The per-category cap goes
+            # on counting what a category hands to assembly -- one count per
+            # surviving position -- so the budget contract is unchanged;
+            # `CategoryReach.chunk_ids` below stays a count of distinct
+            # NOTES offered, which is the different question it answers.
+            surviving = [
+                position
+                for position in positions_by_chunk.get(chunk_id, ())
+                if position["position_id"] not in excluded_position_ids
+            ]
+            if not surviving:
                 continue
             seen_chunk_ids.add(chunk_id)
-            candidates.append((chunk_id, source_id, position))
+            candidates.extend((chunk_id, source_id, position) for position in surviving)
 
         # Cross-source first (issue #651: only 40.5% of argument-map edges
         # reach another book), then a deterministic total order. The
@@ -409,7 +449,12 @@ def vocabulary_neighbours(
             CategoryReach(
                 category_id=category_id,
                 category_name=category_names.get(category_id, ""),
-                chunk_ids=tuple(chunk_id for chunk_id, _source_id, _position in contributed),
+                # Distinct notes, in contribution order -- a note reached
+                # through two of its own positions is one note offered, two
+                # edges spent (issue #822).
+                chunk_ids=tuple(
+                    dict.fromkeys(chunk_id for chunk_id, _source_id, _position in contributed)
+                ),
                 source_count=len({source_id for _c, source_id, _p in contributed}),
                 cap_applied=cap_applied,
             )
