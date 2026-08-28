@@ -12,8 +12,8 @@ Examine (already run before this slice started; not re-run here):
 
     uv run axial vocabulary examine --columns position
 
-Ran in D:/axial (main checkout). Output: console-examine.log (see note
-below on this file's integrity).
+Ran in D:/axial (main checkout). Output: console-examine.log -- see the
+finding below on why two paid draws landed on that one path.
 
 Build:
 
@@ -36,34 +36,55 @@ two-model agreement 70.0% overall and 73.8% where the first model assigned
 openai/gpt-5.6-luna $0.0029). Answers: 6,176 answered value(s), 6,172
 distinct string(s), 666 excluded (abstention/[]/empty).
 
-## A finding: the examine log was overwritten mid-session
+## A finding: two paid examine draws raced on one log path
 
 data/logs/2026-08-29-position-vocabulary/console-examine.log lives in the
 main checkout, a shared path not scoped to any one worktree or session. My
-first read of it, early in this build, returned the 9-category result above,
-matching this brief's numbers exactly (93.0%, 16.2%, 70.0%/73.8%,
-$0.0070+$0.0029). A later read of the same path -- no axial process
-visible as running at either check -- returned a different result: 15
-categories, none of the 9 names above, 97.2% assignment, largest 12.0%,
-agreement 66.0%, cost $0.0049+$0.0028. The request sizes (prompt_chars) were
-identical across both reads; only the model's returned content and elapsed
-times differed on re-request -- consistent with a second, independent
-examine invocation against the same log path overwriting the first
-(redirect truncates, does not append), not with a self-consistency retry
-inside one process.
+first read of it, early in this build, returned the 9-category result
+below (draw A), matching this slice's brief exactly (93.0%, 16.2%,
+70.0%/73.8%, $0.0070+$0.0029). A later read of the same path returned a
+different result: 15 categories, none of draw A's names, 97.2% assignment,
+largest 12.0%, agreement 66.0%, cost $0.0049+$0.0028 (draw B).
 
-I did not run examine at any point. The 9-category scheme committed below
-is not affected -- it is drawn from this brief's embedded proposal text and
-from that first read, both of which agree byte-for-byte on every category
-name, gloss and count. But the file now on disk in D:/axial does not
-match either, so the console-examine.log copied into this worktree is
-reconstructed from the tool's captured first read of the file, not copied
-live from the current (overwritten) one -- the current file on disk would
-contradict the numbers in this summary if copied as-is. Whatever produced
-the second run spent roughly $0.0077 of real cost not accounted for by this
-slice's brief and worth the founder's attention: either a second builder
-session collided on this shared log path during a parallel dispatch, or
-something else re-ran examine against instructions.
+Provenance, from the coordinator, after I raised this: the coordinator
+launched examine twice against the same log path. The first launch was
+detached and appeared, from the coordinator's side, to have died after one
+line; it had not died, and the re-launch raced it on the same redirect
+target. Two paid draws, one file, both real spend -- not a parallel
+builder collision and not an uninstructed invocation on my part. I did not
+run examine at any point in this session.
+
+The committed scheme is draw A, unaffected by the race: it is drawn from
+this slice's brief, which embeds the proposal text verbatim, and from my
+own first read of the file, and the two agree byte-for-byte on every
+category name, gloss and count, and match the nine ids recorded in
+data/vocabulary/position/manifest.json. Draw A is preserved in this
+directory as console-examine-draw-a-9-categories-reconstructed.log,
+reconstructed from that first read rather than copied live, since the file
+on disk had already been overwritten by draw B by the time I went to copy
+it. Draw B survives in the main checkout, renamed to
+console-examine-draw-b-15-categories.log, and a copy sits alongside draw A
+in this directory -- kept as evidence, not discarded, since it is a second
+paid measurement of the same column's instability, not waste.
+
+Draw B, in full, from the surviving file:
+
+- 15 categories proposed, 15 reaching 5+ members, all 15 spanning 2+
+  sources
+- assignment rate on the held-out sample: 97.2% (draw A: 93.0%)
+- largest category share: 12.0% (draw A: 16.2%)
+- two-model agreement: 66.0% overall and 66.0% where the first model
+  assigned a category, n=100 (draw A: 70.0% overall, 73.8% where assigned,
+  n=84)
+- cost: $0.0077 across both models (deepseek/deepseek-v4-flash $0.0049,
+  openai/gpt-5.6-luna $0.0028)
+
+Draw B assigns more and agrees less than draw A -- the two are not ranked
+by these numbers, and neither should be read as the better measurement.
+Draw A is the committed scheme because it is the one the build actually
+ran under, not because 93.0%/16.2%/70.0%/73.8% beats 97.2%/12.0%/66.0%/
+66.0% on any of these axes. See the granularity section below for what
+that trade means for this column.
 
 ## The proposed scheme, verbatim
 
@@ -131,8 +152,15 @@ here because they match:
       model: deepseek/deepseek-v4-flash (63 call(s), cost $0.0626)
 
 93.9% assigned (5,797 of 6,176), against the held-out sample's 93.0%
-estimate -- close, on the same side. 63 calls, $0.0626. Slice total including
-examine: $0.0725.
+estimate -- close, on the same side. 63 calls, $0.0626.
+
+Slice cost, itemized:
+
+- examine, draw A (the committed scheme): $0.0099
+- examine, draw B (a second, unplanned draw that raced draw A on the same
+  log path -- see the finding above): $0.0077
+- build: $0.0626
+- slice total: $0.0802
 
 Per-category member and source counts, by member count:
 
@@ -181,16 +209,28 @@ statement, not as a defect in this build.
 
 ## The granularity hazard
 
-This column's granularity is unstable under the same prompt and model:
-position returned 5 categories on one run and 15 on another, 2026-08-27
-(data/logs/2026-08-27-vocabulary-categorise-v2/summary.md, line 78, quoting
-that summary: same prompt, same model, same corpus, two runs, position 5 to
-15 categories, position passes now because its scheme came out finer, its
-largest category fell from 56.8% to 11.5%, while its coverage dropped 8.7
-points). This slice's own examine pass returned 9 (see above), and, per the
-finding above, a later, uninstructed rerun against the same log path
-returned 15 again with a different coverage/agreement profile. The
-committed scheme is one draw from an unstable proposal, not a settled
+This column's granularity is unstable under the same prompt and model, and
+there are now four draws on record, same prompt, same model, same corpus:
+5 categories, then 15, on 2026-08-27
+(data/logs/2026-08-27-vocabulary-categorise-v2/summary.md, line 78: same
+prompt, same model, same corpus, two runs, position 5 to 15 categories,
+position passes then because its scheme came out finer, its largest
+category fell from 56.8% to 11.5%, while its coverage dropped 8.7 points);
+then 9 (draw A) and 15 again (draw B), both on 2026-08-29, the two draws
+described above, from the same coordinator dispatch racing on one log
+path. Two of the four draws are from today, on the same column, minutes
+apart.
+
+The honest consequence, read across draw A and draw B: finer granularity
+buys coverage and costs stability. Draw B's 15 categories assign 97.2%
+against draw A's 93.0%, but agree with a second model only 66.0% of the
+time against draw A's 73.8% where assigned. Neither draw is better on
+these numbers; they trade against each other. The committed scheme is
+draw A because it is the one the build actually ran under -- the first
+paid draw, the one this slice's brief was written against -- not because
+it scored higher on any axis measured here.
+
+The committed scheme is one draw from an unstable proposal, not a settled
 taxonomy. Editing it later is a version bump that re-asks the column under
 --force; the counts this column produces, including the per-category
 shares above and the 92.3%/93.9% denominators, should be read with that
@@ -198,8 +238,14 @@ instability in mind rather than as a fixed property of the position axis.
 
 ## Files
 
-console-examine.log and console-build.log are copied into this directory
-(the former reconstructed per the finding above, the latter concatenated
-from the build's stdout and per-call stderr log). Both are untracked
-(.gitignore keeps raw data/logs/ output unpublished); this summary.md
-and a run.jsonl derived from it are tracked.
+Three raw log files sit in this directory, all untracked (.gitignore keeps
+raw data/logs/ output unpublished; this summary.md and a run.jsonl derived
+from it are tracked):
+
+- console-examine-draw-a-9-categories-reconstructed.log -- draw A,
+  reconstructed from the tool's own first read (see the finding above),
+  not copied live
+- console-examine-draw-b-15-categories.log -- draw B, copied from the
+  surviving file in the main checkout
+- console-build.log -- concatenated from the build's stdout and per-call
+  stderr log
