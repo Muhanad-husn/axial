@@ -1723,3 +1723,257 @@ def test_main_eval_layers_reports_a_refusal_on_stderr_and_exits_nonzero(monkeypa
     assert exit_code == 1
     assert "arm 'name' ran 3 draws, arm 'map' ran 2" in captured.err
     assert captured.out == ""
+
+
+# ---------------------------------------------------------------------------
+# `axial map purity` (issue #827): the pure-function bag/vocabulary
+# cross-tab, CLI-level acceptance coverage. Fixture dirs only -- no `data/`
+# dependence, no model call.
+# ---------------------------------------------------------------------------
+
+
+def _purity_write_bag_state(outdir, assignments):
+    import json as _json
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "config": {"encoder": "test-encoder", "bag_distance_threshold": 0.2},
+        "assignments": assignments,
+        "centroids": {},
+    }
+    (outdir / "bag_state.json").write_text(_json.dumps(state), encoding="utf-8")
+
+
+def _purity_write_map_json(outdir):
+    import json as _json
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "map.json").write_text(_json.dumps({"corpus_pin": outdir.name}), encoding="utf-8")
+
+
+def _purity_write_vocabulary(root, column, assignments, categories):
+    import json as _json
+
+    column_dir = root / column
+    column_dir.mkdir(parents=True, exist_ok=True)
+    (column_dir / "assignments.jsonl").write_text(
+        "\n".join(_json.dumps(record) for record in assignments), encoding="utf-8"
+    )
+    manifest = {
+        "column": column,
+        "scheme_version": "v1",
+        "max_level": 1,
+        "categories": categories,
+    }
+    (column_dir / "manifest.json").write_text(_json.dumps(manifest), encoding="utf-8")
+
+
+def _purity_assignment(chunk_id, category_id, **overrides):
+    record = {
+        "chunk_id": chunk_id,
+        "source_id": f"{chunk_id}-source",
+        "column": "claim",
+        "element_index": 0,
+        "level": 1,
+        "value": f"value for {chunk_id}",
+        "category_id": category_id,
+        "refused": category_id is None,
+    }
+    record.update(overrides)
+    return record
+
+
+def _purity_category(category_id):
+    return {"category_id": category_id, "name": category_id, "member_count": 0, "source_count": 0}
+
+
+def test_build_parser_recognises_map_purity_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--pin",
+            "abc123",
+            "--map-dir",
+            str(tmp_path / "map"),
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--level",
+            "1",
+        ]
+    )
+
+    assert args.command == "map"
+    assert args.map_command == "purity"
+    assert args.column == "claim"
+    assert args.pin == "abc123"
+    assert args.map_dir == str(tmp_path / "map")
+    assert args.vocabulary_dir == str(tmp_path / "vocab")
+    assert args.level == 1
+
+
+def test_main_map_purity_prints_purity_scatter_pairs_and_coverage_for_bags_with_2plus_members(
+    tmp_path, capsys
+):
+    """The acceptance criterion (issue #827, plan §"Acceptance criterion"),
+    plus the issue's own added clause: the category-pair confusion table,
+    with the two #826 pairs reported by name whether or not they rank."""
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _purity_write_map_json(outdir)
+    # bag 0: 3 categorised (2x cat-a, 1x cat-b) -- eligible, impure.
+    # bag 1: 1 categorised member -- excluded from purity, still counted.
+    # "bag-only"/"vocab-only" chunks exercise the coverage gap both ways.
+    _purity_write_bag_state(
+        outdir,
+        {"n1": 0, "n2": 0, "n3": 0, "n4": 1, "bag-only": 0},
+    )
+    vocabulary_dir = tmp_path / "vocab"
+    id_a, id_b = (
+        "causal-argument-state-formation-or-power",
+        "causal-argument-violence-war-or-conflict",
+    )
+    _purity_write_vocabulary(
+        vocabulary_dir,
+        "claim",
+        [
+            _purity_assignment("n1", "cat-a"),
+            _purity_assignment("n2", "cat-a"),
+            _purity_assignment("n3", "cat-b"),
+            _purity_assignment("n4", "cat-a"),
+            _purity_assignment("vocab-only", "cat-a"),
+        ],
+        categories=[
+            _purity_category("cat-a"),
+            _purity_category("cat-b"),
+            _purity_category(id_a),
+            _purity_category(id_b),
+        ],
+    )
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "pin: pin-1" in out
+    assert "eligible bags: 1" in out
+    assert "excluded (fewer than 2 categorised members): 1" in out
+    assert "median purity: 0.67" in out
+    assert "CATEGORY SCATTER" in out
+    assert "cat-a" in out and "cat-b" in out
+    assert "CATEGORY PAIR CO-OCCURRENCE" in out
+    assert "bag-only (no vocabulary record for this column): 1" in out
+    assert "vocabulary-only (no bag): 1" in out
+    assert "NAMED PAIRS" in out
+    assert f"{id_a} x {id_b}" in out
+    assert "absent from the ranking (0 bags)" in out
+
+
+def test_main_map_purity_with_no_pin_uses_the_newest_map_directory(tmp_path, capsys):
+    import time
+
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    older = map_dir / "pin-older"
+    newer = map_dir / "pin-newer"
+    _purity_write_map_json(older)
+    time.sleep(0.01)
+    _purity_write_map_json(newer)
+    _purity_write_bag_state(newer, {"n1": 0})
+    vocabulary_dir = tmp_path / "vocab"
+    _purity_write_vocabulary(
+        vocabulary_dir, "claim", [_purity_assignment("n1", "cat-a")], [_purity_category("cat-a")]
+    )
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "pin: pin-newer" in out
+
+
+def test_main_map_purity_reports_a_missing_bag_state_by_name_not_a_traceback(tmp_path, capsys):
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _purity_write_map_json(outdir)  # no bag_state.json written
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "bag_state.json" in captured.err
+    assert "pin-1" in captured.err
+
+
+def test_main_map_purity_reports_an_unbuilt_vocabulary_column_by_name(tmp_path, capsys):
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _purity_write_map_json(outdir)
+    _purity_write_bag_state(outdir, {"n1": 0})
+
+    exit_code = main(
+        [
+            "map",
+            "purity",
+            "--column",
+            "claim",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "claim" in captured.err
+    assert "axial vocabulary build" in captured.err
