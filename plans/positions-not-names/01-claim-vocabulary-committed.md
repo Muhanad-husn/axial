@@ -5,7 +5,7 @@
 - **Issue:** [#826](https://github.com/Muhanad-husn/axial/issues/826)
 - **Branch:** feat/positions-not-names/01-claim-vocabulary-committed
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR open, awaiting founder approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -80,13 +80,21 @@ creates: data/logs/2026-08-28-claim-vocabulary/summary.md
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] The corpus run is done, its log written, coverage and refusal numbers in the summary.
-- [ ] Evidence collected and PR opened into main (`safe-pr`).
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [x] The corpus run is done, its log written, coverage and refusal numbers in the summary.
+- [x] Evidence collected and PR opened into main (`safe-pr`).
 
 ## Status / progress log
 
 - 2026-08-28 planned.
+- 2026-08-28 built. The drafting run was already on disk from 2026-08-27, so no
+  new examine pass was paid for. Founder approved the drafted scheme with one
+  edit: the 1-member "Acknowledgment or credit statement" category dropped and
+  folded into the bibliographic gloss. Nine categories committed as
+  `2026-08-28-claim-v1`. Corpus build: 6,697 answered, 6,671 assigned, 26
+  refused, 0 unanswered, 68 calls, $0.0839; second run 0 calls, 2.1s,
+  byte-identical artifact. Log at `data/logs/2026-08-28-claim-vocabulary/`.
+  PR [#834](https://github.com/Muhanad-husn/axial/pull/834).
