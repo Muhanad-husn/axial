@@ -1,0 +1,18 @@
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary build --columns position --scheme-path D:/axial-wt/838/config/vocabulary.yaml
+# run from the main checkout D:/axial -- data/ is gitignored and absent from a worktree
+position: 6176 answered value(s), 666 excluded (abstention/[]/empty)
+  scheme 2026-08-29-position-v1 (9 category(ies), depth 1), answers pin 98e10d46cf610c6a
+  artifact: data\vocabulary\position
+  built: 6176 newly assigned, 0 reused from the previous build
+  5797 assigned to a category, 379 refused ("none"), 0 out-of-scheme, 0 unanswered (never returned)
+  categories, by member count:
+    - causal-claims-about-war-and-violence (causal claims about war and violence): 1128 member(s), 30 source(s)
+    - accounts-of-social-and-economic-transformation (accounts of social and economic transformation): 916 member(s), 25 source(s)
+    - descriptions-of-state-formation-and-state-power (descriptions of state formation and state power): 901 member(s), 30 source(s)
+    - analyses-of-political-regimes-and-authoritarianism (analyses of political regimes and authoritarianism): 683 member(s), 30 source(s)
+    - evaluations-of-historiographic-or-theoretical-positions (evaluations of historiographic or theoretical positions): 642 member(s), 30 source(s)
+    - characterizations-of-nationalism-and-nationhood (characterizations of nationalism and nationhood): 517 member(s), 23 source(s)
+    - claims-about-identity-construction-and-ethnicity (claims about identity construction and ethnicity): 414 member(s), 26 source(s)
+    - descriptions-of-international-and-legal-order (descriptions of international and legal order): 411 member(s), 23 source(s)
+    - non-substantive-or-bibliographic-statements (non-substantive or bibliographic statements): 185 member(s), 34 source(s)
+  model: deepseek/deepseek-v4-flash (63 call(s), cost $0.0626)
