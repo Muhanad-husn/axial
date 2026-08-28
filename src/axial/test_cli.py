@@ -838,3 +838,81 @@ def test_main_brief_sweep_prints_error_and_returns_nonzero_on_a_mixed_arm_refusa
     assert exit_code != 0
     assert "arm 'map'" in captured.err
     assert "'name'" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# `axial sources` and the orphaned-envelope reverse pass (issue #819): an
+# ingested source whose raw file is gone is reported and exits non-zero.
+# ---------------------------------------------------------------------------
+
+
+def _stub_sources_scan(monkeypatch, orphans):
+    """Point both halves of `axial sources`'s local report at fixtures: the
+    forward walk returns a single healthy source, the reverse pass returns
+    whatever this test wants. Neither reads the real (gitignored) `data/`."""
+    from axial import cli as cli_mod
+    from axial.sources import DONE, SourceRecord
+
+    monkeypatch.setattr(cli_mod, "scan_local", lambda *a, **kw: [SourceRecord("alpha.pdf", DONE)])
+    monkeypatch.setattr(cli_mod, "scan_orphaned_envelopes", lambda *a, **kw: orphans)
+
+
+def test_main_sources_check_exits_zero_and_prints_no_orphan_block_when_clean(
+    monkeypatch, capsys
+):
+    from axial.cli import main
+
+    _stub_sources_scan(monkeypatch, [])
+
+    exit_code = main(["sources", "--backend", "local", "--check"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "alpha.pdf" in captured.out
+    assert "missing" not in captured.out
+    assert captured.err == ""
+
+
+def test_main_sources_check_names_the_orphaned_source_and_exits_non_zero(monkeypatch, capsys):
+    from axial.cli import main
+    from axial.sources import MISSING, SourceRecord
+
+    _stub_sources_scan(
+        monkeypatch,
+        [
+            SourceRecord("beshara-2011-8410a9059300", MISSING, "no raw file in data/sources"),
+            SourceRecord("zulu-2020-ffffffffffff", MISSING, "no raw file in data/sources"),
+        ],
+    )
+
+    exit_code = main(["sources", "--backend", "local", "--check"])
+    captured = capsys.readouterr()
+
+    # Non-zero, because this is the state that kills a paid run at the corpus
+    # pin (issue #816) -- `new` and `changed` are not errors and still exit 0.
+    assert exit_code != 0
+    # Both named, not just the first.
+    assert "beshara-2011-8410a9059300" in captured.out
+    assert "zulu-2020-ffffffffffff" in captured.out
+    assert MISSING in captured.out
+    # The forward report is still printed in full alongside it.
+    assert "alpha.pdf" in captured.out
+
+
+def test_main_sources_orphan_check_runs_without_check_flag_too(monkeypatch, capsys):
+    """The reverse pass is not a `--check`-only extra: a plain `axial sources`
+    that ingests new files still reports a corpus that cannot run the map arm."""
+    from axial.cli import main
+    from axial.sources import MISSING, SourceRecord
+
+    _stub_sources_scan(
+        monkeypatch, [SourceRecord("beshara-2011-8410a9059300", MISSING, "no raw file")]
+    )
+
+    exit_code = main(["sources", "--backend", "local"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "beshara-2011-8410a9059300" in captured.out
+    # Nothing was pending, so no client was ever built and no pass ever ran.
+    assert "nothing new" in captured.out

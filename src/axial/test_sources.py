@@ -24,6 +24,7 @@ from axial.sources import (
     DEFAULT_DONE_PASS,
     DEFAULT_INGEST_PASSES,
     DONE,
+    MISSING,
     NEW,
     PARTIAL,
     REJECTED,
@@ -31,6 +32,7 @@ from axial.sources import (
     render_report,
     resolve_backend,
     scan_local,
+    scan_orphaned_envelopes,
     sync_local,
 )
 
@@ -565,3 +567,105 @@ def test_the_ingest_chain_runs_artifacts_and_the_done_pass_names_its_end():
     assert DEFAULT_INGEST_PASSES == ("extract", "envelope", "chunk", "interrogate", "artifacts")
     assert DEFAULT_DONE_PASS == DEFAULT_INGEST_PASSES[-1]
     assert "vault-write" not in DEFAULT_INGEST_PASSES
+
+
+# --- scan_orphaned_envelopes -------------------------------------------------
+#
+# The reverse pass (issue #819): `scan_local` walks `sources_dir` forward and
+# so cannot see an ingested source whose raw file is gone. Every test here
+# builds its own `sources_dir`/`envelopes_dir` under `tmp_path` for the same
+# reason the module's other tests do.
+
+
+def test_scan_orphaned_envelopes_is_empty_when_every_envelope_has_its_raw_file(tmp_path):
+    sources_dir = tmp_path / "sources"
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    path = _write_source(sources_dir, "alpha.pdf")
+    (envelopes_dir / f"{compute_source_id(path)}.json").write_text("{}", encoding="utf-8")
+
+    assert scan_orphaned_envelopes(sources_dir, envelopes_dir) == []
+
+
+def test_scan_orphaned_envelopes_reports_an_envelope_whose_raw_file_is_gone(tmp_path):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "beshara-2011-8410a9059300.json").write_text("{}", encoding="utf-8")
+
+    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+
+    assert len(records) == 1
+    assert records[0].name == "beshara-2011-8410a9059300"
+    assert records[0].status == MISSING
+    # The reason names the directory actually searched, not a hardcoded one.
+    assert sources_dir.as_posix() in records[0].reason
+    assert "no raw file" in records[0].reason
+
+
+def test_scan_orphaned_envelopes_names_every_missing_source_not_only_the_first(tmp_path):
+    sources_dir = tmp_path / "sources"
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    present = _write_source(sources_dir, "alpha.pdf")
+    for source_id in (
+        f"{compute_source_id(present)}",
+        "zulu-2020-ffffffffffff",
+        "bravo-1999-000000000000",
+    ):
+        (envelopes_dir / f"{source_id}.json").write_text("{}", encoding="utf-8")
+
+    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+
+    # Sorted, so the report reads the same way twice, and BOTH orphans are
+    # named -- the live failure raised on the first one it reached.
+    assert [record.name for record in records] == [
+        "bravo-1999-000000000000",
+        "zulu-2020-ffffffffffff",
+    ]
+    assert {record.status for record in records} == {MISSING}
+
+
+def test_scan_orphaned_envelopes_returns_empty_list_for_absent_envelopes_dir(tmp_path):
+    assert scan_orphaned_envelopes(tmp_path / "sources", tmp_path / "nowhere") == []
+
+
+def test_scan_orphaned_envelopes_ignores_non_json_files_in_the_envelopes_dir(tmp_path):
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "README.md").write_text("not an envelope", encoding="utf-8")
+    (envelopes_dir / "nested").mkdir()
+
+    assert scan_orphaned_envelopes(sources_dir, envelopes_dir) == []
+
+
+def test_scan_orphaned_envelopes_reads_no_envelope_contents(tmp_path):
+    """The source_id is the envelope's filename stem, so the pass never opens
+    a file -- an unparseable envelope is still reported by name rather than
+    crashing the check."""
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "alpha-2001-abcdefabcdef.json").write_text("{ not json", encoding="utf-8")
+
+    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+
+    assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
+
+
+def test_scan_orphaned_envelopes_skips_a_file_it_cannot_hash(tmp_path):
+    """An unsupported extension never gets a `source_id` in `scan_local`
+    either -- it is not a corpus source, so it cannot vouch for an envelope."""
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "notes.txt")
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "notes-0000-111111111111.json").write_text("{}", encoding="utf-8")
+
+    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+
+    assert [record.name for record in records] == ["notes-0000-111111111111"]
