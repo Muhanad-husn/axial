@@ -891,12 +891,15 @@ def test_main_sources_check_names_the_orphaned_source_and_exits_non_zero(monkeyp
     # Non-zero, because this is the state that kills a paid run at the corpus
     # pin (issue #816) -- `new` and `changed` are not errors and still exit 0.
     assert exit_code != 0
-    # Both named, not just the first.
-    assert "beshara-2011-8410a9059300" in captured.out
-    assert "zulu-2020-ffffffffffff" in captured.out
-    assert MISSING in captured.out
-    # The forward report is still printed in full alongside it.
+    # Both named, not just the first, and on STDERR -- stdout stays a single
+    # tab-separated table with one header row that a parser can still read.
+    assert "beshara-2011-8410a9059300" in captured.err
+    assert "zulu-2020-ffffffffffff" in captured.err
+    assert MISSING in captured.err
+    assert "beshara-2011-8410a9059300" not in captured.out
+    # The forward report is still printed in full on stdout alongside it.
     assert "alpha.pdf" in captured.out
+    assert captured.out.count("	status	") == 1
 
 
 def test_main_sources_orphan_check_runs_without_check_flag_too(monkeypatch, capsys):
@@ -913,6 +916,50 @@ def test_main_sources_orphan_check_runs_without_check_flag_too(monkeypatch, caps
     captured = capsys.readouterr()
 
     assert exit_code != 0
-    assert "beshara-2011-8410a9059300" in captured.out
+    assert "beshara-2011-8410a9059300" in captured.err
     # Nothing was pending, so no client was ever built and no pass ever ran.
     assert "nothing new" in captured.out
+
+
+def test_main_sources_orphan_check_runs_on_the_drive_backend_too(monkeypatch, capsys):
+    """The reverse pass is wired into `_sources`, after whichever backend
+    reported, not into either backend -- both ingest against the same
+    `data/sources/`, and an unresolvable envelope kills the corpus pin
+    whichever one put it there."""
+    from axial import cli as cli_mod
+    from axial.cli import main
+    from axial.sources import MISSING, SourceRecord
+
+    def _fake_drive(check):
+        print("name\tstatus\treason")
+        print("alpha.pdf\tdone\t")
+        return 0
+
+    monkeypatch.setattr(cli_mod, "_sources_drive", _fake_drive)
+    monkeypatch.setattr(
+        cli_mod,
+        "scan_orphaned_envelopes",
+        lambda *a, **kw: [SourceRecord("beshara-2011-8410a9059300", MISSING, "no raw source file")],
+    )
+
+    exit_code = main(["sources", "--backend", "drive", "--check"])
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "beshara-2011-8410a9059300" in captured.err
+    assert "alpha.pdf" in captured.out
+
+
+def test_main_sources_keeps_the_backends_own_non_zero_exit_when_nothing_is_orphaned(
+    monkeypatch, capsys
+):
+    """`missing` is not the only thing that can fail this command -- the
+    Drive backend returns its own exit code, and a clean reverse pass must
+    not swallow it."""
+    from axial import cli as cli_mod
+    from axial.cli import main
+
+    monkeypatch.setattr(cli_mod, "_sources_drive", lambda check: 3)
+    monkeypatch.setattr(cli_mod, "scan_orphaned_envelopes", lambda *a, **kw: [])
+
+    assert main(["sources", "--backend", "drive", "--check"]) == 3

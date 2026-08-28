@@ -2077,14 +2077,22 @@ def _sources(backend_override: str | None, check: bool) -> int:
 
     # The reverse pass, after whichever backend reported (issue #819). It is
     # not a `--check`-only extra and not backend-specific: both backends
-    # ingest into the same `data/sources`, and an envelope with no raw file
-    # kills the corpus pin whatever put it there. Silent when the corpus is
-    # sound, so the healthy output is unchanged.
+    # ingest into the same `data/sources`, and an envelope the corpus pin
+    # cannot resolve a raw file for kills the pin whatever put it there.
+    # Silent when the corpus is sound, so the healthy output is unchanged.
+    #
+    # To STDERR, not stdout, and after the backend's own report: stdout is a
+    # single tab-separated table with one header row, and anything parsing
+    # it must not break on the corpus state it most needs to detect. The
+    # unknown-backend error above goes to stderr for the same reason.
     orphans = scan_orphaned_envelopes()
     if orphans:
-        print()
-        print("sources: ingested, but the raw file is gone -- the corpus pin cannot be computed")
-        print(render_report(orphans))
+        print(
+            "error: the corpus pin cannot be computed -- "
+            f"{len(orphans)} ingested source(s) have no raw file:",
+            file=sys.stderr,
+        )
+        print(render_report(orphans), file=sys.stderr)
         return 1
     return exit_code
 

@@ -29,10 +29,12 @@ Both backends report the same status vocabulary for every listed item:
   or it does not).
 - **rejected** -- named, with a reason: wrong file type (both backends), or
   Drive's English-only language gate (`axial.drive`'s P0-11c).
-- **missing** -- ingested, but the raw file is gone from `data/sources`.
-  This one comes from `scan_orphaned_envelopes`, not from either backend's
-  forward walk, and is the only status that makes `axial sources` exit
-  non-zero; see that function for why (issue #819).
+- **missing** -- ingested, but the corpus pin cannot resolve a raw file for
+  it under `data/sources`. This one comes from `scan_orphaned_envelopes`,
+  not from either backend's forward walk. It is the only STATUS that makes
+  `axial sources` exit non-zero -- though not the only cause, since the
+  Drive backend's own exit code passes through. See that function (issue
+  #819).
 
 **The artifacts are the truth, the ledger is a fast path (issue #528,
 measured live 2026-08-02).** A first cut of `scan_local` trusted the ledger
@@ -346,8 +348,8 @@ def scan_orphaned_envelopes(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> list[SourceRecord]:
     """The reverse pass (issue #819): one MISSING `SourceRecord` per
-    envelope in `envelopes_dir` that no raw file under `sources_dir` hashes
-    to, sorted by `source_id`.
+    ingested source the corpus pin cannot resolve a raw file for, sorted by
+    `source_id`.
 
     `scan_local` above walks `sources_dir` FORWARD -- for each raw file, is
     it ingested -- and so is structurally blind to the opposite break: a
@@ -356,24 +358,23 @@ def scan_orphaned_envelopes(
     around 2026-08-12 and nothing noticed for sixteen days (issue #816),
     because the only thing that reads every raw file is the corpus pin, and
     the only thing that computes the pin is the argument-map arm -- which
-    nobody ran. It finally surfaced as a paid model call dying mid-draw.
+    nobody ran. It finally surfaced as a paid model call dying mid-draw,
+    while this command reported the corpus fine the whole time.
 
-    The envelope's filename IS its `source_id` (`envelope_path` writes
-    `<source_id>.json`), so this never opens a file: a directory listing,
-    one `compute_source_id` per raw file, and a set difference. An
-    unparseable envelope is still reported by name rather than crashing the
-    check.
+    The predicate is the pin's own -- `axial.eval.corpus_pin.
+    unresolvable_sources`, the same envelope enumeration and the same
+    stem resolution `_build_sources` uses -- so this can never disagree with
+    the pin about whether a corpus is analysable. Deliberately not a second
+    implementation: a rule that drifted from the pin would either cry wolf
+    or miss the break it exists to catch. It hashes nothing, so it costs a
+    directory listing and one `is_file()` per envelope.
 
-    It reports EVERY orphan rather than raising on the first, which is what
-    the live failure did -- an operator restoring one file at a time and
-    re-running a $0.12 draw to find the next is the expensive version of
-    this answer.
-
-    A raw file that cannot be hashed at all (`MissingSourceError`) vouches
-    for nothing and is skipped -- `scan_local` gives it no `source_id`
-    either. An absent `envelopes_dir` yields an empty list: nothing has been
-    ingested, so nothing can be orphaned.
+    Imported inside the function, not at module scope: `axial.eval.
+    corpus_pin` pulls in the vault and checkpoint layers, and this module is
+    imported by the CLI on every subcommand.
     """
+    from axial.eval.corpus_pin import unresolvable_sources
+
     # Both defaults resolve HERE, not in the signature: a default parameter
     # value binds once at import time, so a caller that repoints the module
     # constant (this module's own test convention, and `_ARTIFACT_PATH_FNS`'
@@ -384,37 +385,15 @@ def scan_orphaned_envelopes(
         sources_dir = CORPUS_SOURCES_DIR
     if envelopes_dir is None:
         envelopes_dir = _envelope_mod._default_envelopes_dir(config_path)
-    if not envelopes_dir.is_dir():
-        return []
-
-    ingested = {
-        path.stem for path in envelopes_dir.iterdir() if path.is_file() and path.suffix == ".json"
-    }
-    if not ingested:
-        return []
-
-    on_disk: set[str] = set()
-    if sources_dir.is_dir():
-        for path in sources_dir.iterdir():
-            if not path.is_file() or path.suffix.lower() not in CORPUS_EXTENSIONS:
-                continue
-            try:
-                on_disk.add(compute_source_id(path))
-            except MissingSourceError:
-                continue
 
     return [
-        SourceRecord(
-            source_id,
-            MISSING,
-            f"ingested, but no raw file in {sources_dir.as_posix()} hashes to it",
-        )
-        for source_id in sorted(ingested - on_disk)
+        SourceRecord(source_id, MISSING, reason)
+        for source_id, reason in unresolvable_sources(envelopes_dir, sources_dir)
     ]
 
 
 def sync_local(
-    sources_dir: Path = CORPUS_SOURCES_DIR,
+    sources_dir: Path | None = None,
     ledger_path: Path = LEDGER_PATH,
     *,
     client: LLMClient | None = None,
@@ -431,7 +410,17 @@ def sync_local(
     or all-skip summary and performs no pipeline work.
 
     The shared `client` is threaded into every pass's `run_pass` call so it
-    is built once for the whole sync, not once per pass."""
+    is built once for the whole sync, not once per pass.
+
+    `sources_dir` resolves at CALL time, like `scan_local`'s and
+    `scan_orphaned_envelopes`'s. This is the half that WRITES, so a
+    signature-bound default is the worst of the three: a script that
+    repointed the module constant would scan the fixture and ingest from the
+    real corpus. Passing `None` straight through would not do -- `run_pass`
+    would fall back to `axial.run`'s own copy of the constant, which a
+    caller repointing this module has not touched."""
+    if sources_dir is None:
+        sources_dir = CORPUS_SOURCES_DIR
     summaries: list[RunSummary] = []
     for pass_name in passes:
         summary, _exit_code = run_pass(

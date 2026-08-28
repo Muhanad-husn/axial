@@ -572,51 +572,54 @@ def test_the_ingest_chain_runs_artifacts_and_the_done_pass_names_its_end():
 # --- scan_orphaned_envelopes -------------------------------------------------
 #
 # The reverse pass (issue #819): `scan_local` walks `sources_dir` forward and
-# so cannot see an ingested source whose raw file is gone. Every test here
-# builds its own `sources_dir`/`envelopes_dir` under `tmp_path` for the same
+# so cannot see an ingested source whose raw file is gone. The predicate is
+# the corpus pin's own -- `axial.eval.corpus_pin.unresolvable_sources`, which
+# carries its agreement tests -- so these cover the adapter and the wiring,
+# not the rule. Every test builds its own dirs under `tmp_path`, for the same
 # reason the module's other tests do.
+
+
+def _write_envelope(envelopes_dir: Path, source_id: str) -> None:
+    envelopes_dir.mkdir(parents=True, exist_ok=True)
+    (envelopes_dir / f"{source_id}.json").write_text(
+        f'{{"source_id": "{source_id}"}}', encoding="utf-8"
+    )
 
 
 def test_scan_orphaned_envelopes_is_empty_when_every_envelope_has_its_raw_file(tmp_path):
     sources_dir = tmp_path / "sources"
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir(parents=True)
     path = _write_source(sources_dir, "alpha.pdf")
-    (envelopes_dir / f"{compute_source_id(path)}.json").write_text("{}", encoding="utf-8")
+    _write_envelope(tmp_path / "envelopes", compute_source_id(path))
 
-    assert scan_orphaned_envelopes(sources_dir, envelopes_dir) == []
+    assert scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes") == []
 
 
 def test_scan_orphaned_envelopes_reports_an_envelope_whose_raw_file_is_gone(tmp_path):
     sources_dir = tmp_path / "sources"
     sources_dir.mkdir(parents=True)
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir(parents=True)
-    (envelopes_dir / "beshara-2011-8410a9059300.json").write_text("{}", encoding="utf-8")
+    _write_envelope(tmp_path / "envelopes", "beshara-2011-8410a9059300")
 
-    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+    records = scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes")
 
     assert len(records) == 1
     assert records[0].name == "beshara-2011-8410a9059300"
     assert records[0].status == MISSING
-    # The reason names the directory actually searched, not a hardcoded one.
-    assert sources_dir.as_posix() in records[0].reason
-    assert "no raw file" in records[0].reason
+    # The reason is the pin's own, naming the directory actually searched.
+    assert "no raw source file" in records[0].reason
+    assert str(sources_dir) in records[0].reason
 
 
 def test_scan_orphaned_envelopes_names_every_missing_source_not_only_the_first(tmp_path):
     sources_dir = tmp_path / "sources"
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir(parents=True)
     present = _write_source(sources_dir, "alpha.pdf")
     for source_id in (
-        f"{compute_source_id(present)}",
+        compute_source_id(present),
         "zulu-2020-ffffffffffff",
         "bravo-1999-000000000000",
     ):
-        (envelopes_dir / f"{source_id}.json").write_text("{}", encoding="utf-8")
+        _write_envelope(tmp_path / "envelopes", source_id)
 
-    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
+    records = scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes")
 
     # Sorted, so the report reads the same way twice, and BOTH orphans are
     # named -- the live failure raised on the first one it reached.
@@ -625,6 +628,21 @@ def test_scan_orphaned_envelopes_names_every_missing_source_not_only_the_first(t
         "zulu-2020-ffffffffffff",
     ]
     assert {record.status for record in records} == {MISSING}
+
+
+def test_scan_orphaned_envelopes_does_not_fire_on_a_re_sourced_file(tmp_path):
+    """Replacing a source with different bytes moves its `source_id` and
+    leaves the old envelope behind under the same stem. The pin resolves by
+    stem and still computes, so this must stay silent -- a check that fired
+    here would fail `axial sources` forever over a state the pin does not
+    care about, and the operator would have no way to know which envelope to
+    delete."""
+    sources_dir = tmp_path / "sources"
+    path = _write_source(sources_dir, "alpha.pdf", content=b"the corrected scan")
+    _write_envelope(tmp_path / "envelopes", compute_source_id(path))
+    _write_envelope(tmp_path / "envelopes", "alpha-000000000000")
+
+    assert scan_orphaned_envelopes(sources_dir, tmp_path / "envelopes") == []
 
 
 def test_scan_orphaned_envelopes_returns_empty_list_for_absent_envelopes_dir(tmp_path):
@@ -642,10 +660,9 @@ def test_scan_orphaned_envelopes_ignores_non_json_files_in_the_envelopes_dir(tmp
     assert scan_orphaned_envelopes(sources_dir, envelopes_dir) == []
 
 
-def test_scan_orphaned_envelopes_reads_no_envelope_contents(tmp_path):
-    """The source_id is the envelope's filename stem, so the pass never opens
-    a file -- an unparseable envelope is still reported by name rather than
-    crashing the check."""
+def test_scan_orphaned_envelopes_reports_a_malformed_envelope_rather_than_raising(tmp_path):
+    """The pin raises `MalformedEnvelopeError` here. The check must not: an
+    operator asking "is my corpus sound" gets an answer, not a traceback."""
     sources_dir = tmp_path / "sources"
     sources_dir.mkdir(parents=True)
     envelopes_dir = tmp_path / "envelopes"
@@ -655,20 +672,7 @@ def test_scan_orphaned_envelopes_reads_no_envelope_contents(tmp_path):
     records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
 
     assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
-
-
-def test_scan_orphaned_envelopes_skips_a_file_it_cannot_hash(tmp_path):
-    """An unsupported extension never gets a `source_id` in `scan_local`
-    either -- it is not a corpus source, so it cannot vouch for an envelope."""
-    sources_dir = tmp_path / "sources"
-    _write_source(sources_dir, "notes.txt")
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir(parents=True)
-    (envelopes_dir / "notes-0000-111111111111.json").write_text("{}", encoding="utf-8")
-
-    records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
-
-    assert [record.name for record in records] == ["notes-0000-111111111111"]
+    assert records[0].status == MISSING
 
 
 def test_scan_orphaned_envelopes_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
@@ -681,15 +685,13 @@ def test_scan_orphaned_envelopes_resolves_the_sources_dir_at_call_time(tmp_path,
 
     sources_dir = tmp_path / "sources"
     sources_dir.mkdir(parents=True)
-    envelopes_dir = tmp_path / "envelopes"
-    envelopes_dir.mkdir(parents=True)
-    (envelopes_dir / "alpha-2001-abcdefabcdef.json").write_text("{}", encoding="utf-8")
+    _write_envelope(tmp_path / "envelopes", "alpha-2001-abcdefabcdef")
     monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
 
-    records = scan_orphaned_envelopes(envelopes_dir=envelopes_dir)
+    records = scan_orphaned_envelopes(envelopes_dir=tmp_path / "envelopes")
 
     assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
-    assert sources_dir.as_posix() in records[0].reason
+    assert str(sources_dir) in records[0].reason
 
 
 def test_scan_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
@@ -704,3 +706,27 @@ def test_scan_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch)
     monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
 
     assert scan_local(ledger_path=tmp_path / "ledger.tsv") == [SourceRecord("alpha.pdf", NEW)]
+
+
+def test_sync_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """And the third: `sync_local` is the half that WRITES. A script that
+    repointed the module and ran a plain `axial sources` would otherwise
+    scan the fixture and ingest from the real corpus."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "alpha.pdf")
+    seen: list[Path] = []
+
+    def _record_pass(pass_name, *, worklist_path=None, corpus=False, sources_dir=None, **kwargs):
+        seen.append(sources_dir)
+        return RunSummary(
+            pass_name=pass_name, outcomes=[], total=0, ok_count=0, fail_count=0, skip_count=0
+        ), 0
+
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+    monkeypatch.setattr(sources_mod, "run_pass", _record_pass)
+
+    sync_local(ledger_path=tmp_path / "ledger.tsv", client=object())
+
+    assert seen and all(seen_dir == sources_dir for seen_dir in seen)
