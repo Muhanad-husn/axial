@@ -762,11 +762,26 @@ def _fake_ask_result(*, with_vocabulary: bool) -> AskResult:
     )
 
 
-def _run_scripted_arm(tmp_path: Path, monkeypatch, *, arm: str, with_vocabulary: bool):
+def _run_scripted_arm(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    arm: str,
+    with_vocabulary: bool,
+    captured: dict | None = None,
+):
     ask_result = _fake_ask_result(with_vocabulary=with_vocabulary)
     vault_dir = _write_vault(tmp_path, list(ask_result.assembled_chunk_ids))
 
-    def _fake_run_map_ask_for_brief(brief, **_kwargs):
+    def _fake_run_map_ask_for_brief(brief, **kwargs):
+        # The kwargs are captured, not discarded (issue #807). A fake that
+        # swallows them cannot fail when `run_brief` stops asking for the
+        # vocabulary step at all: the block in the record would come from
+        # this fixture's own flag rather than from the arm. That is the same
+        # shape of defect this issue fixed in `axial.brief.sweep` -- an arm
+        # label that did not match what ran, invisible to a green suite.
+        if captured is not None:
+            captured.update(kwargs)
         return ask_result
 
     monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fake_run_map_ask_for_brief)
@@ -788,7 +803,11 @@ def _run_scripted_arm(tmp_path: Path, monkeypatch, *, arm: str, with_vocabulary:
 
 
 def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, monkeypatch):
-    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True)
+    captured: dict = {}
+    result = _run_scripted_arm(
+        tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True, captured=captured
+    )
+    assert captured["use_vocabulary"] is True
 
     record = result.record
     assert record["trajectory"] == []
@@ -810,7 +829,11 @@ def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, mo
 
 
 def test_run_brief_arm_map_records_no_vocabulary_block(tmp_path: Path, monkeypatch):
-    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_ARM, with_vocabulary=False)
+    captured: dict = {}
+    result = _run_scripted_arm(
+        tmp_path, monkeypatch, arm=MAP_ARM, with_vocabulary=False, captured=captured
+    )
+    assert captured["use_vocabulary"] is False
 
     record = result.record
     assert record["trajectory"] == []

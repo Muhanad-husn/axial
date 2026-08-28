@@ -578,3 +578,32 @@ def test_brief_run_arm_map_vocab_prints_the_resolved_arm(tmp_path, monkeypatch, 
 
     assert exit_code == 0
     assert "retrieval: argument map + vocabulary" in captured.out
+
+
+def test_brief_run_a_column_with_no_built_vocabulary_fails_naming_it_not_with_a_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    """issue #807: `NoVocabularyError` is a fresh exception hierarchy, not an
+    `AskError` subclass (`axial.argmap.ask` imports the module that raises it,
+    so inheritance would be a cycle). It therefore has to be listed in
+    `_brief_run`'s own except tuple by name -- and if it is not, the promise in
+    its own docstring, that a column with no persisted vocabulary fails naming
+    the column rather than with a stack trace, is broken at the one boundary an
+    operator sees."""
+    import axial.cli as cli_mod
+    from axial.argmap.vocabulary_join import NoVocabularyError
+
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text('case: "A case."\nrequest: "A question?"\n', encoding="utf-8")
+
+    def _raise(_brief, **_kwargs):
+        raise NoVocabularyError("mechanism", tmp_path / "vocabulary" / "mechanism")
+
+    monkeypatch.setattr(cli_mod, "run_brief", _raise)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(["brief", "run", str(brief_path), "--arm", "map+vocab"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "no derived vocabulary built for column 'mechanism'" in captured.err

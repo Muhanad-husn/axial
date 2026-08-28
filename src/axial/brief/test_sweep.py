@@ -878,3 +878,34 @@ def test_current_commit_sha_returns_a_git_sha_or_none():
     commit sha, never something else."""
     sha = sweep_mod._current_commit_sha()
     assert sha is None or (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha))
+
+
+def test_run_one_draw_records_a_missing_vocabulary_as_fail_rather_than_ending_the_sweep(
+    tmp_path, monkeypatch
+):
+    """issue #807: a `map+vocab` draw against a column with no persisted
+    vocabulary is one FAILed draw, like every other declared `run_brief`
+    failure. `NoVocabularyError` shares no base with the errors
+    `BRIEF_RUN_ERRORS` already lists, so it has to be named there -- and if it
+    is not, one unbuilt column aborts a whole #809 sweep instead of costing it
+    a single draw."""
+    from axial.argmap.vocabulary_join import NoVocabularyError
+
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _raise(*_args, **_kwargs):
+        raise NoVocabularyError("mechanism", tmp_path / "vocabulary" / "mechanism")
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _raise)
+
+    outcome, record = sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        arm="map+vocab",
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert outcome.status == sweep_mod.FAIL_STATUS
+    assert "no derived vocabulary built for column 'mechanism'" in outcome.reason
+    assert record is None

@@ -153,6 +153,7 @@ from typing import Any, Callable
 from axial.analyze.synthesis import SynthesisError
 from axial.answer.record import AnswerError, run_brief
 from axial.argmap.ask import AskError
+from axial.argmap.vocabulary_join import NoVocabularyError
 from axial.brief.fork import ForkCheckError
 from axial.brief.intake import Brief, BriefError, load_brief
 from axial.brief.interrogate import InterrogationError
@@ -199,6 +200,11 @@ BRIEF_RUN_ERRORS = (
     CorpusPinError,
     AnswerError,
     AskError,
+    # issue #807: a `map+vocab` draw against a column with no persisted
+    # vocabulary is one FAILed draw, never the end of the sweep. It is not an
+    # `AskError` subclass because `axial.argmap.ask` imports the module that
+    # raises it, so it is listed here by name.
+    NoVocabularyError,
 )
 
 # The declared error surface one gate's `run_gate()` call may raise -- the

@@ -11,6 +11,7 @@ from typing import Any, Callable
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.argmap.ask import AskError, run_map_ask
+from axial.argmap.vocabulary_join import NoVocabularyError
 from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
@@ -2453,6 +2454,11 @@ def _brief_run(brief_path: str, *, use_map: bool = False, arm: str | None = None
         CorpusPinError,
         AnswerError,
         AskError,
+        # issue #807: the `map+vocab` arm's own declared failure -- a column
+        # with no persisted vocabulary. Listed explicitly rather than given
+        # `AskError` as a base, because `axial.argmap.ask` imports
+        # `vocabulary_join` and the inheritance would be a cycle.
+        NoVocabularyError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
