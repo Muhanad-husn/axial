@@ -58,6 +58,7 @@ from axial.interrogate import DEFAULT_WORKERS as INTERROGATE_DEFAULT_WORKERS
 from axial.interrogate import InterrogateError, run_interrogate
 from axial.position_backfill import POSITION_BACKFILL_PASS_NAME, run_position_backfill
 from axial.eval.corpus_pin import CorpusPinError, write_pin
+from axial.eval.layers import LayerComparisonError, compare_arms, format_layer_comparison
 from axial.extract import ExtractError, extract
 from axial.gates import (
     ADVERSARIAL_GATE_NAME,
@@ -858,7 +859,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     eval_parser = subparsers.add_parser(
         "eval",
-        help=("run the argument-coherence eval track (`eval coherence`, specs/PHASE-C.md §10.2)"),
+        help=(
+            "offline eval instruments: `eval coherence` (the argument-"
+            "coherence track, specs/PHASE-C.md §10.2) and `eval layers` (the "
+            "per-arm layer comparison, issue #809)"
+        ),
     )
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
 
@@ -887,6 +892,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--out",
         default=None,
         help="optional path to write the run's JSON report to",
+    )
+
+    eval_layers_parser = eval_subparsers.add_parser(
+        "layers",
+        help=(
+            "issue #809: compare the retrieval arms off the sweep directories "
+            "they already wrote. One table -- per brief, per arm, the "
+            "grounding gate's figure and the count of distinct sources cited, "
+            "each carrying that brief's spread across its own draws. A pure "
+            "reader: no model call, no retrieval, no second gate scoring. "
+            "Refuses directories that do not cover the same briefs, the same "
+            "draw count and the same commit"
+        ),
+    )
+    eval_layers_parser.add_argument(
+        "--arm-dir",
+        action="append",
+        required=True,
+        dest="arm_dirs",
+        metavar="DIR",
+        help=(
+            "a sweep directory ('axial brief sweep --sweep-dir'), one per arm; "
+            "repeat the flag once per arm being compared. ORDER SETS THE "
+            "COMPARISONS: the table pairs consecutive arms in the order the "
+            "flags were given, so '--arm-dir <name> --arm-dir <map> --arm-dir "
+            "<map+vocab>' reads 'name vs map; map vs map+vocab', which is the "
+            "two questions issue #809 asks. Passing map first instead reads "
+            "'map vs name; name vs map+vocab', and that second pair moves two "
+            "things at once and answers neither question"
+        ),
     )
 
     gather_eval_parser = subparsers.add_parser(
@@ -3640,6 +3675,20 @@ def _eval_coherence(sample_path: str, *, reviewers: int, out_path: str | None) -
     return 0 if report.trusted else 1
 
 
+def _eval_layers(arm_dirs: list[str]) -> int:
+    """The issue #809 layer comparison: sweep directories in, one table out.
+    A pure reader -- every figure it prints was computed by the sweep and
+    persisted, so this makes no model call and scores no gate."""
+    try:
+        comparison = compare_arms([Path(arm_dir) for arm_dir in arm_dirs])
+    except LayerComparisonError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    _print_encoding_safe(format_layer_comparison(comparison))
+    return 0
+
+
 def _panel_run(
     records_dir: str, control_record_path: str, reviewers: int, out_path: str | None
 ) -> int:
@@ -3950,6 +3999,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval" and args.eval_command == "coherence":
         return _eval_coherence(args.sample, reviewers=args.reviewers, out_path=args.out)
+
+    if args.command == "eval" and args.eval_command == "layers":
+        return _eval_layers(args.arm_dirs)
 
     if args.command == "vault" and args.vault_command == "write":
         return _vault_write(args.source_path)

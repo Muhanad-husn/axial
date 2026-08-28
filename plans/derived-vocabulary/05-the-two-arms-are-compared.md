@@ -5,7 +5,7 @@
 - **Slice slug:** the-two-arms-are-compared
 - **Branch:** feat/derived-vocabulary/05-the-two-arms-are-compared
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ built and measured, PR #824 open for approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -140,26 +140,33 @@ Both are on the record here and both would be easy to repeat by eye.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for
-      the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] `uv run ruff check` clean.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] **All three arms run for real** in `D:/axial` at one commit, over the same
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally (2512 passed,
+      1 skipped), CI green for the rest — all six checks.
+- [x] Refactor pass complete with the bar green.
+- [x] `uv run ruff check` clean.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [x] **All three arms run for real** in `D:/axial` at one commit, over the same
       worklist and draw count above, detached and journalled, then the
       comparison run over the three directories. Checkpoint what is bought.
       Log to `data/logs/<YYYY-MM-DD>-layer-comparison/` with `run.jsonl`,
       `console.log` and `summary.md`. Copy the per-brief records into the log
       **before** the runs start, since re-asking overwrites its own record. The
       summary states both misreadings above in the founder's own words.
-- [ ] The table handed to the founder with the two questions named and neither
+- [x] The table handed to the founder with the two questions named and neither
       answered.
-- [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
+- [x] Evidence collected and PR opened into the default branch (`safe-pr`) —
+      [#824](https://github.com/Muhanad-husn/axial/pull/824).
 
 ## Status / progress log
 
 - 2026-08-27 planned.
+- 2026-08-28 built, measured and opened as PR #824. All three arms ran at commit
+  `b18f95b`: 45 draws, 45 landed, 0 failures, $5.12 against the ~$1.90 estimate.
+  Review and independent verification both ran before the PR reached the
+  founder; both reached the same finding — the pooled gate figure sat beside a
+  draw count in the same shape as a per-draw mean — and every finding was
+  applied. Run log: `data/logs/2026-08-28-layer-comparison/`.
 - 2026-08-27 revised after review and independent verification, both of which
   found the derived vocabulary reached neither measured arm. Founder ruling the
   same day: three arms. Run sizing, the commit refusal, and the removal of

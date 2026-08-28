@@ -1,0 +1,147 @@
+Captured 2026-08-28T13:41:40Z at commit 587f7c1 on branch
+feat/derived-vocabulary/05-the-two-arms-are-compared.
+
+The 809-arm-* and 808-arm-* directories under D:/axial/data/runs are REAL
+sweeps, and four of the five refusals below fire on real pairs of them.
+
+The two directories under .../Temp/axial-809-constructed are CONSTRUCTED for
+this evidence, because no real pair of arms differs only in draw count and no
+real #809 sweep produced a brief with no usable draw or ran without gate
+scoring. They were built by calling the sweep's own `write_sweep_summary`
+over `BriefSweepResult`/`DrawOutcome`/`GateReport` values, never by
+hand-writing a summary.json:
+
+  draws3-name / draws2-map  one brief S-01, one commit, three draws against
+                            two -- the only thing that differs.
+  states-name / states-map  two briefs, three draws, one commit. In `map`,
+                            S-01's three draws all FAILed, so no record, no
+                            gate report and no source count: `missing`. S-02
+                            in both arms carries records and no gate reports,
+                            which is what `axial brief smoke` writes with
+                            `score_gates=False`: `not-scored`.
+
+=== HELP ===
+$ uv run axial eval layers --help
+
+usage: axial eval layers [-h] --arm-dir DIR
+
+options:
+  -h, --help     show this help message and exit
+  --arm-dir DIR  a sweep directory ('axial brief sweep --sweep-dir'), one per
+                 arm; repeat the flag once per arm being compared. ORDER SETS
+                 THE COMPARISONS: the table pairs consecutive arms in the
+                 order the flags were given, so '--arm-dir <name> --arm-dir
+                 <map> --arm-dir <map+vocab>' reads 'name vs map; map vs
+                 map+vocab', which is the two questions issue #809 asks.
+                 Passing map first instead reads 'map vs name; name vs
+                 map+vocab', and that second pair moves two things at once and
+                 answers neither question
+exit=0
+
+=== TWO ARMS ONLY (real: 809 name vs 809 map) ===
+$ uv run axial eval layers --arm-dir D:/axial/data/runs/809-arm-name --arm-dir D:/axial/data/runs/809-arm-map
+
+layer comparison: 2 arms (name, map), 5 briefs, 3 draws per brief per arm, all at commit b18f95b8a4d1e8298540687c054699ac682c5386
+comparisons, in the order the arms were given: name vs map
+figures are per brief; no figure here is pooled across briefs
+grounding and pooled_rate: ONE figure per row, scored over that brief's pooled draw records
+sources, range and src_draws: a mean, a spread and an n, across that brief's own draws
+
+brief  arm   grounding  pooled_rate  gate_draws  sources  range  src_draws
+-----  ----  ---------  -----------  ----------  -------  -----  ---------
+S-01   name  PASS       0.923        3           6.0      4-7    3
+S-01   map   PASS       1.000        3           4.7      4-5    3
+S-02   name  PASS       1.000        3           12.3     11-13  3
+S-02   map   PASS       1.000        3           8.0      6-9    3
+S-03   name  PASS       1.000        3           3.3      3-4    3
+S-03   map   PASS       1.000        3           4.7      4-5    3
+S-04   name  PASS       1.000        3           1.0      1-1    3
+S-04   map   PASS       1.000        3           1.3      1-2    3
+S-05   name  PASS       1.000        3           1.0      1-1    3
+S-05   map   FAIL       0.800        3           1.7      1-2    3
+
+columns
+  grounding:   the gate's verdict for that (brief, arm). The sweep scores it
+               ONCE over that brief's pooled draw records, so it is one
+               verdict, not a per-draw majority. NOT-SCOREABLE is neither a
+               pass nor a fail.
+  pooled_rate: grounding_support_rate (specs/PHASE-B.md section 10), the
+               gate's own metric -- the same single number that verdict came
+               from, over the same pooled draw records. NOT a per-draw mean.
+  gate_draws:  how many of that brief's draws produced a record -- the pooled
+               sample grounding and pooled_rate were scored over, not a
+               sample size a mean was divided by.
+  sources:     distinct sources cited, averaged across that brief's own draws.
+               This one IS a per-draw mean.
+  range:       min-max of that same per-draw count. The spread, per brief.
+  src_draws:   how many of that brief's draws reported a source count -- the
+               n of the sources mean and of the range beside it.
+exit=0
+
+=== REFUSAL -- BRIEF COVERAGE (real: 809 name has 5 briefs, 808 map has 1) ===
+$ uv run axial eval layers --arm-dir D:/axial/data/runs/809-arm-name --arm-dir D:/axial/data/runs/808-arm-map
+
+error: briefs 'S-01', 'S-02', 'S-04', 'S-05' present in arm 'name' (D:\axial\data\runs\809-arm-name) and missing from arm 'map' (D:\axial\data\runs\808-arm-map)
+exit=1
+
+=== REFUSAL -- COMMIT MISMATCH (real: the two 808 arms were swept at different commits) ===
+$ uv run axial eval layers --arm-dir D:/axial/data/runs/808-arm-name --arm-dir D:/axial/data/runs/808-arm-map
+
+error: arm 'name' (D:\axial\data\runs\808-arm-name) built at dd278b8a3de16b4fd6284d2849f065ea255cb726, arm 'map' (D:\axial\data\runs\808-arm-map) at 29255b0029f6e835e3f4c3b395726aeb218c42cf
+exit=1
+
+=== REFUSAL -- DUPLICATE ARM (real: both directories record the arm 'name') ===
+$ uv run axial eval layers --arm-dir D:/axial/data/runs/809-arm-name --arm-dir D:/axial/data/runs/808-arm-name
+
+error: arm 'name' is recorded by two directories (D:\axial\data\runs\809-arm-name and D:\axial\data\runs\808-arm-name); each --arm-dir must be a different arm
+exit=1
+
+=== REFUSAL -- DRAW COUNT (constructed: 3 draws against 2) ===
+$ uv run axial eval layers --arm-dir C:/Users/mou97/AppData/Local/Temp/axial-809-constructed/draws3-name --arm-dir C:/Users/mou97/AppData/Local/Temp/axial-809-constructed/draws2-map
+
+error: arm 'name' (C:\Users\mou97\AppData\Local\Temp\axial-809-constructed\draws3-name) ran 3 draws, arm 'map' (C:\Users\mou97\AppData\Local\Temp\axial-809-constructed\draws2-map) ran 2 draws
+exit=1
+
+=== A TABLE CARRYING 'missing' AND 'not-scored' (constructed) ===
+$ uv run axial eval layers --arm-dir C:/Users/mou97/AppData/Local/Temp/axial-809-constructed/states-name --arm-dir C:/Users/mou97/AppData/Local/Temp/axial-809-constructed/states-map
+
+layer comparison: 2 arms (name, map), 2 briefs, 3 draws per brief per arm, all at commit b18f95b8a4d1e8298540687c054699ac682c5386
+comparisons, in the order the arms were given: name vs map
+figures are per brief; no figure here is pooled across briefs
+grounding and pooled_rate: ONE figure per row, scored over that brief's pooled draw records
+sources, range and src_draws: a mean, a spread and an n, across that brief's own draws
+
+brief  arm   grounding   pooled_rate  gate_draws  sources  range  src_draws
+-----  ----  ----------  -----------  ----------  -------  -----  ---------
+S-01   name  PASS        0.923        3           6.3      5-8    3
+S-01   map   missing     -            0           missing  -      0
+S-02   name  not-scored  -            3           12.0     11-13  3
+S-02   map   not-scored  -            3           7.7      6-9    3
+
+columns
+  grounding:   the gate's verdict for that (brief, arm). The sweep scores it
+               ONCE over that brief's pooled draw records, so it is one
+               verdict, not a per-draw majority. NOT-SCOREABLE is neither a
+               pass nor a fail.
+  pooled_rate: grounding_support_rate (specs/PHASE-B.md section 10), the
+               gate's own metric -- the same single number that verdict came
+               from, over the same pooled draw records. NOT a per-draw mean.
+  gate_draws:  how many of that brief's draws produced a record -- the pooled
+               sample grounding and pooled_rate were scored over, not a
+               sample size a mean was divided by.
+  sources:     distinct sources cited, averaged across that brief's own draws.
+               This one IS a per-draw mean.
+  range:       min-max of that same per-draw count. The spread, per brief.
+  src_draws:   how many of that brief's draws reported a source count -- the
+               n of the sources mean and of the range beside it.
+
+cell values
+  missing:     that brief produced no usable draw in that arm. Reported,
+               never averaged over and never dropped.
+  not-scored:  that sweep ran without gate scoring, so no grounding
+               figure exists to read.
+  -:           no figure to print. Under pooled_rate, the gate reported
+               no value; under sources and range, no draw of that brief
+               reported a source count.
+exit=0
+

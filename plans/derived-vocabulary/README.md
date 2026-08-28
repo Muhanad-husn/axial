@@ -23,7 +23,8 @@ same column, and 88.5% of the unseen values fell into them.
 
 - **Slug:** derived-vocabulary
 - **Created:** 2026-08-27
-- **Status:** 01, 02, 03 and 04 done and closed; 03's five follow-ups closed by #822; 05 open
+- **Status:** 01, 02, 03 and 04 done and closed; 03's five follow-ups closed by #822;
+  05 built and measured, PR #824 open for approval
 - **New system?** no
 - **Project directory:** .
 
@@ -81,7 +82,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | [#806](https://github.com/Muhanad-husn/axial/issues/806) | [a-derived-vocabulary-is-persisted](02-a-derived-vocabulary-is-persisted.md) | A frozen category scheme in `config/vocabulary.yaml`, every `mechanism` value assigned against it, on disk, and a second run that re-assigns nothing | ☑ **done**, closed 2026-08-28 | [#817](https://github.com/Muhanad-husn/axial/pull/817) |
 | [#807](https://github.com/Muhanad-husn/axial/issues/807) | [two-notes-meet-at-a-shared-group](03-two-notes-meet-at-a-shared-group.md) | A brief runs through `--arm map+vocab`, and two passages meet at a shared mechanism the way they meet at a shared name today | ☑ **done**, closed 2026-08-28; 70% of assembled evidence reaches only through the category edge, and the answer cites it | [#821](https://github.com/Muhanad-husn/axial/pull/821) |
 | [#808](https://github.com/Muhanad-husn/axial/issues/808) | [the-sweep-runs-the-map-arm](04-the-sweep-runs-the-map-arm.md) | `brief sweep --arm`, so the scored instrument can run whichever retrieval arm exists and records which one produced each draw | ☑ **done**, closed 2026-08-27 | [#818](https://github.com/Muhanad-husn/axial/pull/818) |
-| [#809](https://github.com/Muhanad-husn/axial/issues/809) | [the-two-arms-are-compared](05-the-two-arms-are-compared.md) | `axial eval layers` reads three sweep directories and reports grounding and sources cited per arm, with each brief's draw spread | ☐ todo | — |
+| [#809](https://github.com/Muhanad-husn/axial/issues/809) | [the-two-arms-are-compared](05-the-two-arms-are-compared.md) | `axial eval layers` reads three sweep directories and reports grounding and sources cited per arm, with each brief's draw spread | ☐ built, measured, awaiting approval | [#824](https://github.com/Muhanad-husn/axial/pull/824) |
 
 **Follow-ups, not slices.** Review and independent verification of slice 03
 found five loose ends in the join. None blocked the arm and none changed what
@@ -131,11 +132,17 @@ a measured one, and nothing here is a pass over the corpus.
 | 02, widened | all seven cleared columns, 64,744 values, ~648 calls | ~$1 | ~4 hours |
 | 03 | one brief run, plus a human reading categories | ~$0.04 | minutes |
 | 04 | nothing | $0 | — |
-| 05 | 5 briefs × 3 draws × 3 arms = 45 runs | ~$1.90 | ~2.5 h at 3 workers |
+| 05 | 5 briefs × 3 draws × 3 arms = 45 runs | **$5.12 measured** (est. ~$1.90) | ~40 min, three arms concurrent |
 
 Slice 02's widened row is the only figure here that runs for hours, and it is
 deliberately deferred behind slice 05: widening before the comparison says the
 join pays would be buying reach nobody has shown is worth having.
+
+Slice 05's estimate was 2.7x low, and nearly all of the gap is one arm. The
+name layer spent $3.18 of the $5.12 and ran 13.2 minutes per draw against
+either map arm's ~3.3. The estimate priced a bare ask and left out the four
+rung-3 gates, which are model calls of their own, scored once per brief per
+arm. Run log: `data/logs/2026-08-28-layer-comparison/`.
 
 ## Slice 01 is a go/no-go, for slices 02 and 03 only
 

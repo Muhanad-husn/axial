@@ -1646,3 +1646,80 @@ def test_main_brief_smoke_forwards_the_arm_to_run_smoke(tmp_path, monkeypatch):
 
     assert exit_code == 0
     assert captured["arm"] == "map+vocab"
+
+
+# ---------------------------------------------------------------------------
+# `axial eval layers` (issue #809): the per-arm comparison's own CLI surface.
+# The report's own behaviour is tested in `axial/eval/test_layers.py`.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_eval_layers_collects_every_arm_dir_in_order():
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "eval",
+            "layers",
+            "--arm-dir",
+            "sweeps/name",
+            "--arm-dir",
+            "sweeps/map",
+            "--arm-dir",
+            "sweeps/map-vocab",
+        ]
+    )
+
+    assert args.command == "eval"
+    assert args.eval_command == "layers"
+    assert args.arm_dirs == ["sweeps/name", "sweeps/map", "sweeps/map-vocab"]
+
+
+def test_build_parser_eval_layers_requires_at_least_one_arm_dir():
+    from axial.cli import build_parser
+
+    with pytest.raises(SystemExit) as excinfo:
+        build_parser().parse_args(["eval", "layers"])
+
+    assert excinfo.value.code == 2
+
+
+def test_main_eval_layers_forwards_every_arm_dir_to_compare_arms(monkeypatch, capsys):
+    import axial.cli as cli_mod
+
+    captured = {}
+
+    def _fake_compare_arms(sweep_dirs):
+        captured["sweep_dirs"] = list(sweep_dirs)
+        return "comparison"
+
+    monkeypatch.setattr(cli_mod, "compare_arms", _fake_compare_arms)
+    monkeypatch.setattr(cli_mod, "format_layer_comparison", lambda comparison: comparison)
+
+    exit_code = cli_mod.main(
+        ["eval", "layers", "--arm-dir", "sweeps/name", "--arm-dir", "sweeps/map"]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert captured["sweep_dirs"] == [Path("sweeps/name"), Path("sweeps/map")]
+    assert "comparison" in out
+
+
+def test_main_eval_layers_reports_a_refusal_on_stderr_and_exits_nonzero(monkeypatch, capsys):
+    import axial.cli as cli_mod
+    from axial.eval.layers import LayerComparisonError
+
+    def _refuse(sweep_dirs):
+        raise LayerComparisonError("arm 'name' ran 3 draws, arm 'map' ran 2")
+
+    monkeypatch.setattr(cli_mod, "compare_arms", _refuse)
+
+    exit_code = cli_mod.main(
+        ["eval", "layers", "--arm-dir", "sweeps/name", "--arm-dir", "sweeps/map"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "arm 'name' ran 3 draws, arm 'map' ran 2" in captured.err
+    assert captured.out == ""
