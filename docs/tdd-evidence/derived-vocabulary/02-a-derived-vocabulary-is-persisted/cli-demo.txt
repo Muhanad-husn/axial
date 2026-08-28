@@ -1,0 +1,53 @@
+# Real-corpus run, D:/axial at 236e339, 2026-08-28
+
+## Run 1 -- first build over the whole corpus (tail)
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary build --columns mechanism
+mechanism: 5871 answered value(s), 971 excluded (abstention/[]/empty)
+  scheme 2026-08-28-mechanism-v1 (20 category(ies), depth 1), answers pin 417777fd2373b7e6
+  artifact: data\vocabulary\mechanism
+  built: 5871 newly assigned, 0 reused from the previous build
+  5315 assigned to a category, 556 refused ("none"/out-of-scheme), 0 unanswered (never returned)
+  categories, by member count:
+    - ideological-persuasion-and-legitimation (ideological persuasion and legitimation): 623 member(s), 30 source(s)
+    - war-and-state-formation (war and state formation): 600 member(s), 27 source(s)
+    - elite-competition-and-coalition-formation (elite competition and coalition formation): 464 member(s), 31 source(s)
+    - social-mobilization-and-collective-action (social mobilization and collective action): 439 member(s), 29 source(s)
+    - economic-dependency-and-structural-adjustment (economic dependency and structural adjustment): 417 member(s), 30 source(s)
+    - institutional-path-dependence-and-state-capacity (institutional path dependence and state capacity): 349 member(s), 29 source(s)
+    - state-repression-and-violence (state repression and violence): 309 member(s), 31 source(s)
+    - international-norms-and-external-intervention (international norms and external intervention): 307 member(s), 25 source(s)
+    - identity-construction-and-boundary-making (identity construction and boundary-making): 274 member(s), 27 source(s)
+    - territorial-control-and-conflict-dynamics (territorial control and conflict dynamics): 248 member(s), 24 source(s)
+    - organizational-logics-and-bureaucratic-rationality (organizational logics and bureaucratic rationality): 245 member(s), 22 source(s)
+    - modernization-and-cultural-change (modernization and cultural change): 236 member(s), 23 source(s)
+    - micro-interaction-and-symbolic-reciprocity (micro-interaction and symbolic reciprocity): 141 member(s), 14 source(s)
+    - feedback-loops-and-unintended-consequences (feedback loops and unintended consequences): 113 member(s), 24 source(s)
+    - legal-and-normative-frameworks (legal and normative frameworks): 112 member(s), 17 source(s)
+    - market-penetration-and-commodification (market penetration and commodification): 100 member(s), 15 source(s)
+    - learning-adaptation-and-innovation (learning, adaptation, and innovation): 95 member(s), 21 source(s)
+    - resource-extraction-and-rentier-state (resource extraction and rentier state): 90 member(s), 15 source(s)
+    - demographic-and-ecological-pressures (demographic and ecological pressures): 87 member(s), 16 source(s)
+    - technological-change-and-infrastructure (technological change and infrastructure): 66 member(s), 15 source(s)
+  model: deepseek/deepseek-v4-flash (59 call(s), cost $0.0633)
+
+## Run 2 -- same answers, same scheme
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary build --columns mechanism
+mechanism: 5871 answered value(s), 971 excluded (abstention/[]/empty)
+  scheme 2026-08-28-mechanism-v1 (20 category(ies), depth 1), answers pin 417777fd2373b7e6
+  artifact: data\vocabulary\mechanism
+  REUSED: the scheme version and the answers pin are both unchanged -- 0 model call(s), nothing re-assigned
+  5315 assigned to a category, 556 refused ("none"/out-of-scheme), 0 unanswered (never returned)
+  categories, by member count:
+  (3.9s wall clock; assignments.jsonl byte-identical by hash, mtime unchanged)
+
+## Run 3 -- one further source's answers land (3 sources, then 4)
+$ ... --answers-dir <3 sources> --vocabulary-dir <temp>
+mechanism: 142 answered value(s), 15 excluded (abstention/[]/empty)
+  scheme 2026-08-28-mechanism-v1 (20 category(ies), depth 1), answers pin e92a1418f08b2d10
+$ ... --answers-dir <4 sources> --vocabulary-dir <same temp>
+mechanism: 190 answered value(s), 20 excluded (abstention/[]/empty)
+  scheme 2026-08-28-mechanism-v1 (20 category(ies), depth 1), answers pin bf593e557a6ca7d8
+  built: 48 newly assigned, 142 reused from the previous build
+  162 assigned to a category, 28 refused ("none"/out-of-scheme), 0 unanswered (never returned)
+  model: deepseek/deepseek-v4-flash (1 call(s), cost $0.0008)
+  all 142 prior lines present verbatim; all 48 new lines belong to agamben-2005

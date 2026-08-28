@@ -319,6 +319,16 @@ llm:
     # -- enforced at run time by `axial.vocabulary.SelfConsistencyError`, not
     # by this naming alone.
     vocabulary_examine_check: production_vocabulary_examine_check
+    # The build pass (issue #806 slice 02): assigns a WHOLE column against
+    # the scheme frozen in config/vocabulary.yaml. Deliberately the SAME
+    # tier as `vocabulary_examine` above -- it is the same call against the
+    # same kind of scheme -- and named here rather than left absent so it
+    # is pinned to that tier instead of falling through to `llm_tier`. It
+    # gets its own pass name for the cost line, not for the routing: the
+    # examine pass reads a 400-value sample, and a build over seven columns
+    # is ~648 calls and roughly $1, so charging one to the other misprices
+    # both by an order of magnitude.
+    vocabulary_build: production_vocabulary_examine
   # Per-pass best-of-N voting (DEC-31, issue #294): how many times a pass
   # draws its per-unit call before majority-voting the result, mirroring the
   # two per-pass blocks above (src/axial/llm.py's _resolve_votes_by_pass

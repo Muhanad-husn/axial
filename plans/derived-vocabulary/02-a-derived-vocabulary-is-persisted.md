@@ -5,7 +5,7 @@
 - **Slice slug:** a-derived-vocabulary-is-persisted
 - **Branch:** feat/derived-vocabulary/02-a-derived-vocabulary-is-persisted
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ code complete; awaiting the real-corpus build
 - **Walking skeleton?** no
 
 > **Rewritten 2026-08-27**, after slice 01 shipped and ran on the real corpus.
@@ -158,32 +158,35 @@ depends-on: 01-the-sentence-columns-are-counted
 
 ## Inner loop — initial unit test list
 
-- [ ] Every population entry lands with a category id or a recorded refusal,
+- [x] Every population entry lands with a category id or a recorded refusal,
       keyed by the note's `chunk_id`, its column, and the element's index within
       a list-valued answer. Slice 01's `PopulationEntry` already carries the
       value, the `chunk_id` and the `source_id`.
-- [ ] A refusal is persisted as a refusal, distinct from a value that was never
-      asked about. Slice 01 split `refused_count` from `unanswered_count` after
+- [x] A refusal is persisted as a refusal, distinct from a value that was never
+      asked about, and distinct again from an answer naming no committed
+      category. Slice 01 split `refused_count` from `unanswered_count` after
       review found the two lumped together; the artifact keeps that distinction
-      rather than collapsing it again.
-- [ ] A completed build has zero unanswered values. An unanswered value is a
+      rather than collapsing it again, and PR #817's review added the third
+      (`out_of_scheme_count`) for the same reason.
+- [x] A completed build has zero unanswered values. An unanswered value is a
       failed run, not a result, and the build says so rather than persisting a
-      hole.
-- [ ] The artifact records the scheme version it was built against.
-- [ ] A build whose scheme version differs from the artifact's refuses, naming
-      both versions, rather than mixing two schemes in one file.
-- [ ] The pin is content-keyed over the rendered input, matching the convention
+      hole -- in the report, and in the command's non-zero exit code.
+- [x] The artifact records the scheme version it was built against.
+- [x] A build whose scheme version differs from the artifact's refuses, naming
+      both versions, rather than mixing two schemes in one file, and `--force`
+      is the deliberate act that re-assigns under the new one.
+- [x] The pin is content-keyed over the rendered input, matching the convention
       merge and Gather already use: a change to the answers re-assigns, a change
       to an unrelated part of the repo does not.
-- [ ] An unchanged pin and an unchanged scheme reuse the artifact and call the
+- [x] An unchanged pin and an unchanged scheme reuse the artifact and call the
       model zero times.
-- [ ] New values assign incrementally. Assignments already on disk are neither
+- [x] New values assign incrementally. Assignments already on disk are neither
       re-asked nor rewritten.
-- [ ] A column with no scheme in `config/vocabulary.yaml` fails naming the
+- [x] A column with no scheme in `config/vocabulary.yaml` fails naming the
       column, not with a stack trace and not with an empty success.
-- [ ] A category carries a parent id, null at depth 1, and the scheme file parses
+- [x] A category carries a parent id, null at depth 1, and the scheme file parses
       a nested scheme even though the committed v1 scheme is flat.
-- [ ] Assignments are recorded against the level they were made at, so a later
+- [x] Assignments are recorded against the level they were made at, so a later
       level can be added without re-asking this one.
 
 ## Design notes for the executor
@@ -201,7 +204,8 @@ depends-on: 01-the-sentence-columns-are-counted
 - **Content-keyed, like the decision logs.** Merge and Gather hash the
   *rendered* input, so a one-byte render change re-asks the corpus and a model
   change re-asks nothing. Same rule here, with the scheme version carried beside
-  the pin: a scheme edit must re-assign, a model swap must not.
+  the pin: a scheme edit must re-assign behind `--force`, a model swap must
+  not.
 - **The scheme file is written by a person.** `config/vocabulary.yaml` holds,
   per cleared column, the category names and glosses taken from slice 01's
   report, plus a version string. Nothing in it is inferred at runtime. Slice 01
@@ -229,19 +233,21 @@ depends-on: 01-the-sentence-columns-are-counted
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for
       the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] `uv run ruff check` clean.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
+- [x] Refactor pass complete with the bar green.
+- [x] `uv run ruff check` clean.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [x] **Built on the real corpus** in `D:/axial`, on `mechanism`, with the second
       run observed to reuse rather than rebuild and a third run after new answers
       observed to assign only those. Log to
       `data/logs/<YYYY-MM-DD>-vocabulary-build/` with `run.jsonl`, `console.log`
       and `summary.md`; record the per-category member counts, the refusal count,
-      the cost and the reuse observation.
-- [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
+      the cost and the reuse observation. Done 2026-08-28,
+      `data/logs/2026-08-28-vocabulary-build/`.
+- [x] Evidence collected and PR opened into the default branch (`safe-pr`): PR
+      [#817](https://github.com/Muhanad-husn/axial/pull/817).
 
 ## Spec
 
@@ -266,3 +272,32 @@ commits, not a derived artifact, and why.
   depth 1 only, but the artifact, the scheme file and the version must admit a
   second level without a migration, and a blob is now read as a category that
   wants splitting rather than as a column that failed.
+- 2026-08-28 built. `config/vocabulary.yaml` holds the twenty `mechanism`
+  categories slice 01's corrected run proposed, split into a distinct id, name
+  and gloss apiece -- that run persisted all twenty `name` fields as the
+  identical string "Causal mechanism", with the discriminating label sitting as
+  the clause before the first colon of each gloss. `axial vocabulary build`
+  assigns the whole column against them through slice 01's own
+  `_assign_all`/`_assign_batch` path (now able to run its batches concurrently)
+  and writes `data/vocabulary/<column>/{assignments.jsonl,manifest.json}`.
+  Reuse is keyed on a content-keyed answers pin plus the scheme version, held
+  beside it: a scheme edit refuses rather than mixing two vocabularies in one
+  file. The owed spec section is `specs/PHASE-B.md` §7.18.
+- 2026-08-28 built on the real corpus, `mechanism`, scheme
+  `2026-08-28-mechanism-v1`, answers pin `417777fd2373b7e6`. 5,871 answered
+  values, 971 excluded, **5,315 assigned, 556 refused, 0 unanswered**, in 59
+  calls for **$0.0633** and **1 minute 51 seconds** of wall clock. Effective
+  concurrency **10.0 on 12 workers** -- 1,110.2s of summed per-call elapsed
+  over 111s of wall clock. All twenty categories reach five members and two or
+  more sources, and the largest holds 11.7% across 30 sources. The second run
+  took 3.9s, made zero calls and left the artifact byte-identical; an
+  incremental run after new answers assigned 48 and reused 142, in one call for
+  $0.0008. Full log in `data/logs/2026-08-28-vocabulary-build/summary.md`.
+  PR [#817](https://github.com/Muhanad-husn/axial/pull/817).
+- 2026-08-28 five review findings applied on the same branch. An out-of-scheme
+  category name is no longer stamped as a refusal (it is counted, named and
+  reported apart, because reuse freezes whatever a record holds); `--force` is
+  the deliberate act that re-assigns under an edited scheme, setting the paid
+  artifact aside rather than deleting it; the build spends under its own
+  `vocabulary_build` pass name, pinned to the examine pass's tier; and the
+  command's non-zero exit on an incomplete build is asserted.

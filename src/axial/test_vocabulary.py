@@ -186,6 +186,46 @@ def test_read_column_list_valued_contributes_one_entry_per_list_element():
     assert population[3].chunk_id == "book-b_1"
 
 
+def test_read_column_numbers_each_list_element_by_its_raw_position():
+    """`element_index` (issue #806) is the third part of the key a persisted
+    assignment is filed under, so it must tell two elements of one note's
+    list apart -- and it counts RAW list positions, so an element excluded
+    as an abstention consumes its own index instead of shifting the ones
+    after it onto keys another element already holds."""
+    records = [
+        {
+            "chunk_id": "book-a_1",
+            "source_id": "book-a",
+            "answers": {"arguing_against": ["claim one", "not-in-passage", "claim three"]},
+        },
+        {
+            "chunk_id": "book-b_1",
+            "source_id": "book-b",
+            "answers": {"arguing_against": ["claim four"]},
+        },
+    ]
+
+    population, excluded = read_column(records, "arguing_against")
+
+    assert excluded == 1
+    assert [(entry.chunk_id, entry.element_index) for entry in population] == [
+        ("book-a_1", 0),
+        ("book-a_1", 2),
+        ("book-b_1", 0),
+    ]
+
+
+def test_read_column_scalar_values_are_always_element_index_zero():
+    records = [
+        {"chunk_id": "book-a_1", "source_id": "book-a", "answers": {"mechanism": "one"}},
+        {"chunk_id": "book-b_1", "source_id": "book-b", "answers": {"mechanism": "two"}},
+    ]
+
+    population, _ = read_column(records, "mechanism")
+
+    assert [entry.element_index for entry in population] == [0, 0]
+
+
 def test_read_column_a_missing_key_is_neither_answered_nor_excluded():
     records = [
         {"chunk_id": "book-a_1", "source_id": "book-a", "answers": {"claim": "unrelated field"}},

@@ -673,6 +673,382 @@ def test_main_vocabulary_examine_reports_the_categorisation_and_the_agreement_ra
 
 
 # ---------------------------------------------------------------------------
+# `axial vocabulary build` (issue #806, derived-vocabulary slice 02):
+# assigning a whole column against the frozen scheme, and persisting it
+# ---------------------------------------------------------------------------
+
+
+_BUILD_SCHEME_YAML = """
+columns:
+  mechanism:
+    version: "test-v1"
+    categories:
+      - id: war-and-state-formation
+        name: "war and state formation"
+        gloss: "warfare drives state-building, extraction and institutional change"
+      - id: identity-construction-and-boundary-making
+        name: "identity construction and boundary-making"
+        gloss: "ethnic, national or religious categories are made and politicised"
+"""
+
+
+class _FakeVocabBuildClient:
+    """A minimal `LLMClient` that assigns by reading the numbered values
+    back out of the assign prompt, via a value -> category-name lookup; a
+    value it has no entry for comes back as a real "none" refusal. Records
+    every value it was ever asked about, which is what the second and third
+    runs of the acceptance criterion turn on. Mirrors `axial.
+    test_vocabulary_build._ScriptedAssignClient`, duplicated here (small,
+    self-contained) rather than imported across test modules."""
+
+    def __init__(self, assign_by_value):
+        self._assign_by_value = dict(assign_by_value)
+        self.asked_values = []
+        self._calls = {}
+        self._cost = {}
+
+    def complete(self, prompt, pass_name=None):
+        import json as _json
+        import re as _re
+
+        self._calls[pass_name] = self._calls.get(pass_name, 0) + 1
+        self._cost[pass_name] = self._cost.get(pass_name, 0.0) + 0.001
+        assignments = []
+        for line in prompt.splitlines():
+            match = _re.match(r"^(\d+)\.\s(.*)$", line)
+            if match is None:
+                continue
+            number, value = int(match.group(1)), match.group(2)
+            self.asked_values.append(value)
+            assignments.append({"n": number, "category": self._assign_by_value.get(value, "none")})
+        return _json.dumps({"assignments": assignments})
+
+    def model_for_pass(self, pass_name=None):
+        return "z-ai/glm-5.2"
+
+    def calls_for_pass(self, pass_name=None):
+        return self._calls.get(pass_name, 0)
+
+    def cost_for_pass(self, pass_name=None):
+        return self._cost.get(pass_name) if self._calls.get(pass_name, 0) else None
+
+
+def test_build_parser_recognises_vocabulary_build_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "vocabulary",
+            "build",
+            "--columns",
+            "mechanism",
+            "--answers-dir",
+            str(tmp_path / "answers"),
+            "--scheme-path",
+            str(tmp_path / "vocabulary.yaml"),
+            "--vocabulary-dir",
+            str(tmp_path / "vocabulary"),
+            "--workers",
+            "4",
+            "--force",
+        ]
+    )
+
+    assert args.command == "vocabulary"
+    assert args.vocabulary_command == "build"
+    assert args.columns == "mechanism"
+    assert args.answers_dir == str(tmp_path / "answers")
+    assert args.scheme_path == str(tmp_path / "vocabulary.yaml")
+    assert args.vocabulary_dir == str(tmp_path / "vocabulary")
+    assert args.workers == 4
+    assert args.force is True
+
+
+def test_main_vocabulary_build_exits_non_zero_when_a_value_is_left_unanswered(
+    tmp_path, capsys, monkeypatch
+):
+    """`specs/PHASE-B.md` §7.18: an unanswered value is a failed run, not a
+    result, and the command "reports it and exits non-zero". That exit code
+    is the whole contract for anything wrapping this command, and nothing
+    asserted it -- the report is prose, the code is the machine-readable
+    half. Drives `main` so the return value, not just `stats.complete`, is
+    what is checked."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, _unrelated = _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+    vocabulary_dir = tmp_path / "vocabulary"
+
+    real_assign_all = vocabulary_mod._assign_all
+
+    def _lossy(client, pass_name, scheme_text, sample, workers=1):
+        assignments = real_assign_all(client, pass_name, scheme_text, sample, workers)
+        assignments.pop(1, None)
+        return assignments
+
+    monkeypatch.setattr(vocabulary_mod, "_assign_all", _lossy)
+    monkeypatch.setattr(
+        vocabulary_mod,
+        "get_client",
+        lambda *a, **kw: _FakeVocabBuildClient(
+            {value: "war and state formation" for value in repeated}
+        ),
+    )
+
+    assert main(
+        [
+            "vocabulary",
+            "build",
+            "--columns",
+            "mechanism",
+            "--answers-dir",
+            str(answers_dir),
+            "--scheme-path",
+            str(scheme_path),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+        ]
+    ) == 1
+    captured = capsys.readouterr()
+
+    assert "1 unanswered" in captured.out
+    assert "INCOMPLETE" in captured.out
+    manifest = json.loads(
+        (vocabulary_dir / "mechanism" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["complete"] is False
+    assert manifest["unanswered_count"] == 1
+
+
+def test_main_vocabulary_build_force_re_assigns_after_a_scheme_edit(tmp_path, capsys, monkeypatch):
+    """Refusing a scheme-version mismatch by default is right and stays.
+    Without a flag, though, the operator's only remedy is moving a
+    directory by hand -- and `axial map build` already refuses by default
+    and re-spends behind exactly this flag."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, _unrelated = _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+    vocabulary_dir = tmp_path / "vocabulary"
+    lookup = {value: "war and state formation" for value in repeated}
+
+    argv = [
+        "vocabulary",
+        "build",
+        "--columns",
+        "mechanism",
+        "--answers-dir",
+        str(answers_dir),
+        "--scheme-path",
+        str(scheme_path),
+        "--vocabulary-dir",
+        str(vocabulary_dir),
+    ]
+
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: _FakeVocabBuildClient(lookup))
+    assert main(argv) == 0
+    capsys.readouterr()
+
+    scheme_path.write_text(
+        _BUILD_SCHEME_YAML.replace("test-v1", "test-v2"), encoding="utf-8"
+    )
+
+    # Without the flag: refuse, name both versions, spend nothing.
+    refusing = _FakeVocabBuildClient(lookup)
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: refusing)
+    assert main(argv) == 1
+    captured = capsys.readouterr()
+    assert "test-v1" in captured.err and "test-v2" in captured.err
+    assert "--force" in captured.err
+    assert refusing.asked_values == []
+
+    # With it: the whole column re-assigns under the new version, and the
+    # artifact that was paid for is still on disk beside it.
+    forcing = _FakeVocabBuildClient(lookup)
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: forcing)
+    assert main(argv + ["--force"]) == 0
+    captured = capsys.readouterr()
+
+    assert len(forcing.asked_values) == 8
+    manifest = json.loads(
+        (vocabulary_dir / "mechanism" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["scheme_version"] == "test-v2"
+    aside = [path for path in vocabulary_dir.iterdir() if path.name != "mechanism"]
+    assert len(aside) == 1
+    assert json.loads((aside[0] / "manifest.json").read_text(encoding="utf-8"))[
+        "scheme_version"
+    ] == "test-v1"
+    assert "set aside" in captured.out
+
+
+def test_main_vocabulary_build_writes_then_reuses_then_extends_the_assignment(
+    tmp_path, capsys, monkeypatch
+):
+    """The acceptance criterion (#806's gherkin), all three clauses in one
+    test because the second and third are about what the first left on
+    disk: build, then rebuild unchanged, then rebuild after a further
+    source's answers land.
+
+    No test makes a model call -- the client is injected by monkeypatching
+    the same seam `axial.vocabulary.build_vocabulary`'s own `client=None`
+    default resolves through (`axial.vocabulary.get_client`)."""
+    import json
+
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    repeated, unrelated = _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+    vocabulary_dir = tmp_path / "vocabulary"
+
+    argv = [
+        "vocabulary",
+        "build",
+        "--columns",
+        "mechanism",
+        "--answers-dir",
+        str(answers_dir),
+        "--scheme-path",
+        str(scheme_path),
+        "--vocabulary-dir",
+        str(vocabulary_dir),
+    ]
+
+    # --- first run: every answered value lands, with a category or a refusal
+    first = _FakeVocabBuildClient({value: "war and state formation" for value in repeated})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: first)
+
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+
+    assignments_path = vocabulary_dir / "mechanism" / "assignments.jsonl"
+    manifest_path = vocabulary_dir / "mechanism" / "manifest.json"
+    records = [
+        json.loads(line) for line in assignments_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(records) == 8
+    assert sum(1 for r in records if r["category_id"] == "war-and-state-formation") == 5
+    assert sum(1 for r in records if r["refused"]) == 3
+    assert {r["value"] for r in records if r["refused"]} == set(unrelated)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["scheme_version"] == "test-v1"
+    assert manifest["answers_pin"]
+    assert manifest["unanswered_count"] == 0
+    war = next(c for c in manifest["categories"] if c["category_id"] == "war-and-state-formation")
+    assert war["member_count"] == 5
+    assert war["source_count"] == 3
+
+    assert "mechanism: 8 answered value(s)" in captured.out
+    assert "scheme test-v1" in captured.out
+    assert "5 assigned" in captured.out
+    assert "3 refused" in captured.out
+
+    # --- second run: unchanged answers, unchanged scheme -> reuse, zero calls
+    second = _FakeVocabBuildClient({value: "war and state formation" for value in repeated})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: second)
+    before_assignments = assignments_path.read_bytes()
+    before_manifest = manifest_path.read_bytes()
+
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+
+    assert second.asked_values == []
+    assert second.calls_for_pass(vocabulary_mod.BUILD_PASS_NAME) == 0
+    assert "reused" in captured.out.lower()
+    assert assignments_path.read_bytes() == before_assignments
+    assert manifest_path.read_bytes() == before_manifest
+
+    # --- third run: one further source's answers land -> only those assign
+    new_values = [
+        "Conscription for a long war built the tax bureaucracy that outlived it.",
+        "A census taken to raise troops became the register the state governed by.",
+    ]
+    _write_jsonl(
+        answers_dir / "delta-2023.jsonl",
+        [
+            {
+                "chunk_id": "delta-2023_1",
+                "source_id": "delta-2023",
+                "answers": {"mechanism": new_values[0]},
+            },
+            {
+                "chunk_id": "delta-2023_2",
+                "source_id": "delta-2023",
+                "answers": {"mechanism": new_values[1]},
+            },
+        ],
+    )
+    lookup = {value: "war and state formation" for value in repeated}
+    lookup.update({value: "war and state formation" for value in new_values})
+    third = _FakeVocabBuildClient(lookup)
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: third)
+    before_lines = assignments_path.read_text(encoding="utf-8").splitlines()
+
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+
+    assert third.asked_values == new_values
+    after_lines = assignments_path.read_text(encoding="utf-8").splitlines()
+    assert len(after_lines) == 10
+    for line in before_lines:
+        assert line in after_lines
+    assert "2 newly assigned" in captured.out
+
+
+def test_main_vocabulary_build_without_a_scheme_for_the_column_fails_naming_it(
+    tmp_path, capsys, monkeypatch
+):
+    """A column the frozen scheme file says nothing about is an operator
+    error with a name, not a stack trace and not an empty success."""
+    import axial.vocabulary as vocabulary_mod
+    from axial.cli import main
+
+    answers_dir = tmp_path / "answers"
+    _write_vocabulary_answers(answers_dir)
+    scheme_path = tmp_path / "vocabulary.yaml"
+    scheme_path.write_text(_BUILD_SCHEME_YAML, encoding="utf-8")
+
+    client = _FakeVocabBuildClient({})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: client)
+
+    exit_code = main(
+        [
+            "vocabulary",
+            "build",
+            "--columns",
+            "comparison",
+            "--answers-dir",
+            str(answers_dir),
+            "--scheme-path",
+            str(scheme_path),
+            "--vocabulary-dir",
+            str(tmp_path / "vocabulary"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "comparison" in captured.err
+    assert client.asked_values == []
+    assert not (tmp_path / "vocabulary").exists()
+
+
+# ---------------------------------------------------------------------------
 # `axial brief sweep --arm` (issue #808): the named retrieval arm, and its
 # `--map` alias.
 # ---------------------------------------------------------------------------
