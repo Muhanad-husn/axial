@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 import axial.vocabulary as vocabulary_mod
+from axial.cli import main
 from axial.vocabulary import (
     ASSIGNMENTS_FILENAME,
     DEFAULT_VOCABULARY_SCHEME_PATH,
@@ -1033,6 +1034,107 @@ def test_a_column_with_no_answers_writes_an_empty_artifact_without_a_model_call(
     assert stats.columns[0].answered_count == 0
     assert _read_assignments(tmp_path / "vocabulary") == []
     assert _read_manifest(tmp_path / "vocabulary")["complete"] is True
+
+
+# ---------------------------------------------------------------------------
+# Acceptance (issue #826, positions-not-names slice 01): the `claim` column
+# has a committed, assigned category scheme. Drives the real, committed
+# `config/vocabulary.yaml` (no scheme fixture) through the CLI boundary
+# (`axial vocabulary build --columns claim`), with only `--answers-dir` and
+# `--vocabulary-dir` pointed at tmp_path and a fake client injected -- so the
+# scheme actually reaching the assign prompt is the one a person commits to
+# the repository, not a stand-in.
+# ---------------------------------------------------------------------------
+
+# Two paraphrases the founder-approved gloss for
+# `empirical-finding-without-causal-claim` covers, plus one value no
+# category's gloss fits -- a refusal, not an out-of-scheme name.
+_CLAIM_EMPIRICAL = [
+    "The 1963 census recorded a 40% rise in registered urban households.",
+    "Customs receipts for that decade show a steady decline after 1958.",
+]
+_CLAIM_REFUSAL = "Colourless green ideas sleep furiously."
+_CLAIM_CATEGORY_NAME = "empirical finding or observation without causal claim"
+
+
+def _write_claim_answers(answers_dir: Path) -> None:
+    _write_jsonl(
+        answers_dir / "alpha-2020.jsonl",
+        [
+            {"chunk_id": "alpha-2020_1", "source_id": "alpha-2020",
+             "answers": {"claim": _CLAIM_EMPIRICAL[0]}},
+            {"chunk_id": "alpha-2020_2", "source_id": "alpha-2020",
+             "answers": {"claim": _CLAIM_REFUSAL}},
+        ],
+    )
+    _write_jsonl(
+        answers_dir / "beta-2021.jsonl",
+        [
+            {"chunk_id": "beta-2021_1", "source_id": "beta-2021",
+             "answers": {"claim": _CLAIM_EMPIRICAL[1]}},
+        ],
+    )
+
+
+def test_acceptance_claim_build_against_the_committed_scheme_reports_and_resumes(
+    tmp_path, capsys, monkeypatch
+):
+    """Given `config/vocabulary.yaml` carries a committed `claim` scheme
+    with a version and every category bearing an id, name and gloss, when
+    `axial vocabulary build --columns claim` runs against `data/answers/`,
+    then `data/vocabulary/claim/manifest.json` exists, records that scheme
+    version, and reports assigned, refused and unanswered counts per
+    category, and a second run under the same scheme version resumes
+    rather than re-asking."""
+    answers_dir = tmp_path / "answers"
+    _write_claim_answers(answers_dir)
+    vocabulary_dir = tmp_path / "vocabulary"
+    scheme = load_vocabulary_scheme("claim", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    argv = [
+        "vocabulary",
+        "build",
+        "--columns",
+        "claim",
+        "--answers-dir",
+        str(answers_dir),
+        "--vocabulary-dir",
+        str(vocabulary_dir),
+    ]
+
+    first = _ScriptedAssignClient({value: _CLAIM_CATEGORY_NAME for value in _CLAIM_EMPIRICAL})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: first)
+
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+
+    manifest_path = vocabulary_dir / "claim" / MANIFEST_FILENAME
+    assert manifest_path.is_file()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["column"] == "claim"
+    assert manifest["scheme_version"] == scheme.version
+    assert manifest["assigned_count"] == 2
+    assert manifest["refused_count"] == 1
+    assert manifest["unanswered_count"] == 0
+    assert manifest["complete"] is True
+    assert len(manifest["categories"]) == len(scheme.categories) == 9
+
+    assert "claim" in captured.out
+    assert scheme.version in captured.out
+    assert "2 assigned" in captured.out
+    assert "1 refused" in captured.out
+
+    # A second run under the same scheme version resumes rather than
+    # re-asking.
+    second = _ScriptedAssignClient({value: _CLAIM_CATEGORY_NAME for value in _CLAIM_EMPIRICAL})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: second)
+
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+
+    assert second.asked_values == []
+    assert second.calls_for_pass(BUILD_PASS_NAME) == 0
+    assert "reused" in captured.out.lower()
 
 
 def test_build_refuses_a_scheme_deeper_than_the_level_it_assigns(tmp_path):
