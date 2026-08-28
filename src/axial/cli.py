@@ -1383,7 +1383,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "named retrieval arm every draw runs through (issue #808): "
             "'name' (default) is the existing name-layer loop, 'map' is "
-            "the argument-map path (issue #572) -- forwarded verbatim, "
+            "the argument-map path (issue #572), 'map+vocab' the same walk "
+            "with the vocabulary step (issue #807) -- forwarded verbatim, "
             "with no fixed list of valid names here, so an arm added "
             "elsewhere is usable with no edit to this command; resuming "
             "--sweep-dir under a different arm than the one already "
@@ -1497,8 +1498,9 @@ def build_parser() -> argparse.ArgumentParser:
             "path (issue #572), 'map+vocab' the same walk with the "
             "vocabulary step (issue #807) -- forwarded verbatim, with no "
             "fixed list of valid names here, so an arm added elsewhere is "
-            "usable with no edit to this command. Takes precedence over "
-            "--map when both are given"
+            "usable with no edit to this command. Unset by default, so "
+            "--map still decides; takes precedence over --map when both "
+            "are given"
         ),
     )
 

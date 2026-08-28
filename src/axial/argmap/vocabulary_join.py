@@ -30,9 +30,11 @@ across all three builds on disk, 263-344 chunks of ~5,200-5,600 sit in 2 to
 5 positions each (issue #822). The join indexes each chunk to EVERY position
 holding it and applies `excluded_position_ids` per position, so an edge is
 never lost because the note's first-listed position happened to be landed or
-in the corridor. Where several of a note's positions survive, each is its
-own edge -- the note really is part of more than one argument, and assembly
-walks positions.
+in the corridor. Where several of a note's positions survive it is offered
+through exactly one of them, the lowest `position_id`: `assemble_map_evidence`
+emits a chunk id once however many positions carry it, so a second edge for
+the same note would add nothing to the answer while spending a cap slot a
+different note could have had.
 
 **The per-category cap.** A `mechanism` category holds 309-623 notes
 (measured, #806's own manifest) against `assemble_map_evidence`'s shared
@@ -59,7 +61,7 @@ above)."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -163,12 +165,10 @@ class CategoryReach:
     a fact about this run, recorded in `_map_retrieval_to_dict`
     (`axial.answer.record`) rather than left to be inferred.
 
-    **`chunk_ids` counts notes; the cap counts edges (issue #822).** The
-    map's positions do not partition the notes, so one note can be offered
-    through two of its own positions. That is two things handed to
-    assembly, which is what the cap governs, and one note reached, which is
-    what this field reports. The two figures differ only for a note sitting
-    in several surviving positions.
+    One note is one entry here and one slot of the cap, even when the map
+    holds it in several positions (issue #822): the join offers it through
+    exactly one of them, so `len(chunk_ids) == cap` is still what
+    `cap_applied` means.
 
     A category with exactly one member -- the landed note itself -- is
     still reported here, with `chunk_ids` empty: reached, but with nobody
@@ -192,21 +192,26 @@ class VocabularyJoinResult:
     (cross-source first) and already capped, ready to hand straight to
     `assemble_map_evidence` alongside the landed and corridor positions.
 
-    `reasons` (issue #822) counts `landed`'s own distinct notes by
-    `category_for_note`'s own outcome, keyed on `ALL_REASONS` with every
-    reason present even at zero. It answers the first question anyone asks
-    of an underperforming run: whether the notes reached no category
-    because the scheme refused them, because the model answered outside
-    the scheme, or because they were never assigned at all. Defaults to an
-    empty mapping so a hand-built result (a test fixture) need not restate
-    it; `vocabulary_neighbours` always fills all four."""
+    `reasons` (issue #822) is the CATEGORY-ASSIGNMENT outcome of each of
+    `landed`'s own distinct notes -- `category_for_note`'s own answer,
+    keyed on `ALL_REASONS` with every reason present even at zero. It
+    answers the first question anyone asks of an underperforming run:
+    whether the notes reached no category because the scheme refused them,
+    because the model answered outside the scheme, or because they were
+    never assigned at all. `assigned` is not the same as "produced an
+    edge": an assigned note whose category turns out to be a singleton,
+    or whose every neighbour position is excluded, is counted here as
+    `assigned` and contributes nothing. Required, never defaulted -- a
+    result carrying an empty mapping would render four honest-looking
+    zeros through `_vocabulary_to_dict`, which is the "not measured reads
+    as measured" conflation `ALL_REASONS` exists to end."""
 
     column: str
     level: int
     cap: int
     categories: tuple[CategoryReach, ...]
     positions: tuple[VocabularyPosition, ...]
-    reasons: Mapping[str, int] = field(default_factory=dict)
+    reasons: Mapping[str, int]
 
 
 def category_for_note(
@@ -398,15 +403,23 @@ def vocabulary_neighbours(
         for chunk_id, source_id in members_by_category.get(category_id, []):
             if chunk_id in landed_chunk_ids or chunk_id in seen_chunk_ids:
                 continue
-            # Exclusion is applied per position, not to the chunk. When
-            # several of a note's positions survive, EACH is its own edge:
-            # the note is genuinely part of more than one argument, and
-            # assembly walks positions, so collapsing them would silently
-            # pick one argument for the reader. The per-category cap goes
-            # on counting what a category hands to assembly -- one count per
-            # surviving position -- so the budget contract is unchanged;
-            # `CategoryReach.chunk_ids` below stays a count of distinct
-            # NOTES offered, which is the different question it answers.
+            # **Exclusion is applied per position, not to the chunk (issue
+            # #822).** The map's positions do not partition the notes --
+            # 263-344 chunks of ~5,200-5,600 sit in 2 to 5 positions in each
+            # of the three builds on disk -- so a note whose FIRST listed
+            # position happens to be landed or in the corridor must still
+            # reach the reader through one that is not. Keeping only the
+            # first position per chunk lost that edge silently, and made
+            # attribution depend on `positions.jsonl` file order.
+            #
+            # One surviving position, not all of them. A `VocabularyPosition`
+            # carries only the matched note, and `assemble_map_evidence`
+            # emits a chunk id once however many positions offer it, so a
+            # second edge for the same note adds nothing to the answer and
+            # spends a cap slot a DIFFERENT note could have had. The lowest
+            # `position_id` is the pick: deterministic, and independent of
+            # file order, which is the half of this defect a survival rule
+            # alone would not have fixed.
             surviving = [
                 position
                 for position in positions_by_chunk.get(chunk_id, ())
@@ -415,7 +428,9 @@ def vocabulary_neighbours(
             if not surviving:
                 continue
             seen_chunk_ids.add(chunk_id)
-            candidates.extend((chunk_id, source_id, position) for position in surviving)
+            candidates.append(
+                (chunk_id, source_id, min(surviving, key=lambda p: p["position_id"]))
+            )
 
         # Cross-source first (issue #651: only 40.5% of argument-map edges
         # reach another book), then a deterministic total order. The
@@ -461,12 +476,7 @@ def vocabulary_neighbours(
             CategoryReach(
                 category_id=category_id,
                 category_name=category_names.get(category_id, ""),
-                # Distinct notes, in contribution order -- a note reached
-                # through two of its own positions is one note offered, two
-                # edges spent (issue #822).
-                chunk_ids=tuple(
-                    dict.fromkeys(chunk_id for chunk_id, _source_id, _position in contributed)
-                ),
+                chunk_ids=tuple(chunk_id for chunk_id, _source_id, _position in contributed),
                 source_count=len({source_id for _c, source_id, _p in contributed}),
                 cap_applied=cap_applied,
             )

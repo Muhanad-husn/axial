@@ -1,6 +1,5 @@
 $ uv run ruff check
 All checks passed!
-exit=0
 
 $ uv run axial brief run --help
 usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}]
@@ -46,7 +45,6 @@ options:
                         most neighbours ONE category may hand to assembly
                         (default: 20, against the shared assembly cap of 90)
                         -- the selection rule in practice, not a safety valve
-exit=0
 
 $ uv run axial brief smoke --help
 usage: axial brief smoke [-h] [--briefs-dir BRIEFS_DIR]
@@ -73,9 +71,9 @@ options:
                         walk with the vocabulary step (issue #807) --
                         forwarded verbatim, with no fixed list of valid names
                         here, so an arm added elsewhere is usable with no edit
-                        to this command. Takes precedence over --map when both
-                        are given
-exit=0
+                        to this command. Unset by default, so --map still
+                        decides; takes precedence over --map when both are
+                        given
 
 $ uv run axial brief sweep --help
 usage: axial brief sweep [-h] --draws DRAWS --sweep-dir SWEEP_DIR
@@ -99,12 +97,13 @@ options:
   --workers WORKERS     bounded concurrent (brief, draw) workers (default: 3)
   --arm ARM             named retrieval arm every draw runs through (issue
                         #808): 'name' (default) is the existing name-layer
-                        loop, 'map' is the argument-map path (issue #572) --
-                        forwarded verbatim, with no fixed list of valid names
-                        here, so an arm added elsewhere is usable with no edit
-                        to this command; resuming --sweep-dir under a
-                        different arm than the one already recorded there is
-                        refused
+                        loop, 'map' is the argument-map path (issue #572),
+                        'map+vocab' the same walk with the vocabulary step
+                        (issue #807) -- forwarded verbatim, with no fixed list
+                        of valid names here, so an arm added elsewhere is
+                        usable with no edit to this command; resuming --sweep-
+                        dir under a different arm than the one already
+                        recorded there is refused
   --map                 alias for --arm map (issue #572), kept so no existing
                         invocation breaks
   --vocabulary-column VOCABULARY_COLUMN
@@ -120,4 +119,3 @@ options:
                         most neighbours ONE category may hand to assembly
                         (default: 20, against the shared assembly cap of 90)
                         -- the selection rule in practice, not a safety valve
-exit=0

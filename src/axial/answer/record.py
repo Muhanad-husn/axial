@@ -296,20 +296,27 @@ def _vocabulary_to_dict(
 
     **Two counts per category, because they differ by a factor of six.**
     `offered_note_count` is what the join handed to assembly; `assembled_
-    note_count` is how many of those the assembly cap actually kept. The
+    note_count` is how many of those survived `assemble_map_evidence`'s
+    SHARED cap of 90, which is a different cap from this block's own
+    per-category `cap` and its `cap_applied` flag -- a category can be well
+    under 20 and still lose most of its notes to the shared budget, so the
+    two counts differing is not evidence the per-category cap bit. The
     first live run offered 240 notes across twelve categories and assembled
     38 of them. A single `note_count` invited exactly one misreading -- that
     the vocabulary step contributed 240 passages to an answer built from 90
     -- and issue #809 reads these figures to decide whether the derived
     vocabulary pays. `source_count` stays a count over what was OFFERED,
-    which is what the cap selected on.
+    which is what the per-category cap selected on.
 
-    **`reasons` says why the landed notes that produced no edge produced
-    none (issue #822).** One count per landed note, keyed on `ALL_REASONS`
+    **`reasons` records the category-assignment outcome of every landed
+    note (issue #822).** One count per landed note, keyed on `ALL_REASONS`
     with every reason present even at zero: `assigned` reached a category,
     `refused` is the model declining, `out-of-scheme` is an answer naming
     no committed category, `not-found` is a note never assigned in this
-    column at all. Without it a thin run is unreadable -- a scheme that
+    column at all. `assigned` is not the same as "produced an edge": an
+    assigned note whose category is a singleton, or whose every neighbour
+    position is already excluded, is counted `assigned` and contributes
+    nothing. Without it a thin run is unreadable -- a scheme that
     does not fit this corpus and a column half of whose notes were never
     assigned produce the same small `categories` list, which is exactly the
     conflation §7.18 records as having cost #805 a 50.7%-vs-88.5%

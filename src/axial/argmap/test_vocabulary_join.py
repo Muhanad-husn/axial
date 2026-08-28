@@ -550,11 +550,11 @@ def test_an_edge_survives_when_only_the_first_position_holding_the_note_is_exclu
     assert result.positions[0].chunk_ids == ("n3",)
 
 
-def test_each_surviving_position_holding_a_matched_note_is_its_own_edge(tmp_path: Path):
-    """When several of a note's positions all survive exclusion, each is its
-    own edge: the note is genuinely part of two arguments and assembly picks
-    per position. The category still reports the NOTE once -- `chunk_ids`
-    counts distinct notes offered, not edges."""
+def test_a_note_in_several_surviving_positions_is_offered_through_exactly_one(tmp_path: Path):
+    """A second edge for the same note would add nothing: `assemble_map_
+    evidence` emits a chunk id once however many positions carry it. So the
+    join picks one surviving position -- the lowest `position_id` -- and the
+    note costs the category one slot, not two."""
     pos_landed = _position("pos-landed", ["n1"], ["src-1"])
     pos_a = _position("pos-a", ["n3"], ["src-2"])
     pos_b = _position("pos-b", ["n3"], ["src-2"])
@@ -577,17 +577,19 @@ def test_each_surviving_position_holding_a_matched_note_is_its_own_edge(tmp_path
         vocabulary_dir=vocabulary_dir,
     )
 
-    assert sorted(p.position_id for p in result.positions) == ["pos-a", "pos-b"]
+    assert [p.position_id for p in result.positions] == ["pos-a"]
     assert result.categories[0].chunk_ids == ("n3",)
 
 
-def test_the_per_category_cap_counts_edges_not_distinct_notes(tmp_path: Path):
-    """The budget contract does not move (issue #822): the cap still counts
-    what a category hands to assembly, and each surviving position is one of
-    those. One note in three positions spends three of the cap."""
+def test_which_position_a_note_is_offered_through_does_not_depend_on_file_order(
+    tmp_path: Path,
+):
+    """The other half of the defect: attribution used to follow whichever
+    position `positions.jsonl` listed first. Same two positions, reversed in
+    the file, same answer."""
     pos_landed = _position("pos-landed", ["n1"], ["src-1"])
-    others = [_position(f"pos-{letter}", ["n3"], ["src-2"]) for letter in "abc"]
-    positions = [pos_landed, *others]
+    pos_a = _position("pos-a", ["n3"], ["src-2"])
+    pos_b = _position("pos-b", ["n3"], ["src-2"])
 
     vocabulary_dir = _write_vocabulary(
         tmp_path / "vocab",
@@ -598,7 +600,52 @@ def test_the_per_category_cap_counts_edges_not_distinct_notes(tmp_path: Path):
         ],
     )
 
-    result = vocabulary_neighbours(
+    def run(positions):
+        return vocabulary_neighbours(
+            [_landed(pos_landed)],
+            set(),
+            positions,
+            "mechanism",
+            vocabulary_dir=vocabulary_dir,
+        )
+
+    forward = run([pos_landed, pos_a, pos_b])
+    reversed_ = run([pos_landed, pos_b, pos_a])
+
+    assert [p.position_id for p in forward.positions] == ["pos-a"]
+    assert [p.position_id for p in reversed_.positions] == ["pos-a"]
+
+
+def test_the_per_category_cap_counts_distinct_notes(tmp_path: Path):
+    """The budget contract does not move (issue #822): the cap counts the
+    distinct notes a category hands to assembly. Three notes, one of them
+    sitting in three positions, still spend three of the cap -- so
+    `cap_applied` keeps meaning `len(chunk_ids) == cap`."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    multi = [_position(f"pos-{letter}", ["n3"], ["src-2"]) for letter in "abc"]
+    pos_d = _position("pos-d", ["n4"], ["src-2"])
+    pos_e = _position("pos-e", ["n5"], ["src-2"])
+    positions = [pos_landed, *multi, pos_d, pos_e]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+            _assignment("n4", "src-2", "war-and-state"),
+            _assignment("n5", "src-2", "war-and-state"),
+        ],
+    )
+
+    uncapped = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+    capped = vocabulary_neighbours(
         [_landed(pos_landed)],
         set(),
         positions,
@@ -607,8 +654,10 @@ def test_the_per_category_cap_counts_edges_not_distinct_notes(tmp_path: Path):
         cap=2,
     )
 
-    assert len(result.positions) == 2
-    assert result.categories[0].cap_applied is True
+    assert sorted(uncapped.categories[0].chunk_ids) == ["n3", "n4", "n5"]
+    assert uncapped.categories[0].cap_applied is False
+    assert len(capped.categories[0].chunk_ids) == 2
+    assert capped.categories[0].cap_applied is True
 
 
 def test_out_of_scheme_is_found_on_any_record_not_only_the_first():
