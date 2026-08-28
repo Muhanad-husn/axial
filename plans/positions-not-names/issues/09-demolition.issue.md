@@ -3,12 +3,17 @@
 **Spec:** docs/approach-positions-not-names.md#9-what-this-lets-go-and-when · **Plan:** plans/positions-not-names/09-demolition.md
 **Depends on:** slice 08 of this batch — **and slices 06 (founder go), 07 shipped; nothing is deleted until what replaces it is live**
 **Labels:** enhancement, sub:analysis-v0
+**Closes alongside:** #825
 
 ## Deliverable
 
 Everything slices 06–08 made redundant is removed — the name pages as a
 structure, the disagreement-manufacturing pass (gather), the name-walking
-retrieval loop, the residue pass, the vocabulary measurement apparatus, and
+retrieval loop, the residue pass, the vocabulary measurement apparatus, the
+category join and the `map+vocab` arm (#825, absorbed here: `axial brief run
+--arm map+vocab` refused as unknown, the four `--vocabulary-*` knobs gone,
+the `vocabulary` block out of the answer record, the third arm's spec
+paragraphs out with their two measured findings moved, not dropped), and
 the eval code nothing remaining reads — leaving the name index as a filter
 ("where is this discussed", variants folded), the suite green, ruff clean,
 and the spec updated in the same branch. The PR body lists every deleted
@@ -41,6 +46,14 @@ And   the PR body lists every deleted module with the slice that made it safe
 
 ```aeo-independence
 slice: 09-demolition
+edits: src/axial/argmap/vocabulary_join.py
+edits: src/axial/argmap/test_vocabulary_join.py
+edits: src/axial/argmap/ask.py
+edits: src/axial/argmap/test_ask.py
+edits: src/axial/answer/record.py
+edits: src/axial/brief/sweep.py
+edits: src/axial/brief/test_sweep.py
+edits: specs/PHASE-B.md
 edits: src/axial/gather.py
 edits: src/axial/argmap/residue.py
 edits: src/axial/argmap/test_residue.py

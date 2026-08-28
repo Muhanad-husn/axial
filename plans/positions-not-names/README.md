@@ -27,7 +27,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | 06 [#831](https://github.com/Muhanad-husn/axial/issues/831) | [structural-comparison](06-structural-comparison.md) | `axial map compare` puts the two maps side by side, structurally; the founder's go/no-go on everything after | ☐ todo | — |
 | 07 | [profiles-and-ranked-relations](07-profiles-and-ranked-relations.md) | Positions carry a category profile and relation neighbourhoods are proposed from profile rank | ☐ todo | — |
 | 08 | [retrieval-address-arm](08-retrieval-address-arm.md) | A question enters through the axis intersection — question → region → positions → relations → passages — as a sweep arm | ☐ todo | — |
-| 09 | [demolition](09-demolition.md) | Name pages, gather, the name-walking loop, the residue pass and the dead eval code are deleted, each deletion citing the slice that made it safe | ☐ todo | — |
+| 09 | [demolition](09-demolition.md) | Name pages, gather, the name-walking loop, the residue pass, the category join (#825, absorbed) and the dead eval code are deleted, each deletion citing the slice that made it safe | ☐ todo | — |
 
 ## Out of scope (whole feature)
 
@@ -48,6 +48,8 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 - **Filed 2026-08-28:** slices 01-06 as #826-#831. Slices 07-09 are drafted
   in `issues/` but deliberately NOT filed until slice 06's go/no-go verdict.
+- **#825 folds into slice 09** (founder ruling, 2026-08-28): the category
+  join's deletion rides the demolition slice; the slice-09 PR closes #825.
 
 - **Hard gates between slices.** Slice 02 can kill the feature (claim-axis
   purity high → diagnosis wrong). Slice 03 ends in a founder choice. Slice 06
