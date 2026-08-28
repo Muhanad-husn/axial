@@ -1,0 +1,14 @@
+{"ts": "2026-08-27T23:51:55Z", "event": "drive_secrets_ok", "books_folder_id": "<books-folder-id>"}
+{"ts": "2026-08-27T23:51:57Z", "event": "drive_listed", "count": 35}
+{"ts": "2026-08-27T23:52:32Z", "event": "download_start", "file_id": "<beshara-2011-drive-file-id>", "name": "beshara-2011.pdf"}
+{"ts": "2026-08-27T23:52:36Z", "event": "download_done", "bytes": 3086823, "sha256": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac", "md5": "064df9385cb189d12cf31e95946911d8", "sha256_matches": true, "md5_matches": true}
+{"ts": "2026-08-27T23:52:36Z", "event": "staged", "path": "C:\\Users\\mou97\\AppData\\Local\\Temp\\claude\\D--axial\\cde149a3-a7cf-493e-a7ec-6cca8bbc1995\\scratchpad\\beshara-2011.pdf", "bytes": 3086823}
+{"ts": "2026-08-27T23:52:36Z", "event": "verify_ok", "sha256": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac"}
+{"ts": "2026-08-27T23:53:03Z", "event": "pin_sources_built", "count": 35}
+{"ts": "2026-08-27T23:53:04Z", "event": "pin_computed", "corpus_pin": "9b796b3a6312b329"}
+{"ts": "2026-08-27T23:53:04Z", "event": "beshara_hash_check", "recorded": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac", "live": "8410a9059300a22b883d8816d3e5104fa3a1967b5c6ffa3ed33c36dd117bc2ac", "match": true}
+{"ts": "2026-08-27T23:53:04Z", "event": "committed_pin_overlap", "committed_sources": 31, "live_sources": 35, "overlapping": 31, "mismatching": []}
+{"ts": "2026-08-27T23:53:04Z", "event": "map_pins_on_disk", "pins": ["297bcfa93d6974b0", "3c49f2e5a035fbc3", "9b796b3a6312b329"], "live_pin_has_build": true}
+{"ts": "2026-08-27T23:53:48Z", "event": "map_draw_launched", "pid": 56580, "sweep_dir": "data/runs/816-map-check", "arm": "map", "brief": "config/briefs/smoke/S-03.yaml", "draws": 1, "commit": "4b4d977bd9bfb671528c01e76e2a11e279f8bf1c"}
+{"ts": "2026-08-28T00:01:08Z", "event": "map_draw_done", "arm": "map", "status": "OK", "latency_seconds": 344.4059139000019, "distinct_sources_cited": 5, "total_usd": 0.11983313799999999, "total_tokens": 139152, "gates": {"attribution-fidelity": true, "calibration": true, "grounding": true, "synthesis-quality": false}}
+{"ts": "2026-08-28T00:01:08Z", "event": "spend_total", "usd": 0.11983313799999999, "note": "drive download and pin computation cost nothing"}

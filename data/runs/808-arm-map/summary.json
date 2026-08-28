@@ -1,0 +1,43 @@
+{
+  "arm": "map",
+  "briefs": [
+    {
+      "brief_id": "fa44475aaaa90a48",
+      "brief_path": "config/briefs/smoke/S-03.yaml",
+      "brief_stem": "S-03",
+      "cost": {
+        "by_pass": {},
+        "total_tokens": 0,
+        "total_usd": null
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "fa44475aaaa90a48",
+          "brief_path": "config/briefs/smoke/S-03.yaml",
+          "brief_stem": "S-03",
+          "distinct_sources_cited": null,
+          "draw_index": 0,
+          "latency_seconds": 66.78240279998863,
+          "reason": "no raw source file found for source_id 'beshara-2011-8410a9059300' under data\\sources (looked for .docx, .pdf); place the original source file there before running `axial pin write`",
+          "record_path": null,
+          "report_path": null,
+          "status": "FAIL"
+        }
+      ],
+      "gate_reports": {},
+      "quorum": {
+        "claim_kind_agreement_rate": null,
+        "claim_kind_counts": [],
+        "disposition_agreement_rate": null,
+        "dispositions": [],
+        "n_draws": 0
+      }
+    }
+  ],
+  "commit": "29255b0029f6e835e3f4c3b395726aeb218c42cf",
+  "fail_count": 1,
+  "ok_count": 0,
+  "skip_count": 0,
+  "total_draws": 1
+}
