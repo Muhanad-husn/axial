@@ -14,8 +14,13 @@ built on. Issue #261 adds `axial.answer.render.render_markdown` (§7.10) and
 from __future__ import annotations
 
 from axial.answer.record import (
+    KNOWN_ARMS,
+    MAP_ARM,
+    MAP_VOCAB_ARM,
+    NAME_ARM,
     AnswerError,
     BriefRunResult,
+    UnknownArmError,
     build_record,
     persist_markdown,
     persist_record,
@@ -37,9 +42,14 @@ from axial.answer.usage_report import (
 )
 
 __all__ = [
+    "KNOWN_ARMS",
+    "MAP_ARM",
+    "MAP_VOCAB_ARM",
+    "NAME_ARM",
     "AnswerError",
     "BriefRunResult",
     "PassClock",
+    "UnknownArmError",
     "UsageReport",
     "build_record",
     "build_run_report",

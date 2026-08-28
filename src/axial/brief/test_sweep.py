@@ -267,14 +267,14 @@ def test_run_one_draw_records_an_ask_error_as_fail_and_does_not_raise(tmp_path, 
     assert record is None
 
 
-def test_run_one_draw_forwards_arm_map_as_use_map_to_run_brief(tmp_path, monkeypatch):
-    """issue #808: `arm="map"` is `_run_one_draw`'s own translation of the
-    named arm into `run_brief`'s boolean `use_map` knob."""
+def test_run_one_draw_forwards_arm_map_to_run_brief(tmp_path, monkeypatch):
+    """issue #808, revised by #807: `arm="map"` reaches `run_brief` as the
+    arm name itself, not as a boolean this module derived from it."""
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
     captured = {}
 
-    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
-        captured["use_map"] = use_map
+    def _fake_run_brief(_brief, *, arm=None, **_kwargs):
+        captured["arm"] = arm
         record = {"brief_id": brief.brief_id}
         return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
 
@@ -288,17 +288,17 @@ def test_run_one_draw_forwards_arm_map_as_use_map_to_run_brief(tmp_path, monkeyp
         **_draw_kwargs(tmp_path / "sweep", lambda: object()),
     )
 
-    assert captured["use_map"] is True
+    assert captured["arm"] == "map"
 
 
 def test_run_one_draw_default_arm_is_name_layer(tmp_path, monkeypatch):
     """No `arm` given is byte-identical in behaviour to today's default:
-    the name-layer loop, `use_map=False`."""
+    the name-layer loop."""
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
     captured = {}
 
-    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
-        captured["use_map"] = use_map
+    def _fake_run_brief(_brief, *, arm=None, **_kwargs):
+        captured["arm"] = arm
         record = {"brief_id": brief.brief_id}
         return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
 
@@ -308,7 +308,7 @@ def test_run_one_draw_default_arm_is_name_layer(tmp_path, monkeypatch):
         "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
     )
 
-    assert captured["use_map"] is False
+    assert captured["arm"] == "name"
 
 
 def test_run_one_draw_records_the_arm_on_the_draw_outcome(tmp_path, monkeypatch):
@@ -331,17 +331,23 @@ def test_run_one_draw_records_the_arm_on_the_draw_outcome(tmp_path, monkeypatch)
     assert outcome.arm == "map"
 
 
-def test_run_one_draw_an_unrecognized_arm_name_is_accepted_and_runs_name_layer(
+def test_run_one_draw_forwards_the_map_vocab_arm_rather_than_collapsing_it(
     tmp_path, monkeypatch
 ):
-    """issue #808: this module holds no whitelist of valid arm names -- an
-    arm no lower layer has given meaning to yet is accepted, recorded
-    verbatim, and simply runs the name-layer default today."""
+    """issue #807: the third arm reaches `run_brief` as `map+vocab`, and the
+    `DrawOutcome` records the same string.
+
+    This is the regression #808's own boolean collapse would have shipped:
+    `use_map = arm == MAP_ARM` read `map+vocab` as `use_map=False` and ran
+    the NAME layer, while the outcome still said `map+vocab`. #809 reads the
+    arms off exactly these directories, so a sweep labelled one arm and
+    holding another's draws produces a wrong comparison rather than a
+    failure anyone would notice."""
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
     captured = {}
 
-    def _fake_run_brief(_brief, *, use_map=False, **_kwargs):
-        captured["use_map"] = use_map
+    def _fake_run_brief(_brief, *, arm=None, **_kwargs):
+        captured["arm"] = arm
         record = {"brief_id": brief.brief_id}
         return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
 
@@ -355,7 +361,7 @@ def test_run_one_draw_an_unrecognized_arm_name_is_accepted_and_runs_name_layer(
         **_draw_kwargs(tmp_path / "sweep", lambda: object()),
     )
 
-    assert captured["use_map"] is False
+    assert captured["arm"] == "map+vocab"
     assert outcome.arm == "map+vocab"
 
 
@@ -559,7 +565,9 @@ def test_run_sweep_runs_every_brief_draws_times_and_scopes_gates_per_brief(tmp_p
 def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypatch):
     """issue #572, PR 4 of 4: `run_sweep(use_map=True)` -- the seam
     `axial.brief.smoke.run_smoke(use_map=True)` uses -- reaches every single
-    `(brief, draw)` pair's own `run_brief` call, not just the first."""
+    `(brief, draw)` pair's own `run_brief` call, not just the first. The
+    legacy boolean is resolved to `arm="map"` once, in `run_sweep` itself
+    (issue #807), so what every draw actually receives is the arm name."""
     briefs_by_path = {
         "briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None),
         "briefB.yaml": Brief(brief_id="idB", case="B", request="rB", lens=None),
@@ -568,10 +576,10 @@ def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypat
     monkeypatch.setattr(sweep_mod, "load_brief", lambda path: briefs_by_path[path])
     monkeypatch.setattr(sweep_mod, "resolve_trusted", lambda evals_dir=None: (None, False))
 
-    captured_use_map: list[bool] = []
+    captured_arms: list[str | None] = []
 
-    def _fake_run_brief(brief, *, analyses_dir, use_map=False, **_kwargs):
-        captured_use_map.append(use_map)
+    def _fake_run_brief(brief, *, analyses_dir, arm=None, **_kwargs):
+        captured_arms.append(arm)
         record = {
             "brief_id": brief.brief_id,
             "interrogation": {"disposition": "proceed"},
@@ -594,24 +602,25 @@ def test_run_sweep_forwards_use_map_to_every_draws_run_brief(tmp_path, monkeypat
         use_map=True,
     )
 
-    assert captured_use_map == [True, True, True, True]  # 2 briefs x 2 draws
+    assert captured_arms == ["map"] * 4  # 2 briefs x 2 draws
 
 
 def test_run_sweep_forwards_arm_map_to_every_draws_run_brief(tmp_path, monkeypatch):
-    """issue #808: `arm="map"` -- the CLI's own named-arm seam -- reaches
-    every single `(brief, draw)` pair's `run_brief(use_map=True)` call, the
-    same guarantee the legacy `use_map=True` keyword already had."""
+    """issue #808, revised by #807: `arm="map"` -- the CLI's own named-arm
+    seam -- reaches every single `(brief, draw)` pair's own `run_brief`
+    call as the arm name, the same guarantee the legacy `use_map=True`
+    keyword already had."""
     briefs_by_path = {
         "briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None),
         "briefB.yaml": Brief(brief_id="idB", case="B", request="rB", lens=None),
     }
     _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
 
-    captured_use_map: list[bool] = []
+    captured_call_arm: list[str | None] = []
     captured_arm: list[str] = []
 
-    def _fake_run_brief(brief, *, analyses_dir, use_map=False, **_kwargs):
-        captured_use_map.append(use_map)
+    def _fake_run_brief(brief, *, analyses_dir, arm=None, **_kwargs):
+        captured_call_arm.append(arm)
         record = {
             "brief_id": brief.brief_id,
             "interrogation": {"disposition": "proceed"},
@@ -634,7 +643,7 @@ def test_run_sweep_forwards_arm_map_to_every_draws_run_brief(tmp_path, monkeypat
         arm="map",
     )
 
-    assert captured_use_map == [True, True, True, True]  # 2 briefs x 2 draws
+    assert captured_call_arm == ["map"] * 4  # 2 briefs x 2 draws
     assert summary.arm == "map"
     for result in summary.briefs:
         captured_arm.extend(outcome.arm for outcome in result.draws)
@@ -869,3 +878,34 @@ def test_current_commit_sha_returns_a_git_sha_or_none():
     commit sha, never something else."""
     sha = sweep_mod._current_commit_sha()
     assert sha is None or (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha))
+
+
+def test_run_one_draw_records_a_missing_vocabulary_as_fail_rather_than_ending_the_sweep(
+    tmp_path, monkeypatch
+):
+    """issue #807: a `map+vocab` draw against a column with no persisted
+    vocabulary is one FAILed draw, like every other declared `run_brief`
+    failure. `NoVocabularyError` shares no base with the errors
+    `BRIEF_RUN_ERRORS` already lists, so it has to be named there -- and if it
+    is not, one unbuilt column aborts a whole #809 sweep instead of costing it
+    a single draw."""
+    from axial.argmap.vocabulary_join import NoVocabularyError
+
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+
+    def _raise(*_args, **_kwargs):
+        raise NoVocabularyError("mechanism", tmp_path / "vocabulary" / "mechanism")
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _raise)
+
+    outcome, record = sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        arm="map+vocab",
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert outcome.status == sweep_mod.FAIL_STATUS
+    assert "no derived vocabulary built for column 'mechanism'" in outcome.reason
+    assert record is None

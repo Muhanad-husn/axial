@@ -92,6 +92,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -115,6 +116,7 @@ from axial.argmap.ask import (
     resolve_pinned_map_dir,
     run_map_ask_for_brief,
 )
+from axial.argmap.vocabulary_join import VocabularyJoinResult
 from axial.brief.fork import (
     ForkAnswer,
     ForkCheckError,
@@ -150,6 +152,37 @@ _NO_FORK = ForkCheckResult(is_fork=False, measured=False)
 
 class AnswerError(Exception):
     """Base class for all stage-6 (analysis-record) errors."""
+
+
+# The named retrieval arms `run_brief`'s own `arm` argument recognises
+# (issue #807, `plans/derived-vocabulary/03-two-notes-meet-at-a-shared-
+# group.md`'s "the join is a step, not a tool"): `NAME_ARM` is the existing
+# name-layer loop (`use_map=False`), `MAP_ARM` is the argument-map path with
+# no vocabulary step (`use_map=True`, `use_vocabulary=False` -- issue #572),
+# `MAP_VOCAB_ARM` adds the vocabulary step onto the same map walk
+# (`use_vocabulary=True`). `axial.brief.sweep` (#808) already threads its
+# own `arm` string straight into `run_brief(use_map=...)`; this is the
+# lower layer #808's own module docstring says a real third arm teaches.
+NAME_ARM = "name"
+MAP_ARM = "map"
+MAP_VOCAB_ARM = "map+vocab"
+KNOWN_ARMS = (NAME_ARM, MAP_ARM, MAP_VOCAB_ARM)
+
+
+class UnknownArmError(AnswerError):
+    """Raised when `run_brief`'s own `arm` names none of `KNOWN_ARMS`
+    (issue #807). Refused up front, before interrogation ever runs -- the
+    same "fail before any call is made" discipline the corpus-pin
+    resolution already follows -- rather than silently falling back to the
+    name-layer default, which would spend a real interrogation call on a
+    typo before anyone learned the arm was never recognised."""
+
+    def __init__(self, arm: str):
+        self.arm = arm
+        super().__init__(
+            f"unknown retrieval arm {arm!r} -- the arms that exist are "
+            f"{', '.join(KNOWN_ARMS)}"
+        )
 
 
 def _interrogation_conclusion_message(result: InterrogationResult) -> str:
@@ -246,6 +279,46 @@ def _claim_to_dict(claim: Claim) -> dict[str, Any]:
     }
 
 
+def _vocabulary_to_dict(
+    result: VocabularyJoinResult, assembled_chunk_ids: Sequence[str]
+) -> dict[str, Any]:
+    """The vocabulary step's own audit trail (issue #807), the `map+vocab`
+    arm's counterpart to `landed`/`corridor` above: the column and level it
+    joined on, the per-category cap it enforced, and every category the
+    landed set's own notes reached -- including one that contributed zero
+    neighbours (a real, reached, singleton category, `CategoryReach`'s own
+    docstring), never silently dropped from this list.
+
+    **Two counts per category, because they differ by a factor of six.**
+    `offered_note_count` is what the join handed to assembly; `assembled_
+    note_count` is how many of those the assembly cap actually kept. The
+    first live run offered 240 notes across twelve categories and assembled
+    38 of them. A single `note_count` invited exactly one misreading -- that
+    the vocabulary step contributed 240 passages to an answer built from 90
+    -- and issue #809 reads these figures to decide whether the derived
+    vocabulary pays. `source_count` stays a count over what was OFFERED,
+    which is what the cap selected on."""
+    assembled = set(assembled_chunk_ids)
+    return {
+        "column": result.column,
+        "level": result.level,
+        "cap": result.cap,
+        "categories": [
+            {
+                "category_id": category.category_id,
+                "name": category.category_name,
+                "offered_note_count": len(category.chunk_ids),
+                "assembled_note_count": sum(
+                    1 for chunk_id in category.chunk_ids if chunk_id in assembled
+                ),
+                "source_count": category.source_count,
+                "cap_applied": category.cap_applied,
+            }
+            for category in result.categories
+        ],
+    }
+
+
 def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
     """The argument-map path's own audit trail (issue #572, PR 4 of 4): the
     stated arguments, which positions landed and at what score, which
@@ -261,8 +334,14 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
     whether that came from an explicit override or the corpus-computed
     default. Without it two runs against two different maps of the same
     corpus (a rebuild after a prompt change, a `--force` rotation) produce
-    records indistinguishable on their face."""
-    return {
+    records indistinguishable on their face.
+
+    `vocabulary` (issue #807) is present ONLY when `ask_result.vocabulary`
+    is not `None` -- the `map+vocab` arm ran the vocabulary step -- and
+    absent entirely on a plain `map` run, never a fabricated empty block.
+    That is the observable the outer acceptance test reads to tell the two
+    map arms apart: `"vocabulary" in record["map_retrieval"]`."""
+    payload: dict[str, Any] = {
         "used": True,
         "pin": ask_result.pin,
         "asks": list(ask_result.asks),
@@ -276,6 +355,11 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
         ],
         "assembled_chunk_ids": list(ask_result.assembled_chunk_ids),
     }
+    if ask_result.vocabulary is not None:
+        payload["vocabulary"] = _vocabulary_to_dict(
+            ask_result.vocabulary, ask_result.assembled_chunk_ids
+        )
+    return payload
 
 
 @dataclass(frozen=True)
@@ -548,9 +632,11 @@ def run_brief(
     step_budget: int | None = None,
     thin_result_floor: int | None = None,
     use_map: bool = False,
+    arm: str | None = None,
     map_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_pin: str | None = None,
+    vocabulary_dir: Path | None = None,
     on_event: EventCallback | None = None,
     session_id: str | None = None,
     on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
@@ -634,7 +720,27 @@ def run_brief(
     batch run. An answer compiles (`compile_constraint`) into a
     `ForkConstraint` that reaches `run_planned_retrieval`, the same site
     `brief.weights` already bites, and `intake_fork.effect` discloses what
-    it actually did to the assembled evidence set."""
+    it actually did to the assembled evidence set.
+
+    `arm` (issue #807, one of `KNOWN_ARMS`, `None` by default) is the named
+    retrieval arm this run takes, and, when given, takes precedence over
+    `use_map` -- the same precedence `axial.brief.sweep._run_one_draw`
+    already gives its own `arm`/`use_map` pair. `arm="name"` runs the
+    name-layer loop, `arm="map"` is `use_map=True` with no vocabulary step,
+    `arm="map+vocab"` adds the vocabulary step (`axial.argmap.
+    vocabulary_join.vocabulary_neighbours`) onto the same map walk, between
+    the corridor and assembly. A string naming none of `KNOWN_ARMS` raises
+    `UnknownArmError` immediately, before interrogation or any other call --
+    the join is a deterministic step in the map arm's own walk (module
+    docstring's "the join is a step, not a tool"), never a tool a caller
+    could otherwise silently mis-name into the name-layer default.
+    `vocabulary_dir` is forwarded to `run_map_ask_for_brief` verbatim,
+    ignored on every arm but `map+vocab`."""
+    if arm is not None and arm not in KNOWN_ARMS:
+        raise UnknownArmError(arm)
+    resolved_use_map = use_map if arm is None else (arm != NAME_ARM)
+    resolved_use_vocabulary = arm == MAP_VOCAB_ARM
+
     corpus_pin = resolve_pin_id(evals_dir)
     clock = PassClock()
 
@@ -663,7 +769,7 @@ def run_brief(
         fork_answer: ForkAnswer | None = None
         fork_effect: dict[str, int] | None = None
     else:
-        if use_map:
+        if resolved_use_map:
             # The intake fork-check (issue #649) only bites the name-layer
             # path: it compiles into `assemble_evidence_ids`'s own
             # `fork_constraint` argument, which the argument-map path never
@@ -686,6 +792,8 @@ def run_brief(
                     sources_dir=sources_dir,
                     config_path=config_path,
                     pin=map_pin,
+                    use_vocabulary=resolved_use_vocabulary,
+                    vocabulary_dir=vocabulary_dir,
                 )
             model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
             evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)

@@ -11,6 +11,7 @@ from typing import Any, Callable
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.argmap.ask import AskError, run_map_ask
+from axial.argmap.vocabulary_join import NoVocabularyError
 from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
@@ -20,7 +21,7 @@ from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
-from axial.answer import AnswerError, run_brief
+from axial.answer import KNOWN_ARMS, MAP_ARM, MAP_VOCAB_ARM, NAME_ARM, AnswerError, run_brief
 from axial.answer.render import render_analyst_answer
 from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
@@ -1235,7 +1236,22 @@ def build_parser() -> argparse.ArgumentParser:
             "about, lands them on the map's positions, follows every "
             "relation into the corridor, and assembles evidence round-robin "
             "across positions and sources -- opt-in, off by default; "
-            "synthesis and everything after it is unchanged"
+            "synthesis and everything after it is unchanged. Superseded by "
+            "--arm when both are given; kept so no existing invocation breaks"
+        ),
+    )
+    brief_run_parser.add_argument(
+        "--arm",
+        choices=KNOWN_ARMS,
+        default=None,
+        help=(
+            "named retrieval arm to run (issue #807): 'name' (default) is "
+            "the existing name-layer loop, 'map' is the argument-map path "
+            "(issue #572) with no vocabulary step, 'map+vocab' adds the "
+            "vocabulary step -- passages that share a derived-vocabulary "
+            "category (issue #806) join the map's own walk between the "
+            "corridor and assembly. Takes precedence over --map when both "
+            "are given."
         ),
     )
 
@@ -2403,7 +2419,14 @@ def _print_event(message: str, _detail: dict[str, Any]) -> None:
     print(message, file=sys.stderr)
 
 
-def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
+_ARM_DISPLAY = {
+    NAME_ARM: "name layer",
+    MAP_ARM: "argument map",
+    MAP_VOCAB_ARM: "argument map + vocabulary",
+}
+
+
+def _brief_run(brief_path: str, *, use_map: bool = False, arm: str | None = None) -> int:
     try:
         brief = load_brief(brief_path)
     except BriefError as exc:
@@ -2420,6 +2443,7 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
             client=client,
             case_id=Path(brief_path).stem,
             use_map=use_map,
+            arm=arm,
             on_event=_print_event,
         )
     except (
@@ -2430,11 +2454,20 @@ def _brief_run(brief_path: str, *, use_map: bool = False) -> int:
         CorpusPinError,
         AnswerError,
         AskError,
+        # issue #807: the `map+vocab` arm's own declared failure -- a column
+        # with no persisted vocabulary. Listed explicitly rather than given
+        # `AskError` as a base, because `axial.argmap.ask` imports
+        # `vocabulary_join` and the inheritance would be a cycle.
+        NoVocabularyError,
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"retrieval: {'argument map' if use_map else 'name layer'}")
+    # `arm`, given, wins over `--map` (`run_brief`'s own precedence, issue
+    # #807) -- this is display-only, mirrored from that same rule so the
+    # printed line never disagrees with what actually ran.
+    resolved_arm = arm if arm is not None else (MAP_ARM if use_map else NAME_ARM)
+    print(f"retrieval: {_ARM_DISPLAY.get(resolved_arm, resolved_arm)}")
     print(f"brief_id: {brief.brief_id}")
     print(f"disposition: {result.record['interrogation']['disposition']}")
     print(f"persisted: {result.path}")
@@ -3814,7 +3847,7 @@ def main(argv: list[str] | None = None) -> int:
         return _brief_examine(args.brief_path)
 
     if args.command == "brief" and args.brief_command == "run":
-        return _brief_run(args.brief_path, use_map=args.use_map)
+        return _brief_run(args.brief_path, use_map=args.use_map, arm=args.arm)
 
     if args.command == "brief" and args.brief_command == "validate":
         return _brief_validate(args.brief_id)

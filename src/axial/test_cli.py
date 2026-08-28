@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - repo requires-python >=3.13
@@ -1214,6 +1216,106 @@ def test_main_brief_sweep_prints_error_and_returns_nonzero_on_a_mixed_arm_refusa
     assert exit_code != 0
     assert "arm 'map'" in captured.err
     assert "'name'" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# `axial brief run --arm` (issue #807): the named retrieval arm the CLI
+# forwards to `run_brief` verbatim, and the `--map` alias it supersedes.
+# `run_brief` itself is monkeypatched throughout -- this proves the CLI's
+# own wiring, not the engine (that lives in `src/axial/answer/test_record.py`
+# and `src/axial/argmap/test_ask.py`).
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_brief_run_defaults_arm_to_none():
+    """`None`, not `'name'` -- so `run_brief`'s own `use_map`/`arm`
+    precedence (issue #807) can tell "nothing given" from "name explicitly
+    asked for", the same distinction `--map`'s legacy boolean needs."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["brief", "run", "brief.yaml"])
+
+    assert args.arm is None
+    assert args.use_map is False
+
+
+def test_build_parser_brief_run_recognises_arm_map_vocab():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["brief", "run", "brief.yaml", "--arm", "map+vocab"])
+
+    assert args.arm == "map+vocab"
+
+
+def test_build_parser_brief_run_refuses_an_unknown_arm(capsys):
+    """Unlike `brief sweep --arm` (issue #808, deliberately no whitelist),
+    `brief run --arm` is a fixed, small set (issue #807) -- an unknown value
+    is refused by argparse itself, naming the arms that exist."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["brief", "run", "brief.yaml", "--arm", "bogus"])
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert "name" in captured.err
+    assert "map+vocab" in captured.err
+
+
+def _stub_brief_run(monkeypatch, captured: dict):
+    import axial.cli as cli_mod
+    from axial.answer.record import BriefRunResult
+
+    def _fake_run_brief(brief, *, use_map=False, arm=None, **_kwargs):
+        captured["use_map"] = use_map
+        captured["arm"] = arm
+        return BriefRunResult(
+            record={
+                "brief_id": brief.brief_id,
+                "interrogation": {"disposition": "proceed"},
+            },
+            path=Path("data/analyses/x.json"),
+            markdown_path=Path("data/analyses/x.md"),
+            report={},
+            report_path=Path("data/runs/x.json"),
+        )
+
+    monkeypatch.setattr(cli_mod, "run_brief", _fake_run_brief)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+
+def test_main_brief_run_forwards_arm_map_vocab_to_run_brief(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text('case: "A case."\nrequest: "A question?"\n', encoding="utf-8")
+
+    captured: dict = {}
+    _stub_brief_run(monkeypatch, captured)
+
+    exit_code = cli_mod.main(["brief", "run", str(brief_path), "--arm", "map+vocab"])
+
+    assert exit_code == 0
+    assert captured["arm"] == "map+vocab"
+
+
+def test_main_brief_run_map_flag_still_works_with_no_arm_given(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text('case: "A case."\nrequest: "A question?"\n', encoding="utf-8")
+
+    captured: dict = {}
+    _stub_brief_run(monkeypatch, captured)
+
+    exit_code = cli_mod.main(["brief", "run", str(brief_path), "--map"])
+
+    assert exit_code == 0
+    assert captured["use_map"] is True
+    assert captured["arm"] is None
 
 
 # ---------------------------------------------------------------------------

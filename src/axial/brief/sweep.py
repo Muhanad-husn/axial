@@ -97,16 +97,24 @@ Named arms, not a boolean (issue #808)
 `run_sweep`'s `arm` parameter (default `"name"`) is forwarded to every
 `(brief, draw)`'s own `_run_one_draw` call and recorded on that draw's
 `DrawOutcome.arm` -- the same string for every draw in one invocation,
-never inferred draw-by-draw. Today only `arm == "map"` changes what
-actually runs (`run_brief(use_map=True)`, the argument-map path); any other
-string -- including one no arm elsewhere has given meaning to yet -- runs
-the name-layer default. This module deliberately holds no whitelist of
-valid arm names: it never rejects an unrecognized one, so a slice adding a
-real third arm (issue #807) does so by teaching a lower layer what that
-name means, with no edit here. `use_map: bool` stays as the legacy knob
+never inferred draw-by-draw -- and passed to `run_brief` verbatim. This
+module still holds no whitelist of valid arm names: `run_brief`
+(`axial.answer.record.KNOWN_ARMS`) owns that vocabulary and refuses an
+unrecognized value itself. `use_map: bool` stays as the legacy knob
 `axial.brief.smoke.run_smoke` still calls with; `arm`, when given, takes
 precedence, and `use_map=True` with no `arm` given is still read as
-`arm="map"`.
+`arm="map"`, resolved once here rather than re-derived per draw.
+
+**Pass the arm through; never collapse it to a boolean (issue #807).**
+Until the third arm existed, `_run_one_draw` translated `arm` into
+`run_brief`'s own `use_map` knob (`arm == "map"`). That was faithful while
+`name` and `map` were the only two arms and silently wrong the moment
+`map+vocab` arrived: it is not `"map"`, so the collapse read it as
+`use_map=False` and ran the NAME layer while `DrawOutcome.arm` recorded
+`map+vocab`. Issue #809 compares the arms off exactly these directories, so
+a sweep labelled one arm and holding another's draws yields a wrong number
+rather than a failure anyone notices. An unrecognized arm now fails each
+draw, naming the arms that exist, instead of quietly running the default.
 
 **The mixed-arm refusal.** A `sweep_dir` holding draws from two arms would
 produce a comparison figure (issue #809) that is quietly meaningless, so
@@ -145,6 +153,7 @@ from typing import Any, Callable
 from axial.analyze.synthesis import SynthesisError
 from axial.answer.record import AnswerError, run_brief
 from axial.argmap.ask import AskError
+from axial.argmap.vocabulary_join import NoVocabularyError
 from axial.brief.fork import ForkCheckError
 from axial.brief.intake import Brief, BriefError, load_brief
 from axial.brief.interrogate import InterrogationError
@@ -191,6 +200,11 @@ BRIEF_RUN_ERRORS = (
     CorpusPinError,
     AnswerError,
     AskError,
+    # issue #807: a `map+vocab` draw against a column with no persisted
+    # vocabulary is one FAILed draw, never the end of the sweep. It is not an
+    # `AskError` subclass because `axial.argmap.ask` imports the module that
+    # raises it, so it is listed here by name.
+    NoVocabularyError,
 )
 
 # The declared error surface one gate's `run_gate()` call may raise -- the
@@ -517,12 +531,23 @@ def _run_one_draw(
     the resulting analysis record dict (`None` for a FAILed draw).
 
     `arm` (issue #808, module docstring's "named arms" section) is
-    recorded on the returned `DrawOutcome` verbatim, and translated to
-    `run_brief`'s own `use_map` boolean (`arm == MAP_ARM`) -- this module
-    has no other opinion on which retrieval path a draw takes, it only
-    drives whichever one the caller asked for the same resumable,
-    failure-isolated way."""
-    use_map = arm == MAP_ARM
+    recorded on the returned `DrawOutcome` verbatim and passed to
+    `run_brief` verbatim -- this module has no other opinion on which
+    retrieval path a draw takes, it only drives whichever one the caller
+    asked for the same resumable, failure-isolated way.
+
+    **The arm is passed through, never translated to a boolean (issue
+    #807).** Until the third arm existed this function collapsed `arm` to
+    `run_brief`'s own `use_map` knob (`arm == MAP_ARM`), which was faithful
+    while `name` and `map` were the only two arms and silently wrong the
+    moment a third one arrived: `map+vocab` is not `MAP_ARM`, so the
+    collapse read it as `use_map=False` and ran the NAME layer while
+    `DrawOutcome.arm` recorded `map+vocab`. A sweep directory labelled one
+    arm and holding another's draws is worse than a sweep that refuses --
+    #809 compares the arms off exactly these directories. `run_brief` owns
+    the arm vocabulary now (`axial.answer.record.KNOWN_ARMS`) and refuses
+    an unrecognised value itself, which is also why nothing here re-declares
+    the list."""
     brief_stem = Path(brief_path).stem
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
@@ -583,7 +608,7 @@ def _run_one_draw(
             case_id=brief_stem,
             step_budget=step_budget,
             thin_result_floor=thin_result_floor,
-            use_map=use_map,
+            arm=arm,
         )
     except BRIEF_RUN_ERRORS as exc:
         elapsed = time.monotonic() - start

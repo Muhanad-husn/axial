@@ -1,0 +1,12 @@
+=== fast tier: uv run pytest (testpaths=src, xdist) ===
+2697 tests, 0 failures, 0 errors, 44.1s  (counts from --junitxml; the terminal summary line does not survive this shell's output capture)
+
+=== ruff ===
+All checks passed!
+
+=== slice test files, serial ===
+........................................................................ [ 45%]
+........................................................................ [ 91%]
+.............                                                            [100%]
+
+slice files: tests=157 failures=0 errors=0 time=11.1s

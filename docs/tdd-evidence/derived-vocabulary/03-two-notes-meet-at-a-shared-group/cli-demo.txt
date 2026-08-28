@@ -1,0 +1,82 @@
+=== axial brief run --help (the three arms) ===
+usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}] brief_path
+
+positional arguments:
+  brief_path            path to a versioned brief YAML file
+
+options:
+  -h, --help            show this help message and exit
+  --map                 retrieve through the argument map (issue #572) instead
+                        of the name-layer loop: the door states the arguments
+                        the brief is about, lands them on the map's positions,
+                        follows every relation into the corridor, and
+                        assembles evidence round-robin across positions and
+                        sources -- opt-in, off by default; synthesis and
+                        everything after it is unchanged. Superseded by --arm
+                        when both are given; kept so no existing invocation
+                        breaks
+  --arm {name,map,map+vocab}
+                        named retrieval arm to run (issue #807): 'name'
+                        (default) is the existing name-layer loop, 'map' is
+                        the argument-map path (issue #572) with no vocabulary
+                        step, 'map+vocab' adds the vocabulary step -- passages
+                        that share a derived-vocabulary category (issue #806)
+                        join the map's own walk between the corridor and
+                        assembly. Takes precedence over --map when both are
+                        given.
+
+=== an unknown arm is refused, naming the arms that exist ===
+usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}] brief_path
+axial brief run: error: argument --arm: invalid choice: 'map+names' (choose from name, map, map+vocab)
+exit=2
+
+=== the real run, after the assembly-order fix ===
+uv run axial brief run config/briefs/eval/A.yaml --arm map+vocab
+
+run report: brief_id=dae632c369c18ffc corpus_pin=sim-2026-07-30
+  disposition: proceed_bounded
+  cost: total_usd=0.066 total_tokens=124808
+  wall clock: total=218.310s
+    brief_decompose: 66.909s tokens=1465 usd=0.000
+    counter_position_generate: 14.335s tokens=13122 usd=0.023
+    interrogate: 78.599s tokens=3300 usd=0.010
+    synthesize: 58.466s tokens=106921 usd=0.032
+  trajectory: steps=0 rejected=0 turns_without_new_evidence=0
+  evidence: assembled=90 composed=54 composed_share=0.600
+  accuracy (four measures, never summed -- §10.0):
+    attribution_completeness: 1.000
+    retrieval_hit: 0.667
+    grounding_support_rate: n/a (not scored: a judged measure (§10.0) needs a judge client running under its own pass name; the report itself makes no model call)
+    instant_dismissal_violations: n/a (not scored: a judged measure (§10.0) needs a judge client running under its own pass name; the report itself makes no model call)
+  cross-source rate (headline, D9): 0.750 over 4 (b) claim(s)
+  sources cited: 6 top_1_share=0.444 hhi=0.259
+  claim mix: {'a': 8, 'b': 4, 'c': 2}
+  commentary mix (issue #563): 0.111 vs. corpus baseline 0.055
+  coverage bands: {'thin': 0, 'moderate': 0, 'dense': 0}
+
+=== the persisted record's map_retrieval.vocabulary block ===
+record: dae632c369c18ffc.json  pin=9b796b3a6312b329
+trajectory: []   <- the honest empty list, unchanged
+column=mechanism level=1 cap=20 categories=13
+offered  asm  src  capped  category
+     20    7    8  True   demographic-and-ecological-pressures
+     20    1    3  True   economic-dependency-and-structural-adjustment
+     20    4    5  True   elite-competition-and-coalition-formation
+     20   12   12  True   feedback-loops-and-unintended-consequences
+     20    1    3  True   ideological-persuasion-and-legitimation
+     20    5    8  True   institutional-path-dependence-and-state-capacity
+     20    0    3  True   international-norms-and-external-intervention
+     20    8    9  True   modernization-and-cultural-change
+     20    1    4  True   organizational-logics-and-bureaucratic-rationality
+     20    6   12  True   resource-extraction-and-rentier-state
+     20    0    1  True   state-repression-and-violence
+     20   13    8  True   technological-change-and-infrastructure
+     20    5    8  True   war-and-state-formation
+
+=== the acceptance clause, measured on the real corpus ===
+landed positions: 27   corridor positions: 31
+chunks reachable WITHOUT the vocabulary step: 217
+chunks assembled: 90
+assembled ONLY through the category edge: 63 (70.0%), spanning 26 distinct sources
+their assembly indices: 27-89  (first run, before the ordering fix: 52-89)
+distinct cited chunks: 9   of those, reached via the category edge: 2   (first run: 0 of 20)
