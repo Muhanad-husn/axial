@@ -255,7 +255,7 @@ def _artifact_status(source_id: str, config_path: Path) -> tuple[str, str]:
 
 
 def scan_local(
-    sources_dir: Path = CORPUS_SOURCES_DIR,
+    sources_dir: Path | None = None,
     ledger_path: Path = LEDGER_PATH,
     *,
     done_pass: str = DEFAULT_DONE_PASS,
@@ -283,7 +283,15 @@ def scan_local(
     the bytes were not), anything else is `new`.
 
     An absent `sources_dir` yields an empty list -- nothing to report.
+
+    `sources_dir` defaults to `CORPUS_SOURCES_DIR` resolved at CALL time,
+    for the reason `scan_orphaned_envelopes` below spells out: a signature
+    default binds once at import and silently ignores a caller that
+    repoints the module constant, which would leave the forward walk and
+    the reverse pass reading two different corpora.
     """
+    if sources_dir is None:
+        sources_dir = CORPUS_SOURCES_DIR
     if not sources_dir.is_dir():
         return []
 
@@ -332,7 +340,7 @@ def scan_local(
 
 
 def scan_orphaned_envelopes(
-    sources_dir: Path = CORPUS_SOURCES_DIR,
+    sources_dir: Path | None = None,
     envelopes_dir: Path | None = None,
     *,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
@@ -366,6 +374,14 @@ def scan_orphaned_envelopes(
     either. An absent `envelopes_dir` yields an empty list: nothing has been
     ingested, so nothing can be orphaned.
     """
+    # Both defaults resolve HERE, not in the signature: a default parameter
+    # value binds once at import time, so a caller that repoints the module
+    # constant (this module's own test convention, and `_ARTIFACT_PATH_FNS`'
+    # comment above) would be silently ignored. It was: the first cut bound
+    # `CORPUS_SOURCES_DIR` in the signature, and the CLI demo that repointed
+    # it read the real corpus instead and exited 0 on a withheld source.
+    if sources_dir is None:
+        sources_dir = CORPUS_SOURCES_DIR
     if envelopes_dir is None:
         envelopes_dir = _envelope_mod._default_envelopes_dir(config_path)
     if not envelopes_dir.is_dir():

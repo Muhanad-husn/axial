@@ -669,3 +669,38 @@ def test_scan_orphaned_envelopes_skips_a_file_it_cannot_hash(tmp_path):
     records = scan_orphaned_envelopes(sources_dir, envelopes_dir)
 
     assert [record.name for record in records] == ["notes-0000-111111111111"]
+
+
+def test_scan_orphaned_envelopes_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """`CORPUS_SOURCES_DIR` is looked up when the function runs, not bound
+    once as a default parameter value -- the trap `_ARTIFACT_PATH_FNS`'s own
+    comment names. A default binding made the CLI read the real corpus while
+    a demo thought it had repointed the module, and the command exited 0 on
+    a corpus with a missing raw file."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir(parents=True)
+    envelopes_dir = tmp_path / "envelopes"
+    envelopes_dir.mkdir(parents=True)
+    (envelopes_dir / "alpha-2001-abcdefabcdef.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+
+    records = scan_orphaned_envelopes(envelopes_dir=envelopes_dir)
+
+    assert [record.name for record in records] == ["alpha-2001-abcdefabcdef"]
+    assert sources_dir.as_posix() in records[0].reason
+
+
+def test_scan_local_resolves_the_sources_dir_at_call_time(tmp_path, monkeypatch):
+    """The same call-time resolution as `scan_orphaned_envelopes` above, so
+    repointing the module constant moves BOTH halves of the report and a
+    demo or operator script cannot end up driving one against a fixture and
+    the other against the real corpus."""
+    import axial.sources as sources_mod
+
+    sources_dir = tmp_path / "sources"
+    _write_source(sources_dir, "alpha.pdf")
+    monkeypatch.setattr(sources_mod, "CORPUS_SOURCES_DIR", sources_dir)
+
+    assert scan_local(ledger_path=tmp_path / "ledger.tsv") == [SourceRecord("alpha.pdf", NEW)]
