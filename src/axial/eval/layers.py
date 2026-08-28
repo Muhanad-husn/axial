@@ -21,9 +21,12 @@ values exist.** `distinct_sources_cited` is recorded per draw, so its figure
 carries a genuine per-brief spread (mean plus min-max across that brief's own
 draws). The grounding gate is NOT per draw -- `_score_brief_gates` runs each
 gate ONCE per brief over that brief's pooled draw records -- so there is
-exactly one grounding number per `(brief, arm)`, printed as the single pooled
-figure it is, beside the count of draws it was scored over so no reader can
-mistake it for a per-draw mean.
+exactly one grounding number per `(brief, arm)`. It sits beside the count of
+draws it was scored over -- exactly where a mean and its `n` sit two columns
+along -- so the column is NAMED `pooled_rate`, a header line above the table
+says which figures are pooled over draws and which are per draw, and the
+legend says it a third time. A decimal beside a draw count reads as a mean
+unless the page refuses to let it.
 
 Per stratum, never pooled
 --------------------------------------------------------------------------
@@ -64,7 +67,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-from axial.brief.sweep import FAIL_STATUS
 from axial.gates import GROUNDING_GATE_NAME, verdict_text
 
 # The grounding gate's own gated metric (specs/PHASE-B.md section 10,
@@ -80,7 +82,16 @@ _ABSENT = "-"
 _MISSING = "missing"
 _NOT_SCORED = "not-scored"
 
-_COLUMNS = ("brief", "arm", "grounding", "rate", "gate_draws", "sources", "range", "src_draws")
+_COLUMNS = (
+    "brief",
+    "arm",
+    "grounding",
+    "pooled_rate",
+    "gate_draws",
+    "sources",
+    "range",
+    "src_draws",
+)
 
 
 class LayerComparisonError(Exception):
@@ -98,7 +109,8 @@ class BriefArmFigures:
     brief_stem: str
     arm: str
     # How many of this brief's draws produced a record -- the pooled sample
-    # the sweep scored the grounding gate over. 0 means none did.
+    # the sweep scored the grounding gate over. 0 means none did. A RESUMED
+    # draw counts, because its record was already on disk (`_brief_figures`).
     gate_draws: int
     # Whether the sweep scored the grounding gate at all for this brief
     # (`axial brief smoke` runs with `score_gates=False`, so its directories
@@ -186,10 +198,15 @@ def _grounding_figures(gate_reports: Any) -> tuple[bool, bool | None, float | No
 
 def _brief_figures(payload: dict[str, Any], arm: str) -> BriefArmFigures:
     draws = [draw for draw in payload.get("draws") or [] if isinstance(draw, dict)]
-    # The sweep's own definition of an available draw: one that produced a
-    # record, which is exactly the set `_score_brief_gates` was handed. A
-    # FAILed draw produced nothing.
-    gate_draws = sum(1 for draw in draws if draw.get("status") != FAIL_STATUS)
+    # The set `_score_brief_gates` was handed is `run_sweep`'s
+    # `available_records`: the draws whose record is not None. A draw's own
+    # `record_path` is set when and only when that record exists, so it is
+    # the exact mirror -- and the only one. Status is not: a SKIPped draw is
+    # a RESUMED draw, its record is on disk and the sweep scores it, so
+    # `== OK_STATUS` would undercount every resumed draw (the #809 corpus
+    # run has one in every arm). `!= FAIL_STATUS` happens to agree today but
+    # says nothing about records, which is what the number means.
+    gate_draws = sum(1 for draw in draws if draw.get("record_path"))
     counts = tuple(
         int(draw["distinct_sources_cited"])
         for draw in draws
@@ -246,6 +263,19 @@ def read_arm_sweep(sweep_dir: str | Path) -> ArmSweep:
     )
 
 
+def _arm_label(arm: ArmSweep) -> str:
+    """An arm named the way an operator can act on it. The label comes from
+    inside `summary.json`; the directory is what they typed. A refusal
+    naming only the label leaves them to map it back to a path themselves,
+    which is exactly the mistake -- pointing at a stale directory -- that
+    most of these refusals catch."""
+    return f"{arm.arm!r} ({arm.path})"
+
+
+def _brief_list(stems: Sequence[str]) -> str:
+    return ("brief " if len(stems) == 1 else "briefs ") + ", ".join(repr(stem) for stem in stems)
+
+
 def _refuse_duplicate_arms(arms: Sequence[ArmSweep]) -> None:
     seen: dict[str, ArmSweep] = {}
     for arm in arms:
@@ -259,23 +289,31 @@ def _refuse_duplicate_arms(arms: Sequence[ArmSweep]) -> None:
 
 
 def _refuse_different_briefs(reference: ArmSweep, other: ArmSweep) -> None:
-    difference = sorted(set(reference.brief_stems) ^ set(other.brief_stems))
-    if not difference:
+    """Every differing brief, grouped by the arm that has it -- not the
+    first one. Arms that differ by four briefs are one mistake, and an
+    operator told about one of them fixes it, reruns, and is refused
+    again."""
+    only_reference = sorted(set(reference.brief_stems) - set(other.brief_stems))
+    only_other = sorted(set(other.brief_stems) - set(reference.brief_stems))
+    if not only_reference and not only_other:
         return
-    stem = difference[0]
-    present, absent = (
-        (other.arm, reference.arm) if stem in other.brief_stems else (reference.arm, other.arm)
-    )
-    raise LayerComparisonError(
-        f"brief {stem!r} present in arm {present!r} and missing from arm {absent!r}"
-    )
+    parts = [
+        f"{_brief_list(stems)} present in arm {_arm_label(present)} "
+        f"and missing from arm {_arm_label(absent)}"
+        for present, absent, stems in (
+            (reference, other, only_reference),
+            (other, reference, only_other),
+        )
+        if stems
+    ]
+    raise LayerComparisonError("; ".join(parts))
 
 
 def _refuse_different_draws(reference: ArmSweep, other: ArmSweep) -> None:
     if reference.draws != other.draws:
         raise LayerComparisonError(
-            f"arm {reference.arm!r} ran {reference.draws} draws, "
-            f"arm {other.arm!r} ran {other.draws}"
+            f"arm {_arm_label(reference)} ran {_plural(reference.draws, 'draw')}, "
+            f"arm {_arm_label(other)} ran {_plural(other.draws, 'draw')}"
         )
 
 
@@ -283,15 +321,15 @@ def _refuse_uncomparable_commits(arms: Sequence[ArmSweep]) -> None:
     for arm in arms:
         if arm.commit is None:
             raise LayerComparisonError(
-                f"arm {arm.arm!r} recorded no commit, so it cannot be compared "
+                f"arm {_arm_label(arm)} recorded no commit, so it cannot be compared "
                 f"against any other arm -- git was unavailable when that sweep ran"
             )
     reference = arms[0]
     for other in arms[1:]:
         if other.commit != reference.commit:
             raise LayerComparisonError(
-                f"arm {reference.arm!r} built at {reference.commit}, "
-                f"arm {other.arm!r} at {other.commit}"
+                f"arm {_arm_label(reference)} built at {reference.commit}, "
+                f"arm {_arm_label(other)} at {other.commit}"
             )
 
 
@@ -366,22 +404,60 @@ def _table(rows: Sequence[tuple[str, ...]]) -> list[str]:
     return [line(_COLUMNS), line(["-" * width for width in widths])] + [line(row) for row in rows]
 
 
-_LEGEND = (
-    "grounding:   the gate's verdict for that (brief, arm). The sweep scores it",
-    "             ONCE over that brief's pooled draw records, so it is one figure,",
-    "             not a per-draw mean. NOT-SCOREABLE is neither a pass nor a fail.",
-    "rate:        grounding_support_rate, the gate's own metric (specs/PHASE-B.md",
-    "             section 10). '-' where the gate reported no value.",
-    "gate_draws:  how many of that brief's draws produced a record -- the pooled",
-    "             sample the grounding figure was scored over.",
-    "sources:     distinct sources cited, averaged across that brief's own draws.",
-    "range:       min-max of that same per-draw count; src_draws is how many draws",
-    "             reported one. This is the spread, and it is per brief.",
-    "not-scored:  that sweep ran without gate scoring, so no grounding figure",
-    "             exists to read.",
-    "missing:     that brief produced no usable draw in that arm. Reported, never",
-    "             averaged over and never dropped.",
+_COLUMN_LEGEND = (
+    "columns",
+    "  grounding:   the gate's verdict for that (brief, arm). The sweep scores it",
+    "               ONCE over that brief's pooled draw records, so it is one",
+    "               verdict, not a per-draw majority. NOT-SCOREABLE is neither a",
+    "               pass nor a fail.",
+    "  pooled_rate: grounding_support_rate (specs/PHASE-B.md section 10), the",
+    "               gate's own metric -- the same single number that verdict came",
+    "               from, over the same pooled draw records. NOT a per-draw mean.",
+    "  gate_draws:  how many of that brief's draws produced a record -- the pooled",
+    "               sample grounding and pooled_rate were scored over, not a",
+    "               sample size a mean was divided by.",
+    "  sources:     distinct sources cited, averaged across that brief's own draws.",
+    "               This one IS a per-draw mean.",
+    "  range:       min-max of that same per-draw count. The spread, per brief.",
+    "  src_draws:   how many of that brief's draws reported a source count -- the",
+    "               n of the sources mean and of the range beside it.",
 )
+
+# Printed only where such a cell is actually in the table: a glossary entry
+# for a value nothing on the page shows is noise the reader has to rule out.
+_CELL_LEGEND: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        _MISSING,
+        (
+            "  missing:     that brief produced no usable draw in that arm. Reported,",
+            "               never averaged over and never dropped.",
+        ),
+    ),
+    (
+        _NOT_SCORED,
+        (
+            "  not-scored:  that sweep ran without gate scoring, so no grounding",
+            "               figure exists to read.",
+        ),
+    ),
+    (
+        _ABSENT,
+        (
+            "  -:           no figure to print. Under pooled_rate, the gate reported",
+            "               no value; under sources and range, no draw of that brief",
+            "               reported a source count.",
+        ),
+    ),
+)
+
+
+def _cell_legend(rows: Sequence[tuple[str, ...]]) -> list[str]:
+    on_the_page = {cell for row in rows for cell in row}
+    lines: list[str] = []
+    for value, entry in _CELL_LEGEND:
+        if value in on_the_page:
+            lines.extend(entry)
+    return ["", "cell values", *lines] if lines else []
 
 
 def _plural(count: int, noun: str) -> str:
@@ -401,8 +477,16 @@ def format_layer_comparison(comparison: LayerComparison) -> str:
     if len(arm_names) > 1:
         pairs = "; ".join(f"{left} vs {right}" for left, right in zip(arm_names, arm_names[1:]))
         header.append(f"comparisons, in the order the arms were given: {pairs}")
-    header.append("figures are per brief; nothing here is pooled across briefs")
+    header.append("figures are per brief; no figure here is pooled across briefs")
+    header.append(
+        "grounding and pooled_rate: ONE figure per row, scored over that brief's "
+        "pooled draw records"
+    )
+    header.append(
+        "sources, range and src_draws: a mean, a spread and an n, across that brief's own draws"
+    )
     header.append("")
 
     rows = [_cells(figures) for figures in comparison.rows()]
-    return "\n".join(header + _table(rows) + [""] + list(_LEGEND))
+    legend = list(_COLUMN_LEGEND) + _cell_legend(rows)
+    return "\n".join(header + _table(rows) + [""] + legend)

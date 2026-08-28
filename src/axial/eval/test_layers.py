@@ -11,12 +11,14 @@ passing against a schema nothing writes.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
 from axial.brief.sweep import (
     FAIL_STATUS,
     OK_STATUS,
+    SKIP_STATUS,
     BriefSweepResult,
     DrawOutcome,
     SweepSummary,
@@ -50,26 +52,44 @@ def _grounding_report(value: float | None, n: int, passed: bool | None) -> GateR
     )
 
 
+def _draw_status(count: int | None, index: int, resumed: Sequence[int]) -> str:
+    if count is None:
+        return FAIL_STATUS
+    return SKIP_STATUS if index in resumed else OK_STATUS
+
+
 def _brief_result(
     brief_stem: str,
     *,
     arm: str,
     source_counts: list[int | None],
     grounding: GateReport | None,
+    resumed: Sequence[int] = (),
 ) -> BriefSweepResult:
     """One brief's sweep result. `source_counts[i]` is draw `i`'s
     `distinct_sources_cited`; `None` means that draw FAILed and produced no
-    record at all."""
+    record at all.
+
+    An index in `resumed` is a draw the sweep found already recorded on disk
+    and returned as SKIP (`axial.brief.sweep`, the `record_file.is_file()`
+    branch). It has no latency, and it still carries a `record_path` and a
+    source count -- `run_sweep` hands its record to `_score_brief_gates`
+    like any other. `record_path` is set here when and only when a record
+    exists, which is the sweep's own rule."""
     draws = [
         DrawOutcome(
             brief_path=f"config/briefs/smoke/{brief_stem}.yaml",
             brief_stem=brief_stem,
             brief_id=f"{brief_stem}-id",
             draw_index=index,
-            status=OK_STATUS if count is not None else FAIL_STATUS,
+            status=_draw_status(count, index, resumed),
             reason="" if count is not None else "AnswerError: no answer",
-            latency_seconds=12.5 if count is not None else None,
-            record_path=None,
+            latency_seconds=12.5 if count is not None and index not in resumed else None,
+            record_path=(
+                None
+                if count is None
+                else Path("analyses") / brief_stem / f"draw{index}" / f"{brief_stem}-id.json"
+            ),
             report_path=None,
             arm=arm,
             distinct_sources_cited=count,
@@ -286,7 +306,9 @@ def test_eval_layers_refuses_arms_that_do_not_cover_the_same_briefs(tmp_path, ca
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "brief 'S-03' present in arm 'map' and missing from arm 'name'" in captured.err
+    assert "brief 'S-03' present in arm 'map'" in captured.err
+    assert "missing from arm 'name'" in captured.err
+    assert str(map_dir) in captured.err and str(name_dir) in captured.err
     assert "S-01" not in captured.out
 
 
@@ -527,7 +549,45 @@ def test_compare_arms_names_a_brief_missing_from_the_second_arm(tmp_path):
     with pytest.raises(LayerComparisonError) as excinfo:
         compare_arms([name_dir, map_dir])
 
-    assert str(excinfo.value) == "brief 'S-04' present in arm 'name' and missing from arm 'map'"
+    message = str(excinfo.value)
+    assert "brief 'S-04' present in arm 'name'" in message
+    assert "missing from arm 'map'" in message
+    # An arm label comes from inside summary.json; the operator typed a path.
+    # A refusal naming only the label leaves them to map it back themselves.
+    assert str(name_dir) in message and str(map_dir) in message
+
+
+def test_compare_arms_names_every_differing_brief_grouped_by_the_arm_that_has_it(tmp_path):
+    """Not only the first one. An operator whose arms differ by four briefs
+    fixes all four off one refusal instead of rerunning once per brief."""
+    from axial.eval.layers import LayerComparisonError, compare_arms
+
+    name_dir = _write_arm_dir(
+        tmp_path,
+        "name",
+        [
+            _brief_result("S-01", arm="name", source_counts=[4], grounding=None),
+            _brief_result("S-04", arm="name", source_counts=[4], grounding=None),
+            _brief_result("S-05", arm="name", source_counts=[4], grounding=None),
+        ],
+    )
+    map_dir = _write_arm_dir(
+        tmp_path,
+        "map",
+        [
+            _brief_result("S-01", arm="map", source_counts=[4], grounding=None),
+            _brief_result("S-02", arm="map", source_counts=[4], grounding=None),
+            _brief_result("S-03", arm="map", source_counts=[4], grounding=None),
+        ],
+    )
+
+    with pytest.raises(LayerComparisonError) as excinfo:
+        compare_arms([name_dir, map_dir])
+
+    message = str(excinfo.value)
+    assert "briefs 'S-04', 'S-05' present in arm 'name'" in message
+    assert "briefs 'S-02', 'S-03' present in arm 'map'" in message
+    assert str(name_dir) in message and str(map_dir) in message
 
 
 def test_compare_arms_refuses_different_draw_counts_naming_both(tmp_path):
@@ -547,7 +607,10 @@ def test_compare_arms_refuses_different_draw_counts_naming_both(tmp_path):
     with pytest.raises(LayerComparisonError) as excinfo:
         compare_arms([name_dir, map_dir])
 
-    assert str(excinfo.value) == "arm 'name' ran 3 draws, arm 'map' ran 2"
+    message = str(excinfo.value)
+    assert "arm 'name'" in message and "ran 3 draws" in message
+    assert "arm 'map'" in message and "ran 2 draws" in message
+    assert str(name_dir) in message and str(map_dir) in message
 
 
 def test_compare_arms_refuses_different_commits_naming_both(tmp_path):
@@ -569,7 +632,10 @@ def test_compare_arms_refuses_different_commits_naming_both(tmp_path):
     with pytest.raises(LayerComparisonError) as excinfo:
         compare_arms([name_dir, map_dir])
 
-    assert str(excinfo.value) == "arm 'name' built at abc1234, arm 'map' at def5678"
+    message = str(excinfo.value)
+    assert "arm 'name'" in message and "built at abc1234" in message
+    assert "arm 'map'" in message and "at def5678" in message
+    assert str(name_dir) in message and str(map_dir) in message
 
 
 def test_compare_arms_refuses_an_unrecorded_commit_rather_than_matching_two_nones(tmp_path):
@@ -594,7 +660,9 @@ def test_compare_arms_refuses_an_unrecorded_commit_rather_than_matching_two_none
     with pytest.raises(LayerComparisonError) as excinfo:
         compare_arms([name_dir, map_dir])
 
-    assert "arm 'name' recorded no commit" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "arm 'name'" in message and "recorded no commit" in message
+    assert str(name_dir) in message
 
 
 # ---------------------------------------------------------------------------
@@ -709,16 +777,148 @@ def test_more_than_three_arms_are_accepted(tmp_path):
     assert len(comparison.rows()) == 8
 
 
-def test_eval_layers_makes_no_model_call(tmp_path, capsys, monkeypatch):
-    """It computes nothing new: no client is ever built, so neither a model
-    call nor a second gate-scoring path can hide in here."""
+def test_the_pooled_gate_figure_is_named_and_headed_as_pooled(tmp_path):
+    """The grounding figure sits beside a draw count, exactly where a mean
+    and its n sit two columns along, so the column carries `pooled` in its
+    own name and the header says so above the table -- not only in the
+    legend below it, which a reader reaches after the numbers."""
+    from axial.eval.layers import compare_arms, format_layer_comparison
+
+    name_dir, map_dir, _ = _three_arms(tmp_path)
+
+    report = format_layer_comparison(compare_arms([name_dir, map_dir]))
+    lines = report.splitlines()
+    columns = next(line for line in lines if line.split()[:2] == ["brief", "arm"])
+
+    assert "pooled_rate" in columns.split()
+    assert "rate" not in columns.split()
+    header = "\n".join(lines[: lines.index(columns)])
+    assert "pooled_rate" in header
+
+
+def test_a_resumed_draw_counts_toward_the_pooled_gate_sample(tmp_path):
+    """A draw the sweep SKIPped because its record was already on disk IS in
+    the set `_score_brief_gates` was handed: `run_sweep` hands it every draw
+    whose record is not None, and a resumed draw's record is read back off
+    disk. Counting OK draws only would undercount every resumed draw, and
+    the real #809 corpus run has one in every arm."""
+    from axial.eval.layers import read_arm_sweep
+
+    sweep_dir = _write_arm_dir(
+        tmp_path,
+        "map",
+        [
+            _brief_result(
+                "S-03",
+                arm="map",
+                source_counts=[4, 5, 5],
+                grounding=_grounding_report(0.964, 28, True),
+                resumed=(0,),
+            )
+        ],
+    )
+
+    figures = read_arm_sweep(sweep_dir).figures["S-03"]
+
+    assert figures.gate_draws == 3
+    assert figures.source_counts == (4, 5, 5)
+    assert figures.missing is False
+
+
+def test_a_failed_draw_is_outside_the_pooled_gate_sample(tmp_path):
+    """The other half of the same rule: a FAILed draw wrote no record, so it
+    is not in the set the gate was scored over."""
+    from axial.eval.layers import read_arm_sweep
+
+    sweep_dir = _write_arm_dir(
+        tmp_path,
+        "map",
+        [
+            _brief_result(
+                "S-01",
+                arm="map",
+                source_counts=[4, None, 7],
+                grounding=_grounding_report(0.910, 18, True),
+            )
+        ],
+    )
+
+    assert read_arm_sweep(sweep_dir).figures["S-01"].gate_draws == 2
+
+
+def test_the_legend_glosses_every_column_and_only_the_cell_values_on_the_page(tmp_path):
+    """The column glossary is separate from the cell-value glossary, every
+    column has its own entry, and a cell value nothing in this table shows
+    is not explained."""
+    from axial.eval.layers import compare_arms, format_layer_comparison
+
+    name_dir, map_dir, _ = _three_arms(tmp_path)
+
+    report = format_layer_comparison(compare_arms([name_dir, map_dir]))
+
+    for column in ("grounding", "pooled_rate", "gate_draws", "sources", "range", "src_draws"):
+        assert f"{column}:" in report
+    # Nothing in this table is missing, unscored, or an absent value.
+    assert "missing:" not in report
+    assert "not-scored:" not in report
+    assert "cell values" not in report
+
+
+def test_the_legend_explains_a_cell_value_that_is_on_the_page(tmp_path):
+    from axial.eval.layers import compare_arms, format_layer_comparison
+
+    name_dir = _write_arm_dir(
+        tmp_path,
+        "name",
+        [
+            _brief_result(
+                "S-01",
+                arm="name",
+                source_counts=[5, 6, 8],
+                grounding=_grounding_report(0.933, 30, True),
+            )
+        ],
+    )
+    map_dir = _write_arm_dir(
+        tmp_path,
+        "map",
+        [_brief_result("S-01", arm="map", source_counts=[None, None, None], grounding=None)],
+    )
+
+    report = format_layer_comparison(compare_arms([name_dir, map_dir]))
+
+    assert "cell values" in report
+    assert "missing:" in report
+    # '-' is emitted under pooled_rate, sources and range alike, and it gets
+    # an entry of its own rather than a clause under one column.
+    assert "-:" in report
+    # This table has no unscored-sweep cell: the empty arm prints `missing`.
+    assert "not-scored:" not in report
+
+
+def test_eval_layers_makes_no_model_call_and_scores_no_gate(tmp_path, capsys, monkeypatch):
+    """It computes nothing new. The seams patched here are the ones a second
+    scoring path would actually reach: the grounding gate's own entry point
+    (`axial.gates.grounding.run_grounding_gate`, which is what the sweep's
+    `_score_brief_gates` calls) and both bindings of `get_client` -- the one
+    in `axial.llm` that new code in `layers.py` would import, and the one in
+    `axial.cli` that `_eval_layers` itself would reach for. Patching only
+    the CLI binding leaves this unable to fail for the claim it makes:
+    `layers.py` never touches that module's namespace."""
     import axial.cli as cli_mod
+    import axial.gates.grounding as grounding_mod
+    import axial.llm as llm_mod
     from axial.cli import main
 
     def _refuse_client(*args, **kwargs):
         raise AssertionError("axial eval layers must never build an LLM client")
 
+    def _refuse_gate(*args, **kwargs):
+        raise AssertionError("axial eval layers must never score a gate")
+
     monkeypatch.setattr(cli_mod, "get_client", _refuse_client)
+    monkeypatch.setattr(llm_mod, "get_client", _refuse_client)
+    monkeypatch.setattr(grounding_mod, "run_grounding_gate", _refuse_gate)
     name_dir, map_dir, vocab_dir = _three_arms(tmp_path)
 
     exit_code = main(

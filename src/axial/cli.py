@@ -914,7 +914,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "a sweep directory ('axial brief sweep --sweep-dir'), one per arm; "
-            "repeat the flag once per arm being compared"
+            "repeat the flag once per arm being compared. ORDER SETS THE "
+            "COMPARISONS: the table pairs consecutive arms in the order the "
+            "flags were given, so '--arm-dir <name> --arm-dir <map> --arm-dir "
+            "<map+vocab>' reads 'name vs map; map vs map+vocab', which is the "
+            "two questions issue #809 asks. Passing map first instead reads "
+            "'map vs name; name vs map+vocab', and that second pair moves two "
+            "things at once and answers neither question"
         ),
     )
 
