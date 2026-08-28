@@ -53,6 +53,15 @@ not a redesign; see that module's docstring reproduced in the scratchpad
 for the run this ports. This is the last slice of issue #572: with the
 corridor and the assembly order in place, the read side -- door, landing,
 corridor, assembly -- is complete.
+
+**The vocabulary step** (issue #807, `axial.argmap.vocabulary_join`), opt
+in via `run_map_ask_for_brief(use_vocabulary=True)`, runs between the
+corridor and assembly: `door -> landing -> corridor -> vocabulary
+neighbours -> assembly`. Still fully deterministic, still no tool loop --
+`vocabulary_neighbours` joins each landed note's own derived-vocabulary
+category assignment (issue #806, `axial.vocabulary`) against every other
+note filed under the same category, a table lookup exactly like
+`positions_on`'s name join below, with a category in place of a name.
 """
 
 from __future__ import annotations
@@ -66,6 +75,13 @@ import httpx
 import numpy as np
 
 from axial.argmap.build import ENCODER_MODEL, Encoder, _default_encoder, compute_corpus_pin
+from axial.argmap.vocabulary_join import (
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    VocabularyJoinResult,
+    VocabularyPosition,
+    vocabulary_neighbours,
+)
 from axial.brief.intake import Brief, load_brief
 from axial.envelope import _default_envelopes_dir
 from axial.llm import LLMClient, LLMError, get_client
@@ -232,6 +248,11 @@ class AskResult:
     corridor: tuple[CorridorPosition, ...] = ()
     assembled_chunk_ids: tuple[str, ...] = ()
     pin: str | None = None
+    # The vocabulary step (issue #807), `None` on every path that did not
+    # ask for it (`use_vocabulary=False`, the default) -- an explicit,
+    # honest absence, the same contract `map_retrieval` itself already
+    # gives the name-layer path (module docstring's "the vocabulary step").
+    vocabulary: VocabularyJoinResult | None = None
 
 
 def render_decompose_prompt(brief: Brief) -> str:
@@ -399,7 +420,7 @@ def round_robin_by_source(chunk_ids: Sequence[str]) -> list[str]:
 
 
 def assemble_map_evidence(
-    positions: Sequence[LandedPosition | CorridorPosition | MatchedPosition],
+    positions: Sequence[LandedPosition | CorridorPosition | MatchedPosition | VocabularyPosition],
     *,
     cap: int = ASSEMBLE_CAP,
 ) -> list[str]:
@@ -649,11 +670,16 @@ def run_map_ask_for_brief(
     pin: str | None = None,
     top_k: int = POSITIONS_PER_ASK,
     assemble_cap: int = ASSEMBLE_CAP,
+    use_vocabulary: bool = False,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
+    vocabulary_dir: Path | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
 ) -> AskResult:
     """Everything `run_map_ask` does except loading the brief from disk:
     land an already-loaded `brief` on the pinned argument map and walk it
-    all the way through assembly -- door, landing, corridor, and the
-    round-robin assembly order.
+    all the way through assembly -- door, landing, corridor, the vocabulary
+    step, and the round-robin assembly order.
 
     This is the seam `axial.answer.record.run_brief` uses directly (issue
     #572, PR 4 of 4): that caller already holds a loaded `Brief` (its own
@@ -670,9 +696,19 @@ def run_map_ask_for_brief(
     `axial.llm.get_client()` and the real MiniLM encoder; both are injection
     seams for tests.
 
+    `use_vocabulary` (issue #807, default off) runs the vocabulary step
+    between the corridor and assembly: `axial.argmap.vocabulary_join.
+    vocabulary_neighbours` over `vocabulary_column` at `vocabulary_level`
+    (the column's own finest persisted level when `None`), reading
+    `<vocabulary_dir>/<vocabulary_column>/` (default `axial.vocabulary.
+    VOCABULARY_DIR`). Ignored, like the other `vocabulary_*` arguments, when
+    `use_vocabulary` is `False` -- the `map` arm is unchanged either way.
+
     Raises `MapNotBuiltError` (no map at this pin), `EncoderMismatchError`
-    (the map was built with a different encoder), or `DecomposeError` (the
-    door call failed or returned nothing usable)."""
+    (the map was built with a different encoder), `DecomposeError` (the
+    door call failed or returned nothing usable), or -- only when
+    `use_vocabulary` is `True` -- `NoVocabularyError` (no derived vocabulary
+    built for `vocabulary_column`)."""
     if map_dir is None:
         map_dir = default_map_dir(config_path)
     if pin is None:
@@ -699,7 +735,27 @@ def run_map_ask_for_brief(
     landed = land_arguments(asks, positions, encode, top_k=top_k)
     positions_by_id = {position["position_id"]: position for position in positions}
     corridor = build_corridor(landed, positions_by_id, relations)
-    assembled = assemble_map_evidence((*landed, *corridor), cap=assemble_cap)
+
+    vocabulary: VocabularyJoinResult | None = None
+    vocabulary_positions: tuple[VocabularyPosition, ...] = ()
+    if use_vocabulary:
+        excluded_ids = {position.position_id for position in landed} | {
+            position.position_id for position in corridor
+        }
+        vocabulary = vocabulary_neighbours(
+            landed,
+            excluded_ids,
+            positions,
+            vocabulary_column,
+            level=vocabulary_level,
+            vocabulary_dir=vocabulary_dir,
+            cap=vocabulary_cap,
+        )
+        vocabulary_positions = vocabulary.positions
+
+    assembled = assemble_map_evidence(
+        (*landed, *corridor, *vocabulary_positions), cap=assemble_cap
+    )
 
     return AskResult(
         brief=brief,
@@ -708,6 +764,7 @@ def run_map_ask_for_brief(
         corridor=tuple(corridor),
         assembled_chunk_ids=tuple(assembled),
         pin=pin,
+        vocabulary=vocabulary,
     )
 
 

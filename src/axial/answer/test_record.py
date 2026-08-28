@@ -6,12 +6,34 @@ own layout for this module."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
 import axial.answer.record as record_module
 from axial.analyze.synthesis import Claim, CounterPositionGenerationFailedError
-from axial.answer.record import build_record
+from axial.answer.record import (
+    KNOWN_ARMS,
+    MAP_ARM,
+    MAP_VOCAB_ARM,
+    NAME_ARM,
+    UnknownArmError,
+    build_record,
+)
+from axial.argmap.ask import AskResult, CorridorPosition, LandedPosition
+from axial.argmap.vocabulary_join import CategoryReach, VocabularyJoinResult, VocabularyPosition
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
-from axial.llm import PRICE_TABLE_USD_PER_1K, StubLLMClient, estimate_cost
+from axial.llm import (
+    INTERROGATE_PASS_NAME,
+    PRICE_TABLE_USD_PER_1K,
+    SYNTHESIZE_PASS_NAME,
+    StubLLMClient,
+    estimate_cost,
+)
 
 
 class _FakeUsageClient(StubLLMClient):
@@ -605,3 +627,267 @@ def test_fork_disclosure_message_unchanged_when_a_batch_answer_is_on_file():
     message = _fork_disclosure_message(fork, fork_answer_supplied=True, has_on_fork=False)
 
     assert message == f"a clarifying question was found: {fork.question}"
+
+
+# ---------------------------------------------------------------------------
+# `_map_retrieval_to_dict`'s own `vocabulary` block, and `run_brief`'s named
+# `arm` (issue #807, plans/derived-vocabulary/03-two-notes-meet-at-a-shared-
+# group.md). `run_map_ask_for_brief` is monkeypatched throughout -- the same
+# convention `tests/analysis/test_argmap_corridor.py` already uses for
+# `run_brief(use_map=True)` -- so these tests prove the WIRING (the record
+# shape, the arm precedence, the empty trajectory, `UnknownArmError` failing
+# fast). The join itself, computed for real against an encoder-free fixture
+# map and vocabulary artifact, is proven in `src/axial/argmap/test_ask.py`.
+# ---------------------------------------------------------------------------
+
+
+def _vocab_brief() -> Brief:
+    return Brief(brief_id="vocab_wiring_001", case="A case.", request="A question?")
+
+
+def _chunk_frontmatter(chunk_id: str) -> dict[str, Any]:
+    return {
+        "chunk_id": chunk_id,
+        "section": "Synthetic Section",
+        "chunk_text": f"SENTINEL_{chunk_id}: synthetic prose.",
+        "source_meta": {
+            "author": "A. Synthetic Author",
+            "title": "A Synthetic Fixture Source",
+            "date": 2021,
+            "thesis": "Synthetic thesis.",
+            "scope": "Synthetic scope.",
+        },
+        "frame_version": "0.1",
+        "answers": {"claim": f"Claim of {chunk_id}.", "move": "stating a mechanism"},
+    }
+
+
+def _write_vault(root: Path, chunk_ids: list[str]) -> Path:
+    prose_dir = root / "vault" / "prose"
+    prose_dir.mkdir(parents=True, exist_ok=True)
+    for chunk_id in chunk_ids:
+        frontmatter = _chunk_frontmatter(chunk_id)
+        text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
+        (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
+    return root / "vault"
+
+
+class _ArmScriptedClient(StubLLMClient):
+    """`interrogate` always proceeds and `synthesize` cites whatever the
+    test wires in; `decompose_brief` is never called here because
+    `run_map_ask_for_brief` itself is monkeypatched below (module comment)
+    -- a call to it would be a fixture bug, so it raises rather than
+    returning a plausible-looking response that would mask one."""
+
+    def __init__(self, synthesize_response: str) -> None:
+        super().__init__()
+        self._synthesize_response = synthesize_response
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        if pass_name == INTERROGATE_PASS_NAME:
+            return json.dumps({"premises_found": [], "bounds_applied": [], "refusal": None})
+        if pass_name == SYNTHESIZE_PASS_NAME:
+            return self._synthesize_response
+        raise AssertionError(f"unexpected pass_name in this fixture: {pass_name!r}")
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "test-double-model"
+
+
+def _fake_ask_result(*, with_vocabulary: bool) -> AskResult:
+    chunk_ids = ["fixmap-2021-a_1_s_001", "fixmap-2021-a_1_s_002"]
+    landed = (
+        LandedPosition(
+            position_id="pos-0001",
+            score=0.87,
+            argument="States extract resources through coercion.",
+            size=1,
+            sources=("fixmap-2021-a",),
+            authors=("fixmap",),
+            chunk_ids=(chunk_ids[0],),
+        ),
+    )
+    corridor = (
+        CorridorPosition(
+            position_id="pos-0002",
+            relation_count=1,
+            labels=("qualifies ->",),
+            argument="A counterpart argument.",
+            size=1,
+            sources=("fixmap-2021-a",),
+            authors=("fixmap",),
+            chunk_ids=(),
+        ),
+    )
+    vocabulary = None
+    assembled = list(chunk_ids[:1])
+    if with_vocabulary:
+        vocabulary = VocabularyJoinResult(
+            column="mechanism",
+            level=1,
+            cap=20,
+            categories=(
+                CategoryReach(
+                    category_id="war-and-state",
+                    category_name="War and state formation",
+                    chunk_ids=(chunk_ids[1],),
+                    source_count=1,
+                    cap_applied=False,
+                ),
+            ),
+            positions=(
+                VocabularyPosition(
+                    position_id="pos-0003",
+                    categories=("war-and-state",),
+                    chunk_ids=(chunk_ids[1],),
+                    argument="A neighbour reached through a shared mechanism.",
+                    size=1,
+                    sources=("other-2020-b",),
+                    authors=("other",),
+                ),
+            ),
+        )
+        # The note only the vocabulary step reaches -- proof the assembled
+        # evidence rests partly on a category edge, never on landing or the
+        # corridor.
+        assembled.append(chunk_ids[1])
+    return AskResult(
+        brief=_vocab_brief(),
+        asks=("States extract resources through coercion.",),
+        landed=landed,
+        corridor=corridor,
+        assembled_chunk_ids=tuple(assembled),
+        pin="fixmap-pin-001",
+        vocabulary=vocabulary,
+    )
+
+
+def _run_scripted_arm(tmp_path: Path, monkeypatch, *, arm: str, with_vocabulary: bool):
+    ask_result = _fake_ask_result(with_vocabulary=with_vocabulary)
+    vault_dir = _write_vault(tmp_path, list(ask_result.assembled_chunk_ids))
+
+    def _fake_run_map_ask_for_brief(brief, **_kwargs):
+        return ask_result
+
+    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fake_run_map_ask_for_brief)
+
+    synthesize_response = json.dumps(
+        {
+            "claims": [
+                {
+                    "text": "The corpus states that states extract resources through coercion.",
+                    "kind": "a",
+                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
+                    "confidence": "medium",
+                }
+            ]
+        }
+    )
+    client = _ArmScriptedClient(synthesize_response)
+    return record_module.run_brief(_vocab_brief(), client=client, vault_dir=vault_dir, arm=arm)
+
+
+def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, monkeypatch):
+    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True)
+
+    record = result.record
+    assert record["trajectory"] == []
+    assert "vocabulary" in record["map_retrieval"]
+    vocabulary = record["map_retrieval"]["vocabulary"]
+    assert vocabulary["column"] == "mechanism"
+    assert vocabulary["categories"] == [
+        {
+            "category_id": "war-and-state",
+            "name": "War and state formation",
+            "note_count": 1,
+            "source_count": 1,
+            "cap_applied": False,
+        }
+    ]
+    # The assembled evidence rests partly on a note reached ONLY through the
+    # category edge -- neither `landed` nor `corridor` carries it.
+    assert "fixmap-2021-a_1_s_002" in record["map_retrieval"]["assembled_chunk_ids"]
+
+
+def test_run_brief_arm_map_records_no_vocabulary_block(tmp_path: Path, monkeypatch):
+    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_ARM, with_vocabulary=False)
+
+    record = result.record
+    assert record["trajectory"] == []
+    assert "vocabulary" not in record["map_retrieval"]
+
+
+def test_run_brief_unknown_arm_is_refused_before_any_call(tmp_path: Path, monkeypatch):
+    calls: list[str] = []
+
+    def _fail_if_called(*_args, **_kwargs):
+        calls.append("called")
+        raise AssertionError("no call should be made before an unknown arm is refused")
+
+    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fail_if_called)
+
+    class _ExplodingClient(StubLLMClient):
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            calls.append("called")
+            raise AssertionError("interrogation must never run for an unknown arm")
+
+    with pytest.raises(UnknownArmError) as exc_info:
+        record_module.run_brief(_vocab_brief(), client=_ExplodingClient(), arm="bogus-arm")
+
+    assert calls == []
+    assert "bogus-arm" in str(exc_info.value)
+    for arm_name in KNOWN_ARMS:
+        assert arm_name in str(exc_info.value)
+
+
+def test_run_brief_arm_name_wins_over_use_map_true(tmp_path: Path, monkeypatch):
+    """`arm=NAME_ARM` with `use_map=True` also given must still run the
+    name layer -- `arm`, when given, decides, the same precedence
+    `axial.brief.sweep._run_one_draw` already gives its own pair (module
+    comment above)."""
+    from axial.retrieve.loop import RetrievalResult
+
+    chunk_ids = ["fixprec-2021-a_1_s_001"]
+    vault_dir = _write_vault(tmp_path, chunk_ids)
+
+    def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError("the map path must not run when arm=name wins precedence")
+
+    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fail_if_called)
+
+    trajectory = [
+        {
+            "step": 1,
+            "tool": "get_name",
+            "args": {"canonical": "Fixture Name"},
+            "result_ids": chunk_ids,
+            "result_count": 1,
+        }
+    ]
+
+    def _fake_run_planned_retrieval(*_args, **_kwargs):
+        return RetrievalResult(trajectory=trajectory, evidence_ids=list(chunk_ids))
+
+    monkeypatch.setattr(record_module, "run_planned_retrieval", _fake_run_planned_retrieval)
+
+    synthesize_response = json.dumps(
+        {
+            "claims": [
+                {
+                    "text": "The corpus states a fixture claim.",
+                    "kind": "a",
+                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
+                    "confidence": "medium",
+                }
+            ]
+        }
+    )
+    client = _ArmScriptedClient(synthesize_response)
+
+    result = record_module.run_brief(
+        _vocab_brief(), client=client, vault_dir=vault_dir, use_map=True, arm=NAME_ARM
+    )
+
+    record = result.record
+    assert record["map_retrieval"] is None
+    assert record["trajectory"] == trajectory

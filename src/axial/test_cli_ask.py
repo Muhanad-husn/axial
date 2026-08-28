@@ -540,3 +540,41 @@ def test_every_turn_of_a_session_drafts_its_own_paper(monkeypatch, capsys, _stub
     assert exit_code == 0
     assert [b.thesis for b in _stub_paper] == ["first question", "second question"]
     assert [b.analysis_ids for b in _stub_paper] == [("id-1",), ("id-2",)]
+
+
+# ---------------------------------------------------------------------------
+# `axial brief run --arm map+vocab` (issue #807): the CLI's own printed
+# summary names the resolved arm plainly, on top of the wiring
+# `src/axial/test_cli.py` already covers for every `--arm` value.
+# `run_brief` is monkeypatched (`_stub_brief_run`'s own convention) --
+# nothing here spends a model call or writes into the operator's real
+# `data/`; the engine's real vocabulary join is proven against fixtures in
+# `src/axial/argmap/test_ask.py`, and the persisted record's own
+# `map_retrieval.vocabulary` shape in `src/axial/answer/test_record.py`.
+# ---------------------------------------------------------------------------
+
+
+def test_brief_run_arm_map_vocab_prints_the_resolved_arm(tmp_path, monkeypatch, capsys):
+    import axial.cli as cli_mod
+    from axial.answer.record import BriefRunResult
+
+    brief_path = tmp_path / "brief.yaml"
+    brief_path.write_text('case: "A case."\nrequest: "A question?"\n', encoding="utf-8")
+
+    def _fake_run_brief(brief, *, use_map=False, arm=None, **_kwargs):
+        return BriefRunResult(
+            record={"brief_id": brief.brief_id, "interrogation": {"disposition": "proceed"}},
+            path=Path("data/analyses/x.json"),
+            markdown_path=Path("data/analyses/x.md"),
+            report={},
+            report_path=Path("data/runs/x.json"),
+        )
+
+    monkeypatch.setattr(cli_mod, "run_brief", _fake_run_brief)
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+
+    exit_code = cli_mod.main(["brief", "run", str(brief_path), "--arm", "map+vocab"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "retrieval: argument map + vocabulary" in captured.out
