@@ -1,36 +1,49 @@
+Captured 2026-08-28T13:41:53Z at commit 587f7c1 on branch
+feat/derived-vocabulary/05-the-two-arms-are-compared. The three sweep
+directories are the real #809 corpus run, all at commit b18f95b.
+
+=== THREE ARMS (real) ===
+$ uv run axial eval layers --arm-dir D:/axial/data/runs/809-arm-name --arm-dir D:/axial/data/runs/809-arm-map --arm-dir D:/axial/data/runs/809-arm-map-vocab
+
 layer comparison: 3 arms (name, map, map+vocab), 5 briefs, 3 draws per brief per arm, all at commit b18f95b8a4d1e8298540687c054699ac682c5386
 comparisons, in the order the arms were given: name vs map; map vs map+vocab
-figures are per brief; nothing here is pooled across briefs
+figures are per brief; no figure here is pooled across briefs
+grounding and pooled_rate: ONE figure per row, scored over that brief's pooled draw records
+sources, range and src_draws: a mean, a spread and an n, across that brief's own draws
 
-brief  arm        grounding  rate   gate_draws  sources  range  src_draws
------  ---------  ---------  -----  ----------  -------  -----  ---------
-S-01   name       PASS       0.923  3           6.0      4-7    3
-S-01   map        PASS       1.000  3           4.7      4-5    3
-S-01   map+vocab  PASS       1.000  3           4.7      4-5    3
-S-02   name       PASS       1.000  3           12.3     11-13  3
-S-02   map        PASS       1.000  3           8.0      6-9    3
-S-02   map+vocab  PASS       1.000  3           9.3      8-10   3
-S-03   name       PASS       1.000  3           3.3      3-4    3
-S-03   map        PASS       1.000  3           4.7      4-5    3
-S-03   map+vocab  PASS       0.941  3           6.3      5-7    3
-S-04   name       PASS       1.000  3           1.0      1-1    3
-S-04   map        PASS       1.000  3           1.3      1-2    3
-S-04   map+vocab  PASS       1.000  3           1.0      1-1    3
-S-05   name       PASS       1.000  3           1.0      1-1    3
-S-05   map        FAIL       0.800  3           1.7      1-2    3
-S-05   map+vocab  PASS       1.000  3           1.3      1-2    3
+brief  arm        grounding  pooled_rate  gate_draws  sources  range  src_draws
+-----  ---------  ---------  -----------  ----------  -------  -----  ---------
+S-01   name       PASS       0.923        3           6.0      4-7    3
+S-01   map        PASS       1.000        3           4.7      4-5    3
+S-01   map+vocab  PASS       1.000        3           4.7      4-5    3
+S-02   name       PASS       1.000        3           12.3     11-13  3
+S-02   map        PASS       1.000        3           8.0      6-9    3
+S-02   map+vocab  PASS       1.000        3           9.3      8-10   3
+S-03   name       PASS       1.000        3           3.3      3-4    3
+S-03   map        PASS       1.000        3           4.7      4-5    3
+S-03   map+vocab  PASS       0.941        3           6.3      5-7    3
+S-04   name       PASS       1.000        3           1.0      1-1    3
+S-04   map        PASS       1.000        3           1.3      1-2    3
+S-04   map+vocab  PASS       1.000        3           1.0      1-1    3
+S-05   name       PASS       1.000        3           1.0      1-1    3
+S-05   map        FAIL       0.800        3           1.7      1-2    3
+S-05   map+vocab  PASS       1.000        3           1.3      1-2    3
 
-grounding:   the gate's verdict for that (brief, arm). The sweep scores it
-             ONCE over that brief's pooled draw records, so it is one figure,
-             not a per-draw mean. NOT-SCOREABLE is neither a pass nor a fail.
-rate:        grounding_support_rate, the gate's own metric (specs/PHASE-B.md
-             section 10). '-' where the gate reported no value.
-gate_draws:  how many of that brief's draws produced a record -- the pooled
-             sample the grounding figure was scored over.
-sources:     distinct sources cited, averaged across that brief's own draws.
-range:       min-max of that same per-draw count; src_draws is how many draws
-             reported one. This is the spread, and it is per brief.
-not-scored:  that sweep ran without gate scoring, so no grounding figure
-             exists to read.
-missing:     that brief produced no usable draw in that arm. Reported, never
-             averaged over and never dropped.
+columns
+  grounding:   the gate's verdict for that (brief, arm). The sweep scores it
+               ONCE over that brief's pooled draw records, so it is one
+               verdict, not a per-draw majority. NOT-SCOREABLE is neither a
+               pass nor a fail.
+  pooled_rate: grounding_support_rate (specs/PHASE-B.md section 10), the
+               gate's own metric -- the same single number that verdict came
+               from, over the same pooled draw records. NOT a per-draw mean.
+  gate_draws:  how many of that brief's draws produced a record -- the pooled
+               sample grounding and pooled_rate were scored over, not a
+               sample size a mean was divided by.
+  sources:     distinct sources cited, averaged across that brief's own draws.
+               This one IS a per-draw mean.
+  range:       min-max of that same per-draw count. The spread, per brief.
+  src_draws:   how many of that brief's draws reported a source count -- the
+               n of the sources mean and of the range beside it.
+exit=0
+

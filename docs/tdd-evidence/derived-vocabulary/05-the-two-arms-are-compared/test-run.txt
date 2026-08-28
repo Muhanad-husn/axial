@@ -1,3 +1,13 @@
+Captured 2026-08-28T13:41:55Z at commit 587f7c1 on branch
+feat/derived-vocabulary/05-the-two-arms-are-compared.
+
+The first run is the fast tier the commit gate runs (pyproject testpaths=src,
+addopts -q -m "not slow" -n auto). It is dots-only and never shows that this
+slice's own file was collected, so the second run names every test in it.
+
+=== FAST TIER ===
+$ uv run pytest
+
 bringing up nodes...
 bringing up nodes...
 
@@ -15,7 +25,7 @@ bringing up nodes...
 ........................................................................ [ 34%]
 ........................................................................ [ 37%]
 ........................................................................ [ 40%]
-........................................................................ [ 43%]
+........................................................................ [ 42%]
 ........................................................................ [ 45%]
 ........................................................................ [ 48%]
 ........................................................................ [ 51%]
@@ -23,17 +33,67 @@ bringing up nodes...
 ........................................................................ [ 57%]
 ........................................................................ [ 60%]
 ........................................................................ [ 63%]
-........................................................................ [ 66%]
+........................................................................ [ 65%]
 ........................................................................ [ 68%]
 ........................................................................ [ 71%]
 ........................................................................ [ 74%]
 ........................................................................ [ 77%]
 ........................................................................ [ 80%]
 ........................................................................ [ 83%]
-........................................................................ [ 86%]
-........................................................................ [ 89%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
 ........................................................................ [ 91%]
 ........................................................................ [ 94%]
 ........................................................................ [ 97%]
-..........................................................               [100%]
-2506 passed, 1 skipped in 61.40s (0:01:01)
+................................................................         [100%]
+2512 passed, 1 skipped in 24.79s
+exit=0
+
+=== THIS SLICE'S OWN TESTS, BY NAME ===
+$ uv run pytest src/axial/eval/test_layers.py -vv -n 0
+
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial-wt-809\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial-wt-809
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 27 items
+
+src/axial/eval/test_layers.py::test_eval_layers_reports_grounding_and_sources_per_brief_and_arm PASSED [  3%]
+src/axial/eval/test_layers.py::test_eval_layers_refuses_arms_that_do_not_cover_the_same_briefs PASSED [  7%]
+src/axial/eval/test_layers.py::test_eval_layers_reports_a_brief_with_no_usable_draw_as_missing PASSED [ 11%]
+src/axial/eval/test_layers.py::test_a_brief_that_never_loaded_is_missing_and_does_not_move_the_arms_draw_count PASSED [ 14%]
+src/axial/eval/test_layers.py::test_read_arm_sweep_yields_per_brief_gate_result_and_source_counts PASSED [ 18%]
+src/axial/eval/test_layers.py::test_read_arm_sweep_refuses_a_directory_holding_no_sweep_summary PASSED [ 22%]
+src/axial/eval/test_layers.py::test_a_grounding_report_that_is_not_scoreable_is_not_collapsed PASSED [ 25%]
+src/axial/eval/test_layers.py::test_a_sweep_that_scored_no_gates_reports_no_grounding_figure PASSED [ 29%]
+src/axial/eval/test_layers.py::test_compare_arms_refuses_zero_directories PASSED [ 33%]
+src/axial/eval/test_layers.py::test_compare_arms_refuses_two_directories_recording_the_same_arm PASSED [ 37%]
+src/axial/eval/test_layers.py::test_compare_arms_names_a_brief_missing_from_the_second_arm PASSED [ 40%]
+src/axial/eval/test_layers.py::test_compare_arms_names_every_differing_brief_grouped_by_the_arm_that_has_it PASSED [ 44%]
+src/axial/eval/test_layers.py::test_compare_arms_refuses_different_draw_counts_naming_both PASSED [ 48%]
+src/axial/eval/test_layers.py::test_compare_arms_refuses_different_commits_naming_both PASSED [ 51%]
+src/axial/eval/test_layers.py::test_compare_arms_refuses_an_unrecorded_commit_rather_than_matching_two_nones PASSED [ 55%]
+src/axial/eval/test_layers.py::test_the_source_figure_is_computed_only_over_the_draws_that_produced_one PASSED [ 59%]
+src/axial/eval/test_layers.py::test_a_brief_whose_draws_all_agree_still_carries_its_spread PASSED [ 62%]
+src/axial/eval/test_layers.py::test_the_source_count_carries_no_better_or_worse_marking PASSED [ 66%]
+src/axial/eval/test_layers.py::test_no_row_pools_briefs_together PASSED  [ 70%]
+src/axial/eval/test_layers.py::test_two_arms_are_accepted_as_well_as_three PASSED [ 74%]
+src/axial/eval/test_layers.py::test_more_than_three_arms_are_accepted PASSED [ 77%]
+src/axial/eval/test_layers.py::test_the_pooled_gate_figure_is_named_and_headed_as_pooled PASSED [ 81%]
+src/axial/eval/test_layers.py::test_a_resumed_draw_counts_toward_the_pooled_gate_sample PASSED [ 85%]
+src/axial/eval/test_layers.py::test_a_failed_draw_is_outside_the_pooled_gate_sample PASSED [ 88%]
+src/axial/eval/test_layers.py::test_the_legend_glosses_every_column_and_only_the_cell_values_on_the_page PASSED [ 92%]
+src/axial/eval/test_layers.py::test_the_legend_explains_a_cell_value_that_is_on_the_page PASSED [ 96%]
+src/axial/eval/test_layers.py::test_eval_layers_makes_no_model_call_and_scores_no_gate PASSED [100%]
+
+============================= 27 passed in 1.35s ==============================
+exit=0
+
+=== LINT ===
+$ uv run ruff check
+
+All checks passed!
+exit=0
+
