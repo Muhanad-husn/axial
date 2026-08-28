@@ -1,0 +1,59 @@
+$ cd D:/axial   # the main checkout -- data/ does not exist in a worktree
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary build --columns claim \
+    --scheme-path D:/axial-wt/826/config/vocabulary.yaml
+
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=21.18s finish_reason=stop prompt_tokens=4837 completion_tokens=2202 total_tokens=7039
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=19.57s finish_reason=stop prompt_tokens=4952 completion_tokens=2197 total_tokens=7149
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=18.71s finish_reason=stop prompt_tokens=4670 completion_tokens=2248 total_tokens=6918
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=17.11s finish_reason=stop prompt_tokens=5003 completion_tokens=2014 total_tokens=7017
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=24.95s finish_reason=stop prompt_tokens=4693 completion_tokens=2174 total_tokens=6867
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=17.67s finish_reason=stop prompt_tokens=4661 completion_tokens=2130 total_tokens=6791
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=18.32s finish_reason=stop prompt_tokens=4626 completion_tokens=2184 total_tokens=6810
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=18.41s finish_reason=stop prompt_tokens=5293 completion_tokens=2266 total_tokens=7559
+llm_call_response pass=vocabulary_build model=deepseek/deepseek-v4-flash outcome=received status=200 elapsed=18.29s finish_reason=stop prompt_tokens=4651 completion_tokens=2148 total_tokens=6799
+claim: 6697 answered value(s), 145 excluded (abstention/[]/empty)
+  scheme 2026-08-28-claim-v1 (9 category(ies), depth 1), answers pin d5517979069efe79
+  artifact: data\vocabulary\claim
+  built: 6697 newly assigned, 0 reused from the previous build
+  6671 assigned to a category, 26 refused ("none"), 0 out-of-scheme, 0 unanswered (never returned)
+  categories, by member count:
+    - causal-argument-state-formation-or-power (causal argument about state formation or state power): 1664 member(s), 33 source(s)
+    - empirical-finding-without-causal-claim (empirical finding or observation without causal claim): 1224 member(s), 34 source(s)
+    - causal-argument-violence-war-or-conflict (causal argument about violence, war, or conflict dynamics): 913 member(s), 32 source(s)
+    - characterization-of-regime-movement-or-system (characterization of a regime, movement, or political system): 776 member(s), 34 source(s)
+    - bibliographic-source-note-or-formal-description (bibliographic, source note, or formal description of the text itself): 673 member(s), 35 source(s)
+    - causal-argument-nationalism-or-identity (causal argument about nationalism, identity, or nation-building): 517 member(s), 23 source(s)
+    - critique-of-existing-theories-or-concepts (critique of existing theories or concepts): 458 member(s), 33 source(s)
+    - methodological-preconditions (methodological preconditions): 288 member(s), 30 source(s)
+    - comparative-or-typological-classification (comparative or typological classification): 158 member(s), 31 source(s)
+  model: deepseek/deepseek-v4-flash (68 call(s), cost $0.0839)
+
+# exit 0. 68 model calls omitted above; the full transcript is
+# data/logs/2026-08-28-claim-vocabulary/console.log (gitignored, 21 KB).
+
+=== SECOND RUN, same scheme version and answers pin ===
+
+$ AXIAL_SECRETS_PATH=secrets/secrets.toml uv run axial vocabulary build --columns claim \
+    --scheme-path D:/axial-wt/826/config/vocabulary.yaml
+
+claim: 6697 answered value(s), 145 excluded (abstention/[]/empty)
+  scheme 2026-08-28-claim-v1 (9 category(ies), depth 1), answers pin d5517979069efe79
+  artifact: data\vocabulary\claim
+  REUSED: the scheme version and the answers pin are both unchanged -- 0 model call(s), nothing re-assigned
+  6671 assigned to a category, 26 refused ("none"), 0 out-of-scheme, 0 unanswered (never returned)
+  categories, by member count:
+    - causal-argument-state-formation-or-power (causal argument about state formation or state power): 1664 member(s), 33 source(s)
+    - empirical-finding-without-causal-claim (empirical finding or observation without causal claim): 1224 member(s), 34 source(s)
+    - causal-argument-violence-war-or-conflict (causal argument about violence, war, or conflict dynamics): 913 member(s), 32 source(s)
+    - characterization-of-regime-movement-or-system (characterization of a regime, movement, or political system): 776 member(s), 34 source(s)
+    - bibliographic-source-note-or-formal-description (bibliographic, source note, or formal description of the text itself): 673 member(s), 35 source(s)
+    - causal-argument-nationalism-or-identity (causal argument about nationalism, identity, or nation-building): 517 member(s), 23 source(s)
+    - critique-of-existing-theories-or-concepts (critique of existing theories or concepts): 458 member(s), 33 source(s)
+    - methodological-preconditions (methodological preconditions): 288 member(s), 30 source(s)
+    - comparative-or-typological-classification (comparative or typological classification): 158 member(s), 31 source(s)
+  model: deepseek/deepseek-v4-flash (0 call(s), cost n/a)
+
+# exit 0, 2.1 seconds, zero model calls.
+$ md5sum data/vocabulary/claim/assignments.jsonl   # before and after the second run
+ea98c09699cb6c9ab7730f572d4da5ec  data/vocabulary/claim/assignments.jsonl
+ea98c09699cb6c9ab7730f572d4da5ec  data/vocabulary/claim/assignments.jsonl
