@@ -198,23 +198,24 @@ edited. They are the name-layer loop's tool surface, and this arm has no loop.
 - [x] Refactor pass complete with the bar green.
 - [x] `uv run ruff check` clean.
 - [x] Slice's tests run in CI (`tdd-ci`).
-- [~] **Exercised against the real vocabulary** built in slice 02, on at least
+- [x] **Exercised against the real vocabulary** built in slice 02, on at least
       three `mechanism` categories, with the members **read by a human** to
       confirm they are actually saying the same thing. A model agreeing with the
       scheme it was handed is not evidence that a category means anything, and
       slice 01 measured that agreement at 61.4% on this column. One real brief
       run on the `map+vocab` arm, with the persisted `map_retrieval` block
       inspected. Log to `data/logs/<YYYY-MM-DD>-vocabulary-join/`.
-      **[~] PARTIAL, and it stays with this slice.** The two brief runs, the
-      `map_retrieval` inspection and the log are done
-      (`data/logs/2026-08-28-vocabulary-join/`). The **human read** of three
-      `mechanism` categories is not: the sheet is written and unanswered at
+      **[x] DONE.** Both brief runs, the `map_retrieval` inspection and the
+      log are complete (`data/logs/2026-08-28-vocabulary-join/`). The human
+      read of three `mechanism` categories -- one large, one mid, one small,
+      six members each, one per distinct source -- was **approved by the
+      founder on 2026-08-28**, with the known mis-file on the record at the
+      time of approval: `chouliaraki-2024` under `war-and-state-formation` for
+      a passage about the First World War replacing a horse-drawn streetcar.
+      The approval is that the categories are good enough to join on, not that
+      every assignment is right. The sheet and the verdict are at
       `category-reading.md` (gitignored -- the members carry source-derived
-      answer text). It belongs to no other issue. One member is already
-      visibly mis-filed: `chouliaraki-2024` under `war-and-state-formation`
-      for a passage about the First World War replacing a horse-drawn
-      streetcar. It gates nothing; it makes a null result in #809
-      interpretable.
+      answer text).
 - [x] Evidence collected and PR opened into the default branch (`safe-pr`).
 
 ## Status / progress log
@@ -254,3 +255,5 @@ edited. They are the name-layer loop's tool surface, and this arm has no loop.
   every landed source, and recording offered and assembled counts separately.
   Re-run: category-edge chunks 38 → 63, cited via the edge 0 of 20 → 2 of 9.
 - 2026-08-28 five deferred loose ends filed as [#822](https://github.com/Muhanad-husn/axial/issues/822).
+- 2026-08-28 founder approved the category read. Slice 03 complete; every
+  definition-of-done item met.
