@@ -1046,3 +1046,171 @@ def test_main_vocabulary_build_without_a_scheme_for_the_column_fails_naming_it(
     assert "comparison" in captured.err
     assert client.asked_values == []
     assert not (tmp_path / "vocabulary").exists()
+
+
+# ---------------------------------------------------------------------------
+# `axial brief sweep --arm` (issue #808): the named retrieval arm, and its
+# `--map` alias.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_brief_sweep_defaults_arm_to_name(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["brief", "sweep", "wl.txt", "--draws", "3", "--sweep-dir", str(tmp_path)]
+    )
+
+    assert args.command == "brief"
+    assert args.brief_command == "sweep"
+    assert args.arm == "name"
+
+
+def test_build_parser_brief_sweep_recognises_arm_flag(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "3",
+            "--sweep-dir",
+            str(tmp_path),
+            "--arm",
+            "map",
+        ]
+    )
+
+    assert args.arm == "map"
+
+
+def test_build_parser_brief_sweep_map_flag_is_an_alias_for_arm_map(tmp_path):
+    """`--map` (issue #572) stays a working alias for `--arm map` (issue
+    #808), so no existing invocation breaks."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["brief", "sweep", "wl.txt", "--draws", "3", "--sweep-dir", str(tmp_path), "--map"]
+    )
+
+    assert args.arm == "map"
+
+
+def test_build_parser_brief_sweep_accepts_an_arbitrary_arm_name(tmp_path):
+    """issue #808: the CLI parser holds no fixed list of valid arm names --
+    an arm no lower layer recognizes yet still parses cleanly."""
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "3",
+            "--sweep-dir",
+            str(tmp_path),
+            "--arm",
+            "map+vocab",
+        ]
+    )
+
+    assert args.arm == "map+vocab"
+
+
+def test_main_brief_sweep_forwards_arm_to_run_sweep(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+    from axial.brief.sweep import SweepSummary
+
+    captured = {}
+
+    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm):
+        captured["worklist_path"] = worklist_path
+        captured["draws"] = draws
+        captured["sweep_dir"] = sweep_dir
+        captured["workers"] = workers
+        captured["arm"] = arm
+        return SweepSummary(
+            briefs=[], total_draws=0, ok_count=0, fail_count=0, skip_count=0, arm=arm
+        )
+
+    monkeypatch.setattr(cli_mod, "run_sweep", _fake_run_sweep)
+
+    exit_code = cli_mod.main(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "2",
+            "--sweep-dir",
+            str(tmp_path / "sweep"),
+            "--arm",
+            "map",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["arm"] == "map"
+
+
+def test_main_brief_sweep_map_flag_forwards_arm_map_to_run_sweep(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+    from axial.brief.sweep import SweepSummary
+
+    captured = {}
+
+    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm):
+        captured["arm"] = arm
+        return SweepSummary(
+            briefs=[], total_draws=0, ok_count=0, fail_count=0, skip_count=0, arm=arm
+        )
+
+    monkeypatch.setattr(cli_mod, "run_sweep", _fake_run_sweep)
+
+    exit_code = cli_mod.main(
+        ["brief", "sweep", "wl.txt", "--draws", "1", "--sweep-dir", str(tmp_path / "sweep"), "--map"]
+    )
+
+    assert exit_code == 0
+    assert captured["arm"] == "map"
+
+
+def test_main_brief_sweep_prints_error_and_returns_nonzero_on_a_mixed_arm_refusal(
+    tmp_path, monkeypatch, capsys
+):
+    """The mixed-arm refusal (issue #808) reaches the CLI through the same
+    `SweepError` catch `axial brief sweep` already has -- naming the arm
+    already in `--sweep-dir` in the printed error."""
+    import axial.cli as cli_mod
+    from axial.brief.sweep import SweepError
+
+    def _refuse(worklist_path, *, draws, sweep_dir, workers, arm):
+        raise SweepError(f"{sweep_dir} already holds draws for arm 'map'; refusing arm {arm!r}")
+
+    monkeypatch.setattr(cli_mod, "run_sweep", _refuse)
+
+    exit_code = cli_mod.main(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "1",
+            "--sweep-dir",
+            str(tmp_path / "sweep"),
+            "--arm",
+            "name",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert "arm 'map'" in captured.err
+    assert "'name'" in captured.err
