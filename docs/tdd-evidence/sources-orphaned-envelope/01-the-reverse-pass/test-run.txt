@@ -1,0 +1,14 @@
+$ uv run pytest src/axial/test_sources.py -k orphaned
+8 passed in 6.91s
+
+$ uv run pytest src/axial/test_sources.py -k resolves    # the call-time lock
+2 passed in 6.68s
+
+$ uv run pytest src/axial/test_cli.py -k main_sources
+3 passed in 22.01s
+
+$ uv run pytest        # full fast tier (src, not slow, xdist)
+2610 passed in 45.29s
+
+$ uv run ruff check
+All checks passed!

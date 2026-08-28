@@ -1,0 +1,35 @@
+=== The healthy corpus: 35 raw files, 35 envelopes ===================
+
+$ ls data/sources | wc -l ; ls data/envelopes | wc -l
+35
+35
+
+$ uv run axial sources --backend local --check > out.txt ; echo $?
+0
+
+$ tail -4 out.txt
+wedeen-2019.pdf	done	
+white-2011.pdf	done	
+wimmer-2013.pdf	done	
+zaum-2007.pdf	done	
+
+No orphan block, exit 0: a sound corpus prints exactly what it always did.
+
+=== The real break, reproduced: beshara-2011.pdf withheld ============
+
+34 of the 35 real sources are hardlinked into a scratch directory -- no
+bytes copied, data/sources never touched -- and the real CLI entrypoint
+runs against it with only axial.sources.CORPUS_SOURCES_DIR repointed.
+The real data/envelopes/ is read as-is, all 35 of them.
+
+$ python -c "cli.main([\"sources\", \"--backend\", \"local\", \"--check\"])"
+wedeen-2019.pdf	done	
+white-2011.pdf	done	
+wimmer-2013.pdf	done	
+zaum-2007.pdf	done	
+
+sources: ingested, but the raw file is gone -- the corpus pin cannot be computed
+name	status	reason
+beshara-2011-8410a9059300	missing	ingested, but no raw file in D:/tmp-819-fake-sources hashes to it
+
+exit code: 1      (34 raw files against 35 envelopes, 0.91s total)
