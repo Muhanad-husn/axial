@@ -18,6 +18,7 @@ import pytest
 
 from axial.argmap.ask import LandedPosition
 from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
     REASON_ASSIGNED,
     REASON_NOT_FOUND,
     REASON_OUT_OF_SCHEME,
@@ -430,3 +431,263 @@ def test_cross_source_ordering_is_judged_per_category_not_against_every_landed_s
     war = next(c for c in result.categories if c.category_id == "war-and-state")
     assert war.chunk_ids == ("n3", "n2")
     assert [p.position_id for p in result.positions][0] == "pos-b-cross"
+
+
+# ---------------------------------------------------------------------------
+# The reason counts (issue #822, item 1): why each landed note produced no
+# edge, counted rather than discarded.
+# ---------------------------------------------------------------------------
+
+
+def test_the_four_reasons_are_counted_over_the_landed_notes(tmp_path: Path):
+    """A reader of the recorded block must be able to tell "the scheme does
+    not fit this corpus" (refused/out-of-scheme) from "these notes were never
+    assigned" (not-found) -- the conflation §7.18 records as having cost #805
+    a 50.7%-vs-88.5% misreading."""
+    pos_landed = _position("pos-landed", ["n1", "n2", "n3", "n4"], ["src-1"])
+    pos_other = _position("pos-other", ["n9"], ["src-2"])
+    positions = [pos_landed, pos_other]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),  # assigned
+            _assignment("n2", "src-1", None),  # refused
+            _assignment("n3", "src-1", None, out_of_scheme="a stray answer"),
+            # n4 has no record at all -- not-found
+            _assignment("n9", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert result.reasons == {
+        REASON_ASSIGNED: 1,
+        REASON_REFUSED: 1,
+        REASON_OUT_OF_SCHEME: 1,
+        REASON_NOT_FOUND: 1,
+    }
+
+
+def test_every_reason_key_is_present_even_at_zero(tmp_path: Path):
+    """An absent key would read as "not measured"; a zero says the reason
+    was looked for and did not occur."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_other = _position("pos-other", ["n2"], ["src-2"])
+    positions = [pos_landed, pos_other]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n2", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert set(result.reasons) == set(ALL_REASONS)
+    assert result.reasons[REASON_ASSIGNED] == 1
+    assert result.reasons[REASON_REFUSED] == 0
+    assert result.reasons[REASON_OUT_OF_SCHEME] == 0
+    assert result.reasons[REASON_NOT_FOUND] == 0
+
+
+# ---------------------------------------------------------------------------
+# A note can sit in more than one position (issue #822, item 3). Measured
+# against every built map on disk: `data/map/9b796b3a6312b329/positions.jsonl`
+# holds 1,937 positions over 5,596 distinct chunks, 344 of which appear in 2
+# to 5 positions; the two older builds show 278/5,177 and 263/5,509, max
+# multiplicity 5 in all three. The positions do NOT partition the notes.
+# ---------------------------------------------------------------------------
+
+
+def test_an_edge_survives_when_only_the_first_position_holding_the_note_is_excluded(
+    tmp_path: Path,
+):
+    """The dropped edge. `pos-first` comes first in `positions.jsonl` order
+    and is already in the corridor; `pos-second` holds the same note and is
+    not excluded, so the category still reaches it. Keeping only the first
+    position per chunk lost this edge silently, and made which position a
+    category hit was attributed to depend on file order."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_first = _position("pos-first", ["n3"], ["src-2"])
+    pos_second = _position("pos-second", ["n3"], ["src-2"])
+    positions = [pos_landed, pos_first, pos_second]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        {"pos-first"},
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert [p.position_id for p in result.positions] == ["pos-second"]
+    assert result.positions[0].chunk_ids == ("n3",)
+
+
+def test_a_note_in_several_surviving_positions_is_offered_through_exactly_one(tmp_path: Path):
+    """A second edge for the same note would add nothing: `assemble_map_
+    evidence` emits a chunk id once however many positions carry it. So the
+    join picks one surviving position -- the lowest `position_id` -- and the
+    note costs the category one slot, not two."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_a = _position("pos-a", ["n3"], ["src-2"])
+    pos_b = _position("pos-b", ["n3"], ["src-2"])
+    positions = [pos_landed, pos_a, pos_b]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    result = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+
+    assert [p.position_id for p in result.positions] == ["pos-a"]
+    assert result.categories[0].chunk_ids == ("n3",)
+
+
+def test_which_position_a_note_is_offered_through_does_not_depend_on_file_order(
+    tmp_path: Path,
+):
+    """The other half of the defect: attribution used to follow whichever
+    position `positions.jsonl` listed first. Same two positions, reversed in
+    the file, same answer."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    pos_a = _position("pos-a", ["n3"], ["src-2"])
+    pos_b = _position("pos-b", ["n3"], ["src-2"])
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+        ],
+    )
+
+    def run(positions):
+        return vocabulary_neighbours(
+            [_landed(pos_landed)],
+            set(),
+            positions,
+            "mechanism",
+            vocabulary_dir=vocabulary_dir,
+        )
+
+    forward = run([pos_landed, pos_a, pos_b])
+    reversed_ = run([pos_landed, pos_b, pos_a])
+
+    assert [p.position_id for p in forward.positions] == ["pos-a"]
+    assert [p.position_id for p in reversed_.positions] == ["pos-a"]
+
+
+def test_the_per_category_cap_counts_distinct_notes(tmp_path: Path):
+    """The budget contract does not move (issue #822): the cap counts the
+    distinct notes a category hands to assembly. Three notes, one of them
+    sitting in three positions, still spend three of the cap -- so
+    `cap_applied` keeps meaning `len(chunk_ids) == cap`."""
+    pos_landed = _position("pos-landed", ["n1"], ["src-1"])
+    multi = [_position(f"pos-{letter}", ["n3"], ["src-2"]) for letter in "abc"]
+    pos_d = _position("pos-d", ["n4"], ["src-2"])
+    pos_e = _position("pos-e", ["n5"], ["src-2"])
+    positions = [pos_landed, *multi, pos_d, pos_e]
+
+    vocabulary_dir = _write_vocabulary(
+        tmp_path / "vocab",
+        "mechanism",
+        [
+            _assignment("n1", "src-1", "war-and-state"),
+            _assignment("n3", "src-2", "war-and-state"),
+            _assignment("n4", "src-2", "war-and-state"),
+            _assignment("n5", "src-2", "war-and-state"),
+        ],
+    )
+
+    uncapped = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+    )
+    capped = vocabulary_neighbours(
+        [_landed(pos_landed)],
+        set(),
+        positions,
+        "mechanism",
+        vocabulary_dir=vocabulary_dir,
+        cap=2,
+    )
+
+    assert sorted(uncapped.categories[0].chunk_ids) == ["n3", "n4", "n5"]
+    assert uncapped.categories[0].cap_applied is False
+    assert len(capped.categories[0].chunk_ids) == 2
+    assert capped.categories[0].cap_applied is True
+
+
+def test_out_of_scheme_is_found_on_any_record_not_only_the_first():
+    """issue #822, item 5. Moot for `mechanism`, which is scalar -- one
+    record per note. Live the moment a list-valued column arrives, which the
+    module docstring advertises as needing "no new code path": a note whose
+    SECOND element answered outside the scheme was reported as a plain
+    refusal, and the two mean different things to a reader deciding whether
+    the scheme fits the corpus."""
+    by_chunk = {
+        "n1": [
+            _assignment("n1", "src-1", None, element_index=0),
+            _assignment("n1", "src-1", None, element_index=1, out_of_scheme="a stray answer"),
+        ]
+    }
+
+    category_id, reason = category_for_note("n1", by_chunk)
+
+    assert category_id is None
+    assert reason == REASON_OUT_OF_SCHEME
+
+
+def test_a_note_refused_on_every_record_is_still_a_refusal():
+    """The scan must not turn every multi-record refusal into an
+    out-of-scheme report."""
+    by_chunk = {
+        "n1": [
+            _assignment("n1", "src-1", None, element_index=0),
+            _assignment("n1", "src-1", None, element_index=1),
+        ]
+    }
+
+    assert category_for_note("n1", by_chunk) == (None, REASON_REFUSED)

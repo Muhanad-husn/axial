@@ -153,7 +153,11 @@ from typing import Any, Callable
 from axial.analyze.synthesis import SynthesisError
 from axial.answer.record import AnswerError, run_brief
 from axial.argmap.ask import AskError
-from axial.argmap.vocabulary_join import NoVocabularyError
+from axial.argmap.vocabulary_join import (
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    NoVocabularyError,
+)
 from axial.brief.fork import ForkCheckError
 from axial.brief.intake import Brief, BriefError, load_brief
 from axial.brief.interrogate import InterrogationError
@@ -526,6 +530,10 @@ def _run_one_draw(
     step_budget: int | None,
     thin_result_floor: int | None,
     arm: str = DEFAULT_ARM,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
+    vocabulary_dir: Path | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
 ) -> tuple[DrawOutcome, dict[str, Any] | None]:
     """Run (or resume) one `(brief, draw)` pair. Returns the outcome plus
     the resulting analysis record dict (`None` for a FAILed draw).
@@ -547,7 +555,13 @@ def _run_one_draw(
     #809 compares the arms off exactly these directories. `run_brief` owns
     the arm vocabulary now (`axial.answer.record.KNOWN_ARMS`) and refuses
     an unrecognised value itself, which is also why nothing here re-declares
-    the list."""
+    the list.
+
+    The four `vocabulary_*` arguments (issue #822) are forwarded to
+    `run_brief` verbatim and matter only on the `map+vocab` arm. Their
+    defaults are `axial.argmap.vocabulary_join`'s own constants, imported
+    rather than restated, so this module never becomes a second place a
+    default can drift."""
     brief_stem = Path(brief_path).stem
     analyses_dir = draw_dir(sweep_dir, brief_stem, draw_index)
     record_file = _record_path(sweep_dir, brief_stem, draw_index, brief.brief_id)
@@ -609,6 +623,10 @@ def _run_one_draw(
             step_budget=step_budget,
             thin_result_floor=thin_result_floor,
             arm=arm,
+            vocabulary_column=vocabulary_column,
+            vocabulary_level=vocabulary_level,
+            vocabulary_dir=vocabulary_dir,
+            vocabulary_cap=vocabulary_cap,
         )
     except BRIEF_RUN_ERRORS as exc:
         elapsed = time.monotonic() - start
@@ -711,6 +729,10 @@ def run_sweep(
     score_gates: bool = True,
     use_map: bool = False,
     arm: str | None = None,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
+    vocabulary_dir: Path | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
 ) -> SweepSummary:
     """Run every brief in `worklist_path` `draws` times each, bounded to
     `workers` concurrent `(brief, draw)` attempts (module docstring), then
@@ -742,6 +764,13 @@ def run_sweep(
     boolean seam rather than a second driver: everything else here (resume,
     one fresh client per draw, per-draw latency, cost aggregation,
     `summary.json`) is exactly what a smoke run needs.
+
+    The four `vocabulary_*` arguments (issue #822) reach every draw
+    unchanged and bite only on the `map+vocab` arm -- the column and level
+    the join reads, where the built vocabulary lives, and the per-category
+    cap. The cap is the one the live run showed binding on every category,
+    so it is what a measurement turns; #809 turns it, and before this it
+    could not be set from outside `run_map_ask_for_brief`'s own default.
 
     Raises `SweepError` before any draw is attempted for an unreadable
     worklist, `draws < 1`, or a mismatched arm on an existing `sweep_dir`.
@@ -800,6 +829,10 @@ def run_sweep(
                 step_budget=step_budget,
                 thin_result_floor=thin_result_floor,
                 arm=resolved_arm,
+                vocabulary_column=vocabulary_column,
+                vocabulary_level=vocabulary_level,
+                vocabulary_dir=vocabulary_dir,
+                vocabulary_cap=vocabulary_cap,
             ): (brief_path, draw_index)
             for brief_path, brief, draw_index in work_items
         }

@@ -116,7 +116,12 @@ from axial.argmap.ask import (
     resolve_pinned_map_dir,
     run_map_ask_for_brief,
 )
-from axial.argmap.vocabulary_join import VocabularyJoinResult
+from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    VocabularyJoinResult,
+)
 from axial.brief.fork import (
     ForkAnswer,
     ForkCheckError,
@@ -291,18 +296,37 @@ def _vocabulary_to_dict(
 
     **Two counts per category, because they differ by a factor of six.**
     `offered_note_count` is what the join handed to assembly; `assembled_
-    note_count` is how many of those the assembly cap actually kept. The
+    note_count` is how many of those survived `assemble_map_evidence`'s
+    SHARED cap of 90, which is a different cap from this block's own
+    per-category `cap` and its `cap_applied` flag -- a category can be well
+    under 20 and still lose most of its notes to the shared budget, so the
+    two counts differing is not evidence the per-category cap bit. The
     first live run offered 240 notes across twelve categories and assembled
     38 of them. A single `note_count` invited exactly one misreading -- that
     the vocabulary step contributed 240 passages to an answer built from 90
     -- and issue #809 reads these figures to decide whether the derived
     vocabulary pays. `source_count` stays a count over what was OFFERED,
-    which is what the cap selected on."""
+    which is what the per-category cap selected on.
+
+    **`reasons` records the category-assignment outcome of every landed
+    note (issue #822).** One count per landed note, keyed on `ALL_REASONS`
+    with every reason present even at zero: `assigned` reached a category,
+    `refused` is the model declining, `out-of-scheme` is an answer naming
+    no committed category, `not-found` is a note never assigned in this
+    column at all. `assigned` is not the same as "produced an edge": an
+    assigned note whose category is a singleton, or whose every neighbour
+    position is already excluded, is counted `assigned` and contributes
+    nothing. Without it a thin run is unreadable -- a scheme that
+    does not fit this corpus and a column half of whose notes were never
+    assigned produce the same small `categories` list, which is exactly the
+    conflation §7.18 records as having cost #805 a 50.7%-vs-88.5%
+    misreading. A zero is a measurement; an absent key would not be."""
     assembled = set(assembled_chunk_ids)
     return {
         "column": result.column,
         "level": result.level,
         "cap": result.cap,
+        "reasons": {reason: int(result.reasons.get(reason, 0)) for reason in ALL_REASONS},
         "categories": [
             {
                 "category_id": category.category_id,
@@ -636,7 +660,10 @@ def run_brief(
     map_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_pin: str | None = None,
+    vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
+    vocabulary_level: int | None = None,
     vocabulary_dir: Path | None = None,
+    vocabulary_cap: int = PER_CATEGORY_CAP,
     on_event: EventCallback | None = None,
     session_id: str | None = None,
     on_fork: Callable[[ForkCheckResult], ForkAnswer | None] | None = None,
@@ -734,8 +761,16 @@ def run_brief(
     the join is a deterministic step in the map arm's own walk (module
     docstring's "the join is a step, not a tool"), never a tool a caller
     could otherwise silently mis-name into the name-layer default.
-    `vocabulary_dir` is forwarded to `run_map_ask_for_brief` verbatim,
-    ignored on every arm but `map+vocab`."""
+    **All four `vocabulary_*` arguments are forwarded to `run_map_ask_for_
+    brief` verbatim (issue #822)**, and every one of them is ignored on any
+    arm but `map+vocab`: which column to join on, which level of its
+    scheme, where the built vocabulary lives, and how many neighbours one
+    category may hand to assembly. The first cut carried `vocabulary_dir`
+    alone, which was the wrong one to pick -- the live run showed the cap
+    binding on every category, so it is the knob a measurement actually
+    turns, and #809 turns it. Their defaults are `run_map_ask_for_brief`'s
+    own, named here from the same constants rather than restated as
+    literals."""
     if arm is not None and arm not in KNOWN_ARMS:
         raise UnknownArmError(arm)
     resolved_use_map = use_map if arm is None else (arm != NAME_ARM)
@@ -793,7 +828,10 @@ def run_brief(
                     config_path=config_path,
                     pin=map_pin,
                     use_vocabulary=resolved_use_vocabulary,
+                    vocabulary_column=vocabulary_column,
+                    vocabulary_level=vocabulary_level,
                     vocabulary_dir=vocabulary_dir,
+                    vocabulary_cap=vocabulary_cap,
                 )
             model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
             evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)

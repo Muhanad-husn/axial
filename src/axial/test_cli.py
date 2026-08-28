@@ -1132,7 +1132,7 @@ def test_main_brief_sweep_forwards_arm_to_run_sweep(tmp_path, monkeypatch):
 
     captured = {}
 
-    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm):
+    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm, **_kwargs):
         captured["worklist_path"] = worklist_path
         captured["draws"] = draws
         captured["sweep_dir"] = sweep_dir
@@ -1168,7 +1168,7 @@ def test_main_brief_sweep_map_flag_forwards_arm_map_to_run_sweep(tmp_path, monke
 
     captured = {}
 
-    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm):
+    def _fake_run_sweep(worklist_path, *, draws, sweep_dir, workers, arm, **_kwargs):
         captured["arm"] = arm
         return SweepSummary(
             briefs=[], total_draws=0, ok_count=0, fail_count=0, skip_count=0, arm=arm
@@ -1193,7 +1193,7 @@ def test_main_brief_sweep_prints_error_and_returns_nonzero_on_a_mixed_arm_refusa
     import axial.cli as cli_mod
     from axial.brief.sweep import SweepError
 
-    def _refuse(worklist_path, *, draws, sweep_dir, workers, arm):
+    def _refuse(worklist_path, *, draws, sweep_dir, workers, arm, **_kwargs):
         raise SweepError(f"{sweep_dir} already holds draws for arm 'map'; refusing arm {arm!r}")
 
     monkeypatch.setattr(cli_mod, "run_sweep", _refuse)
@@ -1441,3 +1441,208 @@ def test_main_sources_keeps_the_backends_own_non_zero_exit_when_nothing_is_orpha
     monkeypatch.setattr(cli_mod, "scan_orphaned_envelopes", lambda *a, **kw: [])
 
     assert main(["sources", "--backend", "drive", "--check"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# The four vocabulary knobs on the command line (issue #822, item 2). #809
+# measures the `map+vocab` arm next and the per-category cap binds on every
+# category, so a knob nobody can set from the command line would force a code
+# change mid-measurement.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_brief_run_defaults_the_vocabulary_knobs_to_the_join_declaration():
+    from axial.argmap.vocabulary_join import DEFAULT_VOCABULARY_COLUMN, PER_CATEGORY_CAP
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["brief", "run", "b.yaml"])
+
+    assert args.vocabulary_column == DEFAULT_VOCABULARY_COLUMN
+    assert args.vocabulary_level is None
+    assert args.vocabulary_dir is None
+    assert args.vocabulary_cap == PER_CATEGORY_CAP
+
+
+def test_build_parser_brief_run_recognises_the_four_vocabulary_flags(tmp_path):
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "brief",
+            "run",
+            "b.yaml",
+            "--arm",
+            "map+vocab",
+            "--vocabulary-column",
+            "stops_holding",
+            "--vocabulary-level",
+            "2",
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--vocabulary-cap",
+            "7",
+        ]
+    )
+
+    assert args.vocabulary_column == "stops_holding"
+    assert args.vocabulary_level == 2
+    assert args.vocabulary_dir == str(tmp_path / "vocab")
+    assert args.vocabulary_cap == 7
+
+
+def test_build_parser_brief_sweep_recognises_the_four_vocabulary_flags(tmp_path):
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "3",
+            "--sweep-dir",
+            str(tmp_path),
+            "--arm",
+            "map+vocab",
+            "--vocabulary-column",
+            "stops_holding",
+            "--vocabulary-level",
+            "2",
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--vocabulary-cap",
+            "7",
+        ]
+    )
+
+    assert args.vocabulary_column == "stops_holding"
+    assert args.vocabulary_level == 2
+    assert args.vocabulary_dir == str(tmp_path / "vocab")
+    assert args.vocabulary_cap == 7
+
+
+def test_main_brief_run_forwards_the_vocabulary_knobs_to_run_brief(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+
+    captured = {}
+
+    def _fake_run_brief(_brief, **kwargs):
+        captured.update(kwargs)
+        raise cli_mod.AnswerError("stop after the call is captured")
+
+    monkeypatch.setattr(cli_mod, "load_brief", lambda _path: object())
+    monkeypatch.setattr(cli_mod, "get_client", lambda: object())
+    monkeypatch.setattr(cli_mod, "run_brief", _fake_run_brief)
+
+    exit_code = cli_mod.main(
+        [
+            "brief",
+            "run",
+            "b.yaml",
+            "--arm",
+            "map+vocab",
+            "--vocabulary-column",
+            "stops_holding",
+            "--vocabulary-level",
+            "2",
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--vocabulary-cap",
+            "7",
+        ]
+    )
+
+    assert exit_code == 1  # the fake raises once it has captured the call
+    assert captured["arm"] == "map+vocab"
+    assert captured["vocabulary_column"] == "stops_holding"
+    assert captured["vocabulary_level"] == 2
+    assert captured["vocabulary_dir"] == Path(tmp_path / "vocab")
+    assert captured["vocabulary_cap"] == 7
+
+
+def test_main_brief_sweep_forwards_the_vocabulary_knobs_to_run_sweep(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+    from axial.brief.sweep import SweepSummary
+
+    captured = {}
+
+    def _fake_run_sweep(worklist_path, **kwargs):
+        captured.update(kwargs)
+        return SweepSummary(
+            briefs=[], total_draws=0, ok_count=0, fail_count=0, skip_count=0, arm=kwargs["arm"]
+        )
+
+    monkeypatch.setattr(cli_mod, "run_sweep", _fake_run_sweep)
+
+    exit_code = cli_mod.main(
+        [
+            "brief",
+            "sweep",
+            "wl.txt",
+            "--draws",
+            "1",
+            "--sweep-dir",
+            str(tmp_path / "sweep"),
+            "--arm",
+            "map+vocab",
+            "--vocabulary-column",
+            "stops_holding",
+            "--vocabulary-level",
+            "2",
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--vocabulary-cap",
+            "7",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["vocabulary_column"] == "stops_holding"
+    assert captured["vocabulary_level"] == 2
+    assert captured["vocabulary_dir"] == Path(tmp_path / "vocab")
+    assert captured["vocabulary_cap"] == 7
+
+
+# ---------------------------------------------------------------------------
+# `axial brief smoke --arm` (issue #822, item 4): the last place an arm name
+# could not travel.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_brief_smoke_defaults_arm_to_none_so_map_still_decides():
+    """`--arm` must default to `None`, not `"name"`: a `"name"` default
+    would override `--map` and silently run the name layer."""
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["brief", "smoke"])
+
+    assert args.arm is None
+    assert args.use_map is False
+
+
+def test_build_parser_brief_smoke_recognises_the_arm_flag():
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["brief", "smoke", "--arm", "map+vocab"])
+
+    assert args.arm == "map+vocab"
+
+
+def test_main_brief_smoke_forwards_the_arm_to_run_smoke(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+    from axial.brief.smoke import Budgets, SmokeSummary
+
+    captured = {}
+
+    def _fake_run_smoke(**kwargs):
+        captured.update(kwargs)
+        return SmokeSummary(briefs=[], budgets=Budgets(None, None))
+
+    monkeypatch.setattr(cli_mod, "run_smoke", _fake_run_smoke)
+
+    exit_code = cli_mod.main(
+        ["brief", "smoke", "--sweep-dir", str(tmp_path / "smoke"), "--arm", "map+vocab"]
+    )
+
+    assert exit_code == 0
+    assert captured["arm"] == "map+vocab"

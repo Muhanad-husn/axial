@@ -25,6 +25,17 @@ column the same way at all. The join reads each of `landed`'s own notes'
 assignment records and only follows the categories THAT note was filed
 under.
 
+**A note is not in exactly one position.** The map's positions overlap:
+across all three builds on disk, 263-344 chunks of ~5,200-5,600 sit in 2 to
+5 positions each (issue #822). The join indexes each chunk to EVERY position
+holding it and applies `excluded_position_ids` per position, so an edge is
+never lost because the note's first-listed position happened to be landed or
+in the corridor. Where several of a note's positions survive it is offered
+through exactly one of them, the lowest `position_id`: `assemble_map_evidence`
+emits a chunk id once however many positions carry it, so a second edge for
+the same note would add nothing to the answer while spending a cap slot a
+different note could have had.
+
 **The per-category cap.** A `mechanism` category holds 309-623 notes
 (measured, #806's own manifest) against `assemble_map_evidence`'s shared
 `ASSEMBLE_CAP = 90` (`axial.argmap.ask`) -- uncapped, a single category
@@ -90,6 +101,14 @@ REASON_REFUSED = "refused"
 REASON_OUT_OF_SCHEME = "out-of-scheme"
 REASON_NOT_FOUND = "not-found"
 
+# Every reason, in the order a reader wants them: the one that produced an
+# edge first, then the three that did not. `VocabularyJoinResult.reasons` and
+# `_vocabulary_to_dict`'s own block (`axial.answer.record`) both key on this
+# so a reason that did not occur is reported as a zero rather than an absent
+# key -- an absent key reads as "not measured", which is the conflation
+# issue #822 exists to end.
+ALL_REASONS = (REASON_ASSIGNED, REASON_REFUSED, REASON_OUT_OF_SCHEME, REASON_NOT_FOUND)
+
 
 class VocabularyJoinError(Exception):
     """Base class for every error `axial.argmap.vocabulary_join` raises."""
@@ -146,6 +165,11 @@ class CategoryReach:
     a fact about this run, recorded in `_map_retrieval_to_dict`
     (`axial.answer.record`) rather than left to be inferred.
 
+    One note is one entry here and one slot of the cap, even when the map
+    holds it in several positions (issue #822): the join offers it through
+    exactly one of them, so `len(chunk_ids) == cap` is still what
+    `cap_applied` means.
+
     A category with exactly one member -- the landed note itself -- is
     still reported here, with `chunk_ids` empty: reached, but with nobody
     else in it, which is a different fact from a note the scheme refused
@@ -166,13 +190,28 @@ class VocabularyJoinResult:
     reached (`categories`, including one contributing zero neighbours), and
     the neighbour positions themselves (`positions`) -- already ordered
     (cross-source first) and already capped, ready to hand straight to
-    `assemble_map_evidence` alongside the landed and corridor positions."""
+    `assemble_map_evidence` alongside the landed and corridor positions.
+
+    `reasons` (issue #822) is the CATEGORY-ASSIGNMENT outcome of each of
+    `landed`'s own distinct notes -- `category_for_note`'s own answer,
+    keyed on `ALL_REASONS` with every reason present even at zero. It
+    answers the first question anyone asks of an underperforming run:
+    whether the notes reached no category because the scheme refused them,
+    because the model answered outside the scheme, or because they were
+    never assigned at all. `assigned` is not the same as "produced an
+    edge": an assigned note whose category turns out to be a singleton,
+    or whose every neighbour position is excluded, is counted here as
+    `assigned` and contributes nothing. Required, never defaulted -- a
+    result carrying an empty mapping would render four honest-looking
+    zeros through `_vocabulary_to_dict`, which is the "not measured reads
+    as measured" conflation `ALL_REASONS` exists to end."""
 
     column: str
     level: int
     cap: int
     categories: tuple[CategoryReach, ...]
     positions: tuple[VocabularyPosition, ...]
+    reasons: Mapping[str, int]
 
 
 def category_for_note(
@@ -187,7 +226,13 @@ def category_for_note(
     model answered with a string naming no committed category; `(None,
     "refused")` when it genuinely declined. Only "refused" is a judgment
     about the note itself -- the other two `None` reasons are facts about
-    the build, never conflated with it."""
+    the build, never conflated with it.
+
+    Every one of the note's records at this level is read, not only the
+    first (issue #822): one assigned record makes the note assigned, and
+    one out-of-scheme record makes it out-of-scheme. That is invisible on
+    a scalar column like `mechanism`, where a note has exactly one record,
+    and it is the whole difference on a list-valued one."""
     records = by_chunk.get(chunk_id)
     if not records:
         return None, REASON_NOT_FOUND
@@ -195,8 +240,14 @@ def category_for_note(
         category_id = record.get("category_id")
         if isinstance(category_id, str):
             return category_id, REASON_ASSIGNED
-    first = records[0]
-    if first.get("out_of_scheme"):
+    # Every record, not just the first (issue #822). Moot for `mechanism`,
+    # which is scalar and gives a note one record; live the moment a
+    # list-valued column arrives, which this module advertises as needing
+    # no new code path. A note whose second element answered outside the
+    # scheme read as a plain refusal, and "the model declined" and "the
+    # model answered something the scheme does not hold" are the two facts
+    # a reader separates to decide whether the scheme fits the corpus.
+    if any(record.get("out_of_scheme") for record in records):
         return None, REASON_OUT_OF_SCHEME
     return None, REASON_REFUSED
 
@@ -289,10 +340,21 @@ def vocabulary_neighbours(
             source_id = str(record.get("source_id", ""))
             members_by_category.setdefault(category_id, []).append((chunk_id, source_id))
 
-    position_by_chunk: dict[str, Mapping[str, Any]] = {}
+    # **A note can sit in more than one position (issue #822).** The first
+    # cut kept only the first position holding each chunk, which assumes the
+    # map's positions partition the notes. They do not: measured against
+    # every built map on disk, `data/map/9b796b3a6312b329/positions.jsonl`
+    # holds 1,937 positions over 5,596 distinct chunks and 344 of those
+    # chunks appear in 2 to 5 positions; the two older builds show 278/5,177
+    # and 263/5,509, with the same maximum multiplicity of 5. Under the old
+    # rule a candidate whose FIRST position happened to be landed or in the
+    # corridor was dropped even though another, unexcluded position also
+    # held it, and which position a category hit was attributed to depended
+    # on file order.
+    positions_by_chunk: dict[str, list[Mapping[str, Any]]] = {}
     for position in positions:
         for chunk_id in position["chunk_ids"]:
-            position_by_chunk.setdefault(chunk_id, position)
+            positions_by_chunk.setdefault(chunk_id, []).append(position)
 
     landed_chunk_ids = {chunk_id for position in landed for chunk_id in position.chunk_ids}
     landed_sources = {source for position in landed for source in position.sources}
@@ -308,10 +370,20 @@ def vocabulary_neighbours(
     # neighbours lead with books other than the one the ASKING note came
     # from, so the comparison set is the sources of the landed notes that
     # touched THIS category.
+    # **The reason is counted, not discarded (issue #822).** `category_for_
+    # note` distinguishes four outcomes and the join's first cut dropped
+    # three of them on the floor, so nothing in the recorded block said how
+    # many landed notes produced no edge or why. The counts are over
+    # `landed`'s own DISTINCT notes -- one vote each, the same set the join
+    # itself walks -- and every reason keeps a key even at zero, so
+    # "the scheme does not fit this corpus" (refused, out-of-scheme) reads
+    # differently from "these notes were never assigned" (not-found).
+    reasons: dict[str, int] = {reason: 0 for reason in ALL_REASONS}
     touched_category_ids: set[str] = set()
     landed_sources_by_category: dict[str, set[str]] = {}
     for chunk_id in landed_chunk_ids:
-        category_id, _reason = category_for_note(chunk_id, by_chunk)
+        category_id, reason = category_for_note(chunk_id, by_chunk)
+        reasons[reason] = reasons.get(reason, 0) + 1
         if category_id is None:
             continue
         touched_category_ids.add(category_id)
@@ -331,11 +403,34 @@ def vocabulary_neighbours(
         for chunk_id, source_id in members_by_category.get(category_id, []):
             if chunk_id in landed_chunk_ids or chunk_id in seen_chunk_ids:
                 continue
-            position = position_by_chunk.get(chunk_id)
-            if position is None or position["position_id"] in excluded_position_ids:
+            # **Exclusion is applied per position, not to the chunk (issue
+            # #822).** The map's positions do not partition the notes --
+            # 263-344 chunks of ~5,200-5,600 sit in 2 to 5 positions in each
+            # of the three builds on disk -- so a note whose FIRST listed
+            # position happens to be landed or in the corridor must still
+            # reach the reader through one that is not. Keeping only the
+            # first position per chunk lost that edge silently, and made
+            # attribution depend on `positions.jsonl` file order.
+            #
+            # One surviving position, not all of them. A `VocabularyPosition`
+            # carries only the matched note, and `assemble_map_evidence`
+            # emits a chunk id once however many positions offer it, so a
+            # second edge for the same note adds nothing to the answer and
+            # spends a cap slot a DIFFERENT note could have had. The lowest
+            # `position_id` is the pick: deterministic, and independent of
+            # file order, which is the half of this defect a survival rule
+            # alone would not have fixed.
+            surviving = [
+                position
+                for position in positions_by_chunk.get(chunk_id, ())
+                if position["position_id"] not in excluded_position_ids
+            ]
+            if not surviving:
                 continue
             seen_chunk_ids.add(chunk_id)
-            candidates.append((chunk_id, source_id, position))
+            candidates.append(
+                (chunk_id, source_id, min(surviving, key=lambda p: p["position_id"]))
+            )
 
         # Cross-source first (issue #651: only 40.5% of argument-map edges
         # reach another book), then a deterministic total order. The
@@ -412,4 +507,5 @@ def vocabulary_neighbours(
         cap=cap,
         categories=tuple(categories),
         positions=tuple(vocabulary_positions),
+        reasons=reasons,
     )

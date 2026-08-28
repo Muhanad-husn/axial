@@ -450,6 +450,7 @@ def run_smoke(
     cases_dir: Path | None = None,
     workers: int = 1,
     use_map: bool = False,
+    arm: str | None = None,
 ) -> SmokeSummary:
     """Run the smoke set once each and check every record mechanically.
 
@@ -465,7 +466,17 @@ def run_smoke(
     the argument-map retrieval path instead of the name-layer loop --
     forwarded verbatim to `run_sweep`. `_check_coverage_map` already knows
     how to check a map-retrieved record; nothing else in this module needs
-    to branch on it."""
+    to branch on it.
+
+    `arm` (issue #822) is the named retrieval arm, forwarded verbatim
+    alongside `use_map` and, when given, taking precedence over it. Until
+    this argument existed the smoke path passed only the boolean, so
+    `map+vocab` was unreachable here -- the same collapse #807 fixed in
+    `brief sweep`, left behind because that slice's scope stopped at the
+    sweep. The precedence is NOT re-derived here: `run_sweep` already
+    resolves the pair (`arm` wins; `use_map=True` with no `arm` still reads
+    as `"map"`), and two places deciding one question is how the first
+    collapse survived."""
     paths = smoke_brief_paths(briefs_dir)
     if not paths:
         directory = briefs_dir if briefs_dir is not None else SMOKE_BRIEFS_DIR
@@ -493,6 +504,7 @@ def run_smoke(
         # cost budget measure the judge instead of the run.
         score_gates=False,
         use_map=use_map,
+        arm=arm,
     )
 
     budgets = resolve_budgets(config_path)

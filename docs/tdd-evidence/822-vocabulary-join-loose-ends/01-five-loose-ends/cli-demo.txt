@@ -1,0 +1,121 @@
+$ uv run ruff check
+All checks passed!
+
+$ uv run axial brief run --help
+usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}]
+                       [--vocabulary-column VOCABULARY_COLUMN]
+                       [--vocabulary-level VOCABULARY_LEVEL]
+                       [--vocabulary-dir VOCABULARY_DIR]
+                       [--vocabulary-cap VOCABULARY_CAP]
+                       brief_path
+
+positional arguments:
+  brief_path            path to a versioned brief YAML file
+
+options:
+  -h, --help            show this help message and exit
+  --map                 retrieve through the argument map (issue #572) instead
+                        of the name-layer loop: the door states the arguments
+                        the brief is about, lands them on the map's positions,
+                        follows every relation into the corridor, and
+                        assembles evidence round-robin across positions and
+                        sources -- opt-in, off by default; synthesis and
+                        everything after it is unchanged. Superseded by --arm
+                        when both are given; kept so no existing invocation
+                        breaks
+  --arm {name,map,map+vocab}
+                        named retrieval arm to run (issue #807): 'name'
+                        (default) is the existing name-layer loop, 'map' is
+                        the argument-map path (issue #572) with no vocabulary
+                        step, 'map+vocab' adds the vocabulary step -- passages
+                        that share a derived-vocabulary category (issue #806)
+                        join the map's own walk between the corridor and
+                        assembly. Takes precedence over --map when both are
+                        given.
+  --vocabulary-column VOCABULARY_COLUMN
+                        derived-vocabulary column the join reads (issue
+                        #806/#807; default: mechanism) -- only used on --arm
+                        map+vocab
+  --vocabulary-level VOCABULARY_LEVEL
+                        level of that column's scheme to join at (default: the
+                        column's finest level, read off its own manifest)
+  --vocabulary-dir VOCABULARY_DIR
+                        override data/vocabulary/ (default: that path)
+  --vocabulary-cap VOCABULARY_CAP
+                        most neighbours ONE category may hand to assembly
+                        (default: 20, against the shared assembly cap of 90)
+                        -- the selection rule in practice, not a safety valve
+
+$ uv run axial brief smoke --help
+usage: axial brief smoke [-h] [--briefs-dir BRIEFS_DIR]
+                         [--sweep-dir SWEEP_DIR] [--workers WORKERS] [--map]
+                         [--arm ARM]
+
+options:
+  -h, --help            show this help message and exit
+  --briefs-dir BRIEFS_DIR
+                        directory of smoke brief YAML files (default:
+                        config\briefs\smoke)
+  --sweep-dir SWEEP_DIR
+                        root directory for this smoke run's per-brief output
+                        (default: data/runs/smoke)
+  --workers WORKERS     bounded concurrent brief workers (default: 1, so
+                        latency is uncontended)
+  --map                 run the whole smoke set through the argument-map
+                        retrieval path instead of the name-layer loop (issue
+                        #572) -- the coverage-map check adapts itself to
+                        whichever path ran
+  --arm ARM             named retrieval arm the whole smoke set runs through
+                        (issue #822): 'name' is the name-layer loop, 'map' the
+                        argument-map path (issue #572), 'map+vocab' the same
+                        walk with the vocabulary step (issue #807) --
+                        forwarded verbatim, with no fixed list of valid names
+                        here, so an arm added elsewhere is usable with no edit
+                        to this command. Unset by default, so --map still
+                        decides; takes precedence over --map when both are
+                        given
+
+$ uv run axial brief sweep --help
+usage: axial brief sweep [-h] --draws DRAWS --sweep-dir SWEEP_DIR
+                         [--workers WORKERS] [--arm ARM] [--map]
+                         [--vocabulary-column VOCABULARY_COLUMN]
+                         [--vocabulary-level VOCABULARY_LEVEL]
+                         [--vocabulary-dir VOCABULARY_DIR]
+                         [--vocabulary-cap VOCABULARY_CAP]
+                         worklist_path
+
+positional arguments:
+  worklist_path         path to a line-delimited worklist file of brief YAML
+                        paths
+
+options:
+  -h, --help            show this help message and exit
+  --draws DRAWS         number of times to run each brief
+  --sweep-dir SWEEP_DIR
+                        root directory for this sweep's per-(brief, draw)
+                        output and gate reports
+  --workers WORKERS     bounded concurrent (brief, draw) workers (default: 3)
+  --arm ARM             named retrieval arm every draw runs through (issue
+                        #808): 'name' (default) is the existing name-layer
+                        loop, 'map' is the argument-map path (issue #572),
+                        'map+vocab' the same walk with the vocabulary step
+                        (issue #807) -- forwarded verbatim, with no fixed list
+                        of valid names here, so an arm added elsewhere is
+                        usable with no edit to this command; resuming --sweep-
+                        dir under a different arm than the one already
+                        recorded there is refused
+  --map                 alias for --arm map (issue #572), kept so no existing
+                        invocation breaks
+  --vocabulary-column VOCABULARY_COLUMN
+                        derived-vocabulary column the join reads (issue
+                        #806/#807; default: mechanism) -- only used on --arm
+                        map+vocab
+  --vocabulary-level VOCABULARY_LEVEL
+                        level of that column's scheme to join at (default: the
+                        column's finest level, read off its own manifest)
+  --vocabulary-dir VOCABULARY_DIR
+                        override data/vocabulary/ (default: that path)
+  --vocabulary-cap VOCABULARY_CAP
+                        most neighbours ONE category may hand to assembly
+                        (default: 20, against the shared assembly cap of 90)
+                        -- the selection rule in practice, not a safety valve

@@ -24,7 +24,18 @@ from axial.answer.record import (
     build_record,
 )
 from axial.argmap.ask import AskResult, CorridorPosition, LandedPosition
-from axial.argmap.vocabulary_join import CategoryReach, VocabularyJoinResult, VocabularyPosition
+from axial.argmap.vocabulary_join import (
+    ALL_REASONS,
+    DEFAULT_VOCABULARY_COLUMN,
+    PER_CATEGORY_CAP,
+    REASON_ASSIGNED,
+    REASON_NOT_FOUND,
+    REASON_OUT_OF_SCHEME,
+    REASON_REFUSED,
+    CategoryReach,
+    VocabularyJoinResult,
+    VocabularyPosition,
+)
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult
 from axial.llm import (
@@ -746,6 +757,14 @@ def _fake_ask_result(*, with_vocabulary: bool) -> AskResult:
                     authors=("other",),
                 ),
             ),
+            # issue #822: one landed note reached a category, one was
+            # refused, and out-of-scheme/not-found did not occur here.
+            reasons={
+                REASON_ASSIGNED: 1,
+                REASON_REFUSED: 1,
+                REASON_OUT_OF_SCHEME: 0,
+                REASON_NOT_FOUND: 0,
+            },
         )
         # The note only the vocabulary step reaches -- proof the assembled
         # evidence rests partly on a category edge, never on landing or the
@@ -830,6 +849,26 @@ def test_run_brief_arm_map_vocab_records_the_vocabulary_block(tmp_path: Path, mo
     # The assembled evidence rests partly on a note reached ONLY through the
     # category edge -- neither `landed` nor `corridor` carries it.
     assert "fixmap-2021-a_1_s_002" in record["map_retrieval"]["assembled_chunk_ids"]
+
+
+def test_the_vocabulary_block_records_why_landed_notes_produced_no_edge(
+    tmp_path: Path, monkeypatch
+):
+    """issue #822, item 1. Every reason keeps a key even at zero, so a
+    reader of `map_retrieval.vocabulary` can tell "the scheme does not fit
+    this corpus" from "these notes were never assigned" -- the conflation
+    §7.18 records as having cost #805 a 50.7%-vs-88.5% misreading."""
+    result = _run_scripted_arm(tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True)
+
+    reasons = result.record["map_retrieval"]["vocabulary"]["reasons"]
+
+    assert reasons == {
+        REASON_ASSIGNED: 1,
+        REASON_REFUSED: 1,
+        REASON_OUT_OF_SCHEME: 0,
+        REASON_NOT_FOUND: 0,
+    }
+    assert set(reasons) == set(ALL_REASONS)
 
 
 def test_run_brief_arm_map_records_no_vocabulary_block(tmp_path: Path, monkeypatch):
@@ -918,3 +957,53 @@ def test_run_brief_arm_name_wins_over_use_map_true(tmp_path: Path, monkeypatch):
     record = result.record
     assert record["map_retrieval"] is None
     assert record["trajectory"] == trajectory
+
+
+def test_run_brief_forwards_all_four_vocabulary_knobs_verbatim(tmp_path: Path, monkeypatch):
+    """issue #822, item 2. Before this, `run_brief` carried `vocabulary_dir`
+    alone and the other three stopped at `run_map_ask_for_brief` -- so the
+    per-category cap, the one knob the live run showed binding on every
+    category, could not be set from anywhere a measurement runs."""
+    captured: dict = {}
+    ask_result = _fake_ask_result(with_vocabulary=True)
+    vault_dir = _write_vault(tmp_path, list(ask_result.assembled_chunk_ids))
+
+    def _fake_run_map_ask_for_brief(brief, **kwargs):
+        captured.update(kwargs)
+        return ask_result
+
+    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fake_run_map_ask_for_brief)
+
+    synthesize_response = json.dumps({"claims": []})
+    record_module.run_brief(
+        _vocab_brief(),
+        client=_ArmScriptedClient(synthesize_response),
+        vault_dir=vault_dir,
+        arm=MAP_VOCAB_ARM,
+        vocabulary_column="stops_holding",
+        vocabulary_level=2,
+        vocabulary_dir=tmp_path / "somewhere" / "vocab",
+        vocabulary_cap=7,
+    )
+
+    assert captured["vocabulary_column"] == "stops_holding"
+    assert captured["vocabulary_level"] == 2
+    assert captured["vocabulary_dir"] == tmp_path / "somewhere" / "vocab"
+    assert captured["vocabulary_cap"] == 7
+
+
+def test_run_brief_vocabulary_knob_defaults_match_the_map_ask_declaration(
+    tmp_path: Path, monkeypatch
+):
+    """A default restated in a second place is a default that will drift.
+    `run_brief` passes exactly what `run_map_ask_for_brief` already
+    declares (issue #822)."""
+    captured: dict = {}
+    _run_scripted_arm(
+        tmp_path, monkeypatch, arm=MAP_VOCAB_ARM, with_vocabulary=True, captured=captured
+    )
+
+    assert captured["vocabulary_column"] == DEFAULT_VOCABULARY_COLUMN
+    assert captured["vocabulary_level"] is None
+    assert captured["vocabulary_dir"] is None
+    assert captured["vocabulary_cap"] == PER_CATEGORY_CAP

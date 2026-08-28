@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 import axial.brief.sweep as sweep_mod
+from axial.argmap.vocabulary_join import DEFAULT_VOCABULARY_COLUMN, PER_CATEGORY_CAP
 from axial.brief.intake import Brief
 
 
@@ -909,3 +910,101 @@ def test_run_one_draw_records_a_missing_vocabulary_as_fail_rather_than_ending_th
     assert outcome.status == sweep_mod.FAIL_STATUS
     assert "no derived vocabulary built for column 'mechanism'" in outcome.reason
     assert record is None
+
+
+# ---------------------------------------------------------------------------
+# The four vocabulary knobs (issue #822, item 2): threaded through the sweep
+# so #809 can set the per-category cap without editing code mid-measurement.
+# ---------------------------------------------------------------------------
+
+
+def test_run_one_draw_forwards_the_four_vocabulary_knobs_to_run_brief(tmp_path, monkeypatch):
+    brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
+    captured = {}
+
+    def _fake_run_brief(_brief, **kwargs):
+        captured.update(kwargs)
+        record = {"brief_id": brief.brief_id}
+        return _FakeBriefRunResult(record=record, path=Path("x.json"), markdown_path=Path("x.md"))
+
+    monkeypatch.setattr(sweep_mod, "run_brief", _fake_run_brief)
+
+    sweep_mod._run_one_draw(
+        "briefstem.yaml",
+        brief,
+        0,
+        arm="map+vocab",
+        vocabulary_column="stops_holding",
+        vocabulary_level=2,
+        vocabulary_dir=Path("somewhere/vocab"),
+        vocabulary_cap=7,
+        **_draw_kwargs(tmp_path / "sweep", lambda: object()),
+    )
+
+    assert captured["vocabulary_column"] == "stops_holding"
+    assert captured["vocabulary_level"] == 2
+    assert captured["vocabulary_dir"] == Path("somewhere/vocab")
+    assert captured["vocabulary_cap"] == 7
+
+
+def test_run_sweep_forwards_the_four_vocabulary_knobs_to_every_draw(tmp_path, monkeypatch):
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+
+    captured: list[dict] = []
+    real_run_one_draw = sweep_mod._run_one_draw
+
+    def _spy(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return real_run_one_draw(*args, **kwargs)
+
+    monkeypatch.setattr(sweep_mod, "_run_one_draw", _spy)
+
+    sweep_mod.run_sweep(
+        "worklist-ignored-by-fake-read_worklist",
+        draws=2,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+        arm="map+vocab",
+        vocabulary_column="stops_holding",
+        vocabulary_level=2,
+        vocabulary_dir=Path("somewhere/vocab"),
+        vocabulary_cap=7,
+    )
+
+    assert len(captured) == 2
+    for kwargs in captured:
+        assert kwargs["vocabulary_column"] == "stops_holding"
+        assert kwargs["vocabulary_level"] == 2
+        assert kwargs["vocabulary_dir"] == Path("somewhere/vocab")
+        assert kwargs["vocabulary_cap"] == 7
+
+
+def test_run_sweep_vocabulary_knob_defaults_match_the_join_declaration(tmp_path, monkeypatch):
+    """Defaults restated in a fourth place would drift. The sweep passes
+    exactly what `axial.argmap.vocabulary_join` declares (issue #822)."""
+    briefs_by_path = {"briefA.yaml": Brief(brief_id="idA", case="A", request="rA", lens=None)}
+    _install_fake_pipeline(monkeypatch, tmp_path, briefs_by_path)
+
+    captured: list[dict] = []
+    real_run_one_draw = sweep_mod._run_one_draw
+
+    def _spy(*args, **kwargs):
+        captured.append(dict(kwargs))
+        return real_run_one_draw(*args, **kwargs)
+
+    monkeypatch.setattr(sweep_mod, "_run_one_draw", _spy)
+
+    sweep_mod.run_sweep(
+        "worklist-ignored-by-fake-read_worklist",
+        draws=1,
+        sweep_dir=tmp_path / "sweep",
+        client_factory=lambda: object(),
+        score_gates=False,
+    )
+
+    assert captured[0]["vocabulary_column"] == DEFAULT_VOCABULARY_COLUMN
+    assert captured[0]["vocabulary_level"] is None
+    assert captured[0]["vocabulary_dir"] is None
+    assert captured[0]["vocabulary_cap"] == PER_CATEGORY_CAP
