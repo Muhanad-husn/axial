@@ -369,3 +369,56 @@ def test_run_smoke_defaults_use_map_to_false(tmp_path, monkeypatch):
     smoke_mod.run_smoke(sweep_dir=tmp_path / "out", briefs_dir=briefs_dir)
 
     assert captured["use_map"] is False
+
+
+# -- --arm pass-through (issue #822, item 4) --------------------------------
+
+
+def test_run_smoke_forwards_the_arm_to_run_sweep(tmp_path, monkeypatch):
+    """The third arm was unreachable through the smoke path: `run_smoke`
+    passed only the legacy `use_map` boolean, so `map+vocab` collapsed to
+    the name layer -- the same collapse #807 fixed in `brief sweep`."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    (briefs_dir / "b1.yaml").write_text("case: C\nrequest: R\n", encoding="utf-8")
+
+    captured = {}
+
+    class _FakeSummary:
+        briefs: list = []
+
+    def _fake_run_sweep(*_args, **kwargs):
+        captured.update(kwargs)
+        return _FakeSummary()
+
+    monkeypatch.setattr(smoke_mod, "run_sweep", _fake_run_sweep)
+
+    smoke_mod.run_smoke(sweep_dir=tmp_path / "out", briefs_dir=briefs_dir, arm="map+vocab")
+
+    assert captured["arm"] == "map+vocab"
+
+
+def test_run_smoke_leaves_the_arm_unset_so_use_map_still_decides(tmp_path, monkeypatch):
+    """`use_map=True` with no `arm` still reads as `arm="map"`. The
+    precedence is resolved once, in `run_sweep`, rather than re-derived
+    here -- two places deciding the same question is how #807's collapse
+    survived."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    (briefs_dir / "b1.yaml").write_text("case: C\nrequest: R\n", encoding="utf-8")
+
+    captured = {}
+
+    class _FakeSummary:
+        briefs: list = []
+
+    def _fake_run_sweep(*_args, **kwargs):
+        captured.update(kwargs)
+        return _FakeSummary()
+
+    monkeypatch.setattr(smoke_mod, "run_sweep", _fake_run_sweep)
+
+    smoke_mod.run_smoke(sweep_dir=tmp_path / "out", briefs_dir=briefs_dir, use_map=True)
+
+    assert captured["arm"] is None
+    assert captured["use_map"] is True

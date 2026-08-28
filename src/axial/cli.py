@@ -1485,6 +1485,22 @@ def build_parser() -> argparse.ArgumentParser:
             "coverage-map check adapts itself to whichever path ran"
         ),
     )
+    brief_smoke_parser.add_argument(
+        "--arm",
+        # `None`, never "name" (issue #822): a "name" default would override
+        # --map and silently run the name layer. `run_sweep` resolves the
+        # pair -- `arm` wins when given, `--map` alone still reads as "map".
+        default=None,
+        help=(
+            "named retrieval arm the whole smoke set runs through (issue "
+            "#822): 'name' is the name-layer loop, 'map' the argument-map "
+            "path (issue #572), 'map+vocab' the same walk with the "
+            "vocabulary step (issue #807) -- forwarded verbatim, with no "
+            "fixed list of valid names here, so an arm added elsewhere is "
+            "usable with no edit to this command. Takes precedence over "
+            "--map when both are given"
+        ),
+    )
 
     paper_parser = subparsers.add_parser(
         "paper", help="Phase-C paper authorship operations (specs/PHASE-C.md §7.1, §8 P0-12)"
@@ -3004,7 +3020,12 @@ def _brief_sweep(
 
 
 def _brief_smoke(
-    briefs_dir: str | None, sweep_dir: str, workers: int, *, use_map: bool = False
+    briefs_dir: str | None,
+    sweep_dir: str,
+    workers: int,
+    *,
+    use_map: bool = False,
+    arm: str | None = None,
 ) -> int:
     try:
         summary = run_smoke(
@@ -3012,6 +3033,7 @@ def _brief_smoke(
             briefs_dir=Path(briefs_dir) if briefs_dir is not None else None,
             workers=workers,
             use_map=use_map,
+            arm=arm,
         )
     except SweepError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -3996,7 +4018,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.command == "brief" and args.brief_command == "smoke":
-        return _brief_smoke(args.briefs_dir, args.sweep_dir, args.workers, use_map=args.use_map)
+        return _brief_smoke(
+            args.briefs_dir,
+            args.sweep_dir,
+            args.workers,
+            use_map=args.use_map,
+            arm=args.arm,
+        )
 
     if args.command == "paper" and args.paper_command == "draft":
         return _paper_draft(args.paper_brief_file)

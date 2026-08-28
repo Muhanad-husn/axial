@@ -1601,3 +1601,48 @@ def test_main_brief_sweep_forwards_the_vocabulary_knobs_to_run_sweep(tmp_path, m
     assert captured["vocabulary_level"] == 2
     assert captured["vocabulary_dir"] == Path(tmp_path / "vocab")
     assert captured["vocabulary_cap"] == 7
+
+
+# ---------------------------------------------------------------------------
+# `axial brief smoke --arm` (issue #822, item 4): the last place an arm name
+# could not travel.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_brief_smoke_defaults_arm_to_none_so_map_still_decides():
+    """`--arm` must default to `None`, not `"name"`: a `"name"` default
+    would override `--map` and silently run the name layer."""
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["brief", "smoke"])
+
+    assert args.arm is None
+    assert args.use_map is False
+
+
+def test_build_parser_brief_smoke_recognises_the_arm_flag():
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["brief", "smoke", "--arm", "map+vocab"])
+
+    assert args.arm == "map+vocab"
+
+
+def test_main_brief_smoke_forwards_the_arm_to_run_smoke(tmp_path, monkeypatch):
+    import axial.cli as cli_mod
+    from axial.brief.smoke import Budgets, SmokeSummary
+
+    captured = {}
+
+    def _fake_run_smoke(**kwargs):
+        captured.update(kwargs)
+        return SmokeSummary(briefs=[], budgets=Budgets(None, None))
+
+    monkeypatch.setattr(cli_mod, "run_smoke", _fake_run_smoke)
+
+    exit_code = cli_mod.main(
+        ["brief", "smoke", "--sweep-dir", str(tmp_path / "smoke"), "--arm", "map+vocab"]
+    )
+
+    assert exit_code == 0
+    assert captured["arm"] == "map+vocab"
