@@ -789,6 +789,64 @@ def test_the_committed_claim_scheme_pins_nine_categories_and_their_exact_ids():
     assert {category.id for category in claim.categories} == _CLAIM_SCHEME_IDS
 
 
+# ---------------------------------------------------------------------------
+# The committed `position` scheme (issue #838, positions-not-names slice 02b)
+# ---------------------------------------------------------------------------
+
+# The nine ids the examine pass proposed 2026-08-29 -- a pin against silent
+# drift in `config/vocabulary.yaml`. Unlike `claim`, this scheme is
+# committed unedited: the proposal is the scheme.
+_POSITION_SCHEME_IDS = {
+    "causal-claims-about-war-and-violence",
+    "characterizations-of-nationalism-and-nationhood",
+    "descriptions-of-state-formation-and-state-power",
+    "accounts-of-social-and-economic-transformation",
+    "analyses-of-political-regimes-and-authoritarianism",
+    "evaluations-of-historiographic-or-theoretical-positions",
+    "claims-about-identity-construction-and-ethnicity",
+    "descriptions-of-international-and-legal-order",
+    "non-substantive-or-bibliographic-statements",
+}
+
+
+def test_the_committed_position_scheme_parses_with_unique_ids_names_glosses_and_own_version():
+    position = load_vocabulary_scheme("position", DEFAULT_VOCABULARY_SCHEME_PATH)
+    claim = load_vocabulary_scheme("claim", DEFAULT_VOCABULARY_SCHEME_PATH)
+    mechanism = load_vocabulary_scheme("mechanism", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert position.version
+    # A scheme edit is a version bump -- no two columns may ever share one,
+    # or a mismatch in one would silently read as settled by another's.
+    assert position.version != claim.version
+    assert position.version != mechanism.version
+
+    ids = [category.id for category in position.categories]
+    names = [category.name for category in position.categories]
+    assert len(ids) == len(set(ids))
+    assert all(category.name.strip() for category in position.categories)
+    assert all(category.gloss.strip() for category in position.categories)
+    assert len(names) == len(set(names))
+
+
+def test_scheme_columns_returns_position_alongside_claim_and_mechanism():
+    columns = scheme_columns(DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert "mechanism" in columns
+    assert "claim" in columns
+    assert "position" in columns
+
+
+def test_the_committed_position_scheme_pins_nine_categories_and_their_exact_ids():
+    """A pin against silent drift: issue #838 committed exactly the nine
+    categories the 2026-08-29 examine pass proposed over a held-out
+    sample -- this column is held out of the grouping in #831, so its
+    scheme is not edited the way `claim`'s was."""
+    position = load_vocabulary_scheme("position", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    assert len(position.categories) == 9
+    assert {category.id for category in position.categories} == _POSITION_SCHEME_IDS
+
+
 def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_zero():
     """When the check subsample's first-model assignments were all "none",
     `agreement_where_assigned_rate` is `None` -- the report must say so in
