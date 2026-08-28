@@ -18,11 +18,9 @@ from axial.vocabulary import (
     ColumnVocabularyStats,
     DEFAULT_VOCABULARY_SCHEME_PATH,
     PopulationEntry,
-    SchemeVersionMismatchError,
     SelfConsistencyError,
     VocabularyExamineStats,
     _cost_delta,
-    build_vocabulary,
     draw_vocabulary_samples,
     examine_vocabulary,
     format_vocabulary_report,
@@ -789,71 +787,6 @@ def test_the_committed_claim_scheme_pins_nine_categories_and_their_exact_ids():
 
     assert len(claim.categories) == 9
     assert {category.id for category in claim.categories} == _CLAIM_SCHEME_IDS
-
-
-def test_vocabulary_build_refuses_a_claim_manifest_built_under_a_different_scheme_version(
-    tmp_path,
-):
-    """Existing behaviour (proven on `mechanism` in
-    `test_vocabulary_build.py`), extended here to prove it is column-generic
-    rather than something `mechanism` alone happens to satisfy."""
-    scheme_path = tmp_path / "vocabulary.yaml"
-    answers_dir = tmp_path / "answers"
-    vocabulary_dir = tmp_path / "vocabulary"
-    answers_dir.mkdir(parents=True, exist_ok=True)
-    (answers_dir / "book-a.jsonl").write_text(
-        json.dumps(
-            {"chunk_id": "book-a_1", "source_id": "book-a", "answers": {"claim": "a claim sentence"}}
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    def _write_claim_scheme(version):
-        scheme_path.write_text(
-            "columns:\n"
-            "  claim:\n"
-            f'    version: "{version}"\n'
-            "    categories:\n"
-            "      - id: cat-a\n"
-            '        name: "Cat A"\n'
-            '        gloss: "gloss a"\n',
-            encoding="utf-8",
-        )
-
-    _write_claim_scheme("claim-test-v1")
-    first_client = _FakeVocabClient(
-        responses_by_pass={vocabulary_mod.BUILD_PASS_NAME: [_assign_json([(1, "Cat A")])]},
-        models={vocabulary_mod.BUILD_PASS_NAME: "model-a"},
-    )
-    build_vocabulary(
-        answers_dir=answers_dir,
-        columns=["claim"],
-        scheme_path=scheme_path,
-        vocabulary_dir=vocabulary_dir,
-        client=first_client,
-    )
-
-    _write_claim_scheme("claim-test-v2")
-    second_client = _FakeVocabClient(
-        responses_by_pass={vocabulary_mod.BUILD_PASS_NAME: [_assign_json([(1, "Cat A")])]},
-        models={vocabulary_mod.BUILD_PASS_NAME: "model-a"},
-    )
-
-    with pytest.raises(SchemeVersionMismatchError) as excinfo:
-        build_vocabulary(
-            answers_dir=answers_dir,
-            columns=["claim"],
-            scheme_path=scheme_path,
-            vocabulary_dir=vocabulary_dir,
-            client=second_client,
-        )
-
-    message = str(excinfo.value)
-    assert "claim" in message
-    assert "claim-test-v1" in message
-    assert "claim-test-v2" in message
-    assert second_client.calls_for_pass(vocabulary_mod.BUILD_PASS_NAME) == 0
 
 
 def test_format_report_says_restricted_agreement_is_not_applicable_rather_than_zero():

@@ -1137,6 +1137,52 @@ def test_acceptance_claim_build_against_the_committed_scheme_reports_and_resumes
     assert "reused" in captured.out.lower()
 
 
+def test_a_claim_manifest_only_ever_names_categories_the_committed_scheme_holds(
+    tmp_path, monkeypatch
+):
+    """The manifest is the join key everything downstream records, so a
+    category id or name in it that the committed scheme does not hold is a
+    silent corruption of that address space -- and the per-category member
+    counts have to account for every assigned value, or a reader of the
+    manifest is reading a different corpus from the one that was built."""
+    answers_dir = tmp_path / "answers"
+    _write_claim_answers(answers_dir)
+    vocabulary_dir = tmp_path / "vocabulary"
+    scheme = load_vocabulary_scheme("claim", DEFAULT_VOCABULARY_SCHEME_PATH)
+
+    client = _ScriptedAssignClient({value: _CLAIM_CATEGORY_NAME for value in _CLAIM_EMPIRICAL})
+    monkeypatch.setattr(vocabulary_mod, "get_client", lambda *a, **kw: client)
+
+    assert (
+        main(
+            [
+                "vocabulary",
+                "build",
+                "--columns",
+                "claim",
+                "--answers-dir",
+                str(answers_dir),
+                "--vocabulary-dir",
+                str(vocabulary_dir),
+            ]
+        )
+        == 0
+    )
+
+    manifest = json.loads(
+        (vocabulary_dir / "claim" / MANIFEST_FILENAME).read_text(encoding="utf-8")
+    )
+    assert manifest["scheme_version"] == scheme.version
+
+    committed = {category.id: category.name for category in scheme.categories}
+    reported = {entry["category_id"]: entry["name"] for entry in manifest["categories"]}
+    assert reported == committed
+
+    assert sum(entry["member_count"] for entry in manifest["categories"]) == (
+        manifest["assigned_count"]
+    )
+
+
 def test_build_refuses_a_scheme_deeper_than_the_level_it_assigns(tmp_path):
     """Depth 2 is not built in this slice (#806's own "what this slice must
     not do"). A committed scheme carrying a second level must be named, not

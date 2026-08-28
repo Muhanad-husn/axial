@@ -1,0 +1,15 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial-wt\826\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial-wt\826
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 69 items / 64 deselected / 5 selected
+
+src/axial/test_vocabulary.py::test_the_committed_claim_scheme_parses_with_unique_ids_names_glosses_and_own_version PASSED [ 20%]
+src/axial/test_vocabulary.py::test_scheme_columns_returns_claim_alongside_mechanism PASSED [ 40%]
+src/axial/test_vocabulary.py::test_the_committed_claim_scheme_pins_nine_categories_and_their_exact_ids PASSED [ 60%]
+src/axial/test_vocabulary_build.py::test_acceptance_claim_build_against_the_committed_scheme_reports_and_resumes PASSED [ 80%]
+src/axial/test_vocabulary_build.py::test_a_claim_manifest_only_ever_names_categories_the_committed_scheme_holds PASSED [100%]
+
+====================== 5 passed, 64 deselected in 1.06s =======================

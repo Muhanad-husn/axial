@@ -161,7 +161,13 @@ columns:
     # column, 2026-08-27 (data/logs/2026-08-27-vocabulary-categorise-v2/
     # console-claim.log): 10 categories, 99.5% of a disjoint 400 the model
     # had never seen fell into them, largest category 21.2%, two-model
-    # agreement 77.0%.
+    # agreement 77.0% on a 100-value subsample of that 400.
+    #
+    # Those three figures were measured on the ten-category DRAFT, before
+    # the founder's edit below. The nine committed here have never been
+    # scored on held-out data. The edit folded one category of 398 into
+    # another, so the difference should be small, but it was not measured
+    # and nothing here should be read as if it had been.
     #
     # The founder approved this scheme 2026-08-28 with one edit: the
     # drafted tenth category, "Acknowledgment or credit statement" (1
@@ -175,15 +181,15 @@ columns:
     # folded-in clause below; the other eight glosses are the drafting
     # run's own words, verbatim.
     #
-    # Worth recording for whoever reads #827 (slice 02, the layer
-    # cross-tab): this axis deliberately mixes kind-of-claim categories
-    # (causal argument, empirical finding, critique, methodological
-    # preconditions, comparative/typological classification) with three
-    # topical ones (state formation, violence/conflict,
-    # nationalism/identity). That was not tidied up before committing --
-    # #827 measures the cross-tab between this scheme and the argument-map
-    # positions offline, for free, rather than that mixture being guessed
-    # at here.
+    # One property of this axis a reader should know before using it: it
+    # mixes kind-of-claim categories (empirical finding, critique,
+    # methodological preconditions, comparative/typological
+    # classification, characterization) with three topical ones (state
+    # formation, violence/conflict, nationalism/identity). An answer
+    # arguing causally about state formation satisfies both readings, and
+    # the assigning model picks one. That was committed deliberately
+    # rather than tidied up, because the mixture is measurable and was not
+    # worth guessing at.
     version: "2026-08-28-claim-v1"
     categories:
       - id: causal-argument-state-formation-or-power
