@@ -5,7 +5,7 @@
 - **Slice slug:** the-two-arms-are-compared
 - **Branch:** feat/derived-vocabulary/05-the-two-arms-are-compared
 - **Project directory:** .
-- **Status:** ☑ built and measured, PR #824 open for approval
+- **Status:** ☑ done, merged 2026-08-28 (PR #824)
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
