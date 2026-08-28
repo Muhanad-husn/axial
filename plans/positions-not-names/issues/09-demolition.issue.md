@@ -27,6 +27,13 @@ Pure subtraction in dependency order, suite green at each step. `eval
 layers`, the arm recording, `vocabulary build` and `vocabulary examine`'s
 drafting path all stay — they are load-bearing now.
 
+**While in `src/axial/vocabulary.py`, take #835 with you.** It is a one-word
+fix in the build report — `built: N newly assigned` is values *processed* and
+sits one line above `M assigned to a category`, so the two are named the same
+thing and differ by 556 on the `mechanism` run. Found by the verifier on #826;
+this slice is the only planned opener of that file, so the fix rides here
+rather than earning its own branch.
+
 ## Acceptance criterion
 
 ```gherkin
