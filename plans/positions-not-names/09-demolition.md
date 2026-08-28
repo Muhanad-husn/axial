@@ -17,6 +17,15 @@ loop, the residue pass, the vocabulary measurement apparatus, and the eval
 code nothing remaining reads — leaving the name index itself as a filter, the
 suite green, and every deletion citing the slice that made it safe.
 
+**Absorbs [#825](https://github.com/Muhanad-husn/axial/issues/825)** (founder
+ruling, 2026-08-28): the category join comes out here too —
+`axial.argmap.vocabulary_join` and its tests, the `map+vocab` arm and its
+four CLI knobs, the `vocabulary` block in the answer record, and the third
+arm's paragraphs in `specs/PHASE-B.md` §7.17/§7.19 (the two measured
+findings inside them move, not drop — see #825's body for the list). #825's
+keep-list is already this feature's keep-list. The slice-09 PR closes #825
+alongside its own issue.
+
 ## INVEST check
 
 - **Independent:** pure subtraction once its gates are passed; no new
@@ -37,6 +46,8 @@ When  the demolition branch is built
 Then  the retired CLI surfaces (name-page materialisation, the gather pass,
       the name-walking ask loop, the residue pass) no longer exist as
       commands
+And   `axial brief run --arm map+vocab` is refused as an unknown arm, and
+      the four --vocabulary-* knobs are gone from run and sweep (#825)
 And   the kept surface still works: asking where a name is discussed returns
       its passages, spelling variants folded
 And   `uv run pytest` is green and `uv run ruff check` is clean with the
@@ -57,6 +68,14 @@ the branch is cut.
 
 ```aeo-independence
 slice: 09-demolition
+edits: src/axial/argmap/vocabulary_join.py
+edits: src/axial/argmap/test_vocabulary_join.py
+edits: src/axial/argmap/ask.py
+edits: src/axial/argmap/test_ask.py
+edits: src/axial/answer/record.py
+edits: src/axial/brief/sweep.py
+edits: src/axial/brief/test_sweep.py
+edits: specs/PHASE-B.md
 edits: src/axial/gather.py
 edits: src/axial/argmap/residue.py
 edits: src/axial/argmap/test_residue.py
