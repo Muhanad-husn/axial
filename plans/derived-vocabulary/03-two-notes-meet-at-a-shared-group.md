@@ -5,7 +5,7 @@
 - **Slice slug:** two-notes-meet-at-a-shared-group
 - **Branch:** feat/derived-vocabulary/03-two-notes-meet-at-a-shared-group
 - **Project directory:** .
-- **Status:** ☑ code complete; PR #821 open, CI green
+- **Status:** ☑ done — PR #821
 - **Walking skeleton?** no
 
 > **Corrected 2026-08-28, before building.** The previous version of this plan
@@ -235,3 +235,12 @@ edited. They are the name-layer loop's tool surface, and this arm has no loop.
   its `arm` into `run_brief`'s `use_map` boolean, so `--arm map+vocab` ran the
   NAME layer while recording the arm as `map+vocab`. #809 reads the arms off
   exactly those directories. The arm is now passed through verbatim.
+- 2026-08-28 the first live run exposed the defect the acceptance criterion
+  could not see: all 38 category-edge notes assembled at index 52 or later and
+  **the answer cited none of them**, because `assemble_map_evidence` walks
+  positions in the order given under a shared cap of 90 and the step was
+  appended last. Fixed by assembling the vocabulary before the corridor
+  (DEC-73), judging cross-source per category rather than against the union of
+  every landed source, and recording offered and assembled counts separately.
+  Re-run: category-edge chunks 38 → 63, cited via the edge 0 of 20 → 2 of 9.
+- 2026-08-28 five deferred loose ends filed as [#822](https://github.com/Muhanad-husn/axial/issues/822).
