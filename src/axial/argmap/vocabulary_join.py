@@ -221,7 +221,13 @@ def category_for_note(
     model answered with a string naming no committed category; `(None,
     "refused")` when it genuinely declined. Only "refused" is a judgment
     about the note itself -- the other two `None` reasons are facts about
-    the build, never conflated with it."""
+    the build, never conflated with it.
+
+    Every one of the note's records at this level is read, not only the
+    first (issue #822): one assigned record makes the note assigned, and
+    one out-of-scheme record makes it out-of-scheme. That is invisible on
+    a scalar column like `mechanism`, where a note has exactly one record,
+    and it is the whole difference on a list-valued one."""
     records = by_chunk.get(chunk_id)
     if not records:
         return None, REASON_NOT_FOUND
@@ -229,8 +235,14 @@ def category_for_note(
         category_id = record.get("category_id")
         if isinstance(category_id, str):
             return category_id, REASON_ASSIGNED
-    first = records[0]
-    if first.get("out_of_scheme"):
+    # Every record, not just the first (issue #822). Moot for `mechanism`,
+    # which is scalar and gives a note one record; live the moment a
+    # list-valued column arrives, which this module advertises as needing
+    # no new code path. A note whose second element answered outside the
+    # scheme read as a plain refusal, and "the model declined" and "the
+    # model answered something the scheme does not hold" are the two facts
+    # a reader separates to decide whether the scheme fits the corpus.
+    if any(record.get("out_of_scheme") for record in records):
         return None, REASON_OUT_OF_SCHEME
     return None, REASON_REFUSED
 

@@ -609,3 +609,36 @@ def test_the_per_category_cap_counts_edges_not_distinct_notes(tmp_path: Path):
 
     assert len(result.positions) == 2
     assert result.categories[0].cap_applied is True
+
+
+def test_out_of_scheme_is_found_on_any_record_not_only_the_first():
+    """issue #822, item 5. Moot for `mechanism`, which is scalar -- one
+    record per note. Live the moment a list-valued column arrives, which the
+    module docstring advertises as needing "no new code path": a note whose
+    SECOND element answered outside the scheme was reported as a plain
+    refusal, and the two mean different things to a reader deciding whether
+    the scheme fits the corpus."""
+    by_chunk = {
+        "n1": [
+            _assignment("n1", "src-1", None, element_index=0),
+            _assignment("n1", "src-1", None, element_index=1, out_of_scheme="a stray answer"),
+        ]
+    }
+
+    category_id, reason = category_for_note("n1", by_chunk)
+
+    assert category_id is None
+    assert reason == REASON_OUT_OF_SCHEME
+
+
+def test_a_note_refused_on_every_record_is_still_a_refusal():
+    """The scan must not turn every multi-record refusal into an
+    out-of-scheme report."""
+    by_chunk = {
+        "n1": [
+            _assignment("n1", "src-1", None, element_index=0),
+            _assignment("n1", "src-1", None, element_index=1),
+        ]
+    }
+
+    assert category_for_note("n1", by_chunk) == (None, REASON_REFUSED)
