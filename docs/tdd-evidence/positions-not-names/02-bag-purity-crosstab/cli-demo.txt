@@ -1,0 +1,78 @@
+$ uv run axial map purity --column claim --map-dir D:/axial/data/map --pin 9b796b3a6312b329 --vocabulary-dir D:/axial/data/vocabulary
+pin: 9b796b3a6312b329 (D:\axial\data\map\9b796b3a6312b329)
+column: claim (level 1)
+vocabulary: D:\axial\data\vocabulary\claim
+
+COVERAGE
+  bag-side chunks: 6010
+  vocabulary-side chunks: 6697
+  overlap (joinable both sides): 6010
+  bag-only (no vocabulary record for this column): 0
+  vocabulary-only (no bag): 687
+  overlap assigned a category: 5993
+  overlap refused: 17
+  overlap out-of-scheme: 0
+
+PURITY (bags with 2+ categorised members)
+  eligible bags: 480
+  excluded (fewer than 2 categorised members): 180
+  median purity: 0.56
+  mean purity: 0.62
+  pure bags (purity == 1.0): 83 (17.3%)
+  median distinct categories per bag: 2.00
+  mean distinct categories per bag: 2.99
+
+CATEGORY SCATTER (reverse table -- distinct bags each category reaches)
+  min/median/max bags per populated category: 69 / 141.00 / 356
+    empirical-finding-without-causal-claim (empirical finding or observation without causal claim): 356 bag(s), 1131 member(s)
+    causal-argument-state-formation-or-power (causal argument about state formation or state power): 309 bag(s), 1648 member(s)
+    characterization-of-regime-movement-or-system (characterization of a regime, movement, or political system): 214 bag(s), 755 member(s)
+    causal-argument-violence-war-or-conflict (causal argument about violence, war, or conflict dynamics): 187 bag(s), 906 member(s)
+    critique-of-existing-theories-or-concepts (critique of existing theories or concepts): 141 bag(s), 441 member(s)
+    methodological-preconditions (methodological preconditions): 128 bag(s), 269 member(s)
+    causal-argument-nationalism-or-identity (causal argument about nationalism, identity, or nation-building): 112 bag(s), 511 member(s)
+    comparative-or-typological-classification (comparative or typological classification): 87 bag(s), 157 member(s)
+    bibliographic-source-note-or-formal-description (bibliographic, source note, or formal description of the text itself): 69 bag(s), 175 member(s)
+
+CATEGORY PAIR CO-OCCURRENCE (397 multi-category bag(s))
+  1. causal-argument-state-formation-or-power x empirical-finding-without-causal-claim: 178 bag(s) (44.8%)
+  2. causal-argument-state-formation-or-power x characterization-of-regime-movement-or-system: 146 bag(s) (36.8%)
+  3. characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%)
+  4. causal-argument-violence-war-or-conflict x empirical-finding-without-causal-claim: 120 bag(s) (30.2%)
+  5. causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%)
+  6. critique-of-existing-theories-or-concepts x empirical-finding-without-causal-claim: 89 bag(s) (22.4%)
+  7. causal-argument-state-formation-or-power x critique-of-existing-theories-or-concepts: 88 bag(s) (22.2%)
+  8. causal-argument-violence-war-or-conflict x characterization-of-regime-movement-or-system: 86 bag(s) (21.7%)
+  9. causal-argument-nationalism-or-identity x empirical-finding-without-causal-claim: 79 bag(s) (19.9%)
+  10. characterization-of-regime-movement-or-system x critique-of-existing-theories-or-concepts: 69 bag(s) (17.4%)
+  11. empirical-finding-without-causal-claim x methodological-preconditions: 67 bag(s) (16.9%)
+  12. causal-argument-nationalism-or-identity x causal-argument-state-formation-or-power: 66 bag(s) (16.6%)
+  13. causal-argument-state-formation-or-power x comparative-or-typological-classification: 60 bag(s) (15.1%)
+  14. causal-argument-nationalism-or-identity x characterization-of-regime-movement-or-system: 59 bag(s) (14.9%)
+  15. causal-argument-state-formation-or-power x methodological-preconditions: 59 bag(s) (14.9%)
+  16. characterization-of-regime-movement-or-system x comparative-or-typological-classification: 57 bag(s) (14.4%)
+  17. comparative-or-typological-classification x empirical-finding-without-causal-claim: 57 bag(s) (14.4%)
+  18. causal-argument-violence-war-or-conflict x critique-of-existing-theories-or-concepts: 54 bag(s) (13.6%)
+  19. causal-argument-nationalism-or-identity x causal-argument-violence-war-or-conflict: 52 bag(s) (13.1%)
+  20. characterization-of-regime-movement-or-system x methodological-preconditions: 44 bag(s) (11.1%)
+  21. critique-of-existing-theories-or-concepts x methodological-preconditions: 44 bag(s) (11.1%)
+  22. causal-argument-violence-war-or-conflict x methodological-preconditions: 41 bag(s) (10.3%)
+  23. causal-argument-nationalism-or-identity x critique-of-existing-theories-or-concepts: 38 bag(s) (9.6%)
+  24. causal-argument-violence-war-or-conflict x comparative-or-typological-classification: 38 bag(s) (9.6%)
+  25. comparative-or-typological-classification x critique-of-existing-theories-or-concepts: 35 bag(s) (8.8%)
+  26. causal-argument-nationalism-or-identity x comparative-or-typological-classification: 33 bag(s) (8.3%)
+  27. bibliographic-source-note-or-formal-description x empirical-finding-without-causal-claim: 32 bag(s) (8.1%)
+  28. bibliographic-source-note-or-formal-description x causal-argument-state-formation-or-power: 29 bag(s) (7.3%)
+  29. comparative-or-typological-classification x methodological-preconditions: 29 bag(s) (7.3%)
+  30. bibliographic-source-note-or-formal-description x characterization-of-regime-movement-or-system: 22 bag(s) (5.5%)
+  31. causal-argument-nationalism-or-identity x methodological-preconditions: 22 bag(s) (5.5%)
+  32. bibliographic-source-note-or-formal-description x critique-of-existing-theories-or-concepts: 21 bag(s) (5.3%)
+  33. bibliographic-source-note-or-formal-description x causal-argument-violence-war-or-conflict: 19 bag(s) (4.8%)
+  34. bibliographic-source-note-or-formal-description x causal-argument-nationalism-or-identity: 18 bag(s) (4.5%)
+  35. bibliographic-source-note-or-formal-description x methodological-preconditions: 18 bag(s) (4.5%)
+  36. bibliographic-source-note-or-formal-description x comparative-or-typological-classification: 11 bag(s) (2.8%)
+
+NAMED PAIRS (#826's verification -- reported whether or not they rank)
+  causal-argument-state-formation-or-power x causal-argument-violence-war-or-conflict: 112 bag(s) (28.2%), rank 5
+  characterization-of-regime-movement-or-system x empirical-finding-without-causal-claim: 137 bag(s) (34.5%), rank 3
+exit=0
