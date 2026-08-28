@@ -1,0 +1,82 @@
+=== axial brief run --help (the three arms) ===
+usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}] brief_path
+
+positional arguments:
+  brief_path            path to a versioned brief YAML file
+
+options:
+  -h, --help            show this help message and exit
+  --map                 retrieve through the argument map (issue #572) instead
+                        of the name-layer loop: the door states the arguments
+                        the brief is about, lands them on the map's positions,
+                        follows every relation into the corridor, and
+                        assembles evidence round-robin across positions and
+                        sources -- opt-in, off by default; synthesis and
+                        everything after it is unchanged. Superseded by --arm
+                        when both are given; kept so no existing invocation
+                        breaks
+  --arm {name,map,map+vocab}
+                        named retrieval arm to run (issue #807): 'name'
+                        (default) is the existing name-layer loop, 'map' is
+                        the argument-map path (issue #572) with no vocabulary
+                        step, 'map+vocab' adds the vocabulary step -- passages
+                        that share a derived-vocabulary category (issue #806)
+                        join the map's own walk between the corridor and
+                        assembly. Takes precedence over --map when both are
+                        given.
+
+=== an unknown arm is refused, naming the arms that exist ===
+usage: axial brief run [-h] [--map] [--arm {name,map,map+vocab}] brief_path
+axial brief run: error: argument --arm: invalid choice: 'map+names' (choose from name, map, map+vocab)
+exit=2
+
+=== the real run: uv run axial brief run config/briefs/eval/A.yaml --arm map+vocab ===
+(run from this worktree with D:/axial/data junctioned in; data/ is gitignored so a worktree has none of it)
+
+disposition: proceed_bounded
+persisted: data\analyses\dae632c369c18ffc.json
+answer: data\analyses\dae632c369c18ffc.md
+run report: data\runs\dae632c369c18ffc.json
+run report: brief_id=dae632c369c18ffc corpus_pin=sim-2026-07-30
+  disposition: proceed_bounded
+  cost: total_usd=0.081 total_tokens=134009
+  wall clock: total=240.269s
+    brief_decompose: 86.843s tokens=844 usd=0.000
+    counter_position_generate: 36.899s tokens=20399 usd=0.038
+    interrogate: 34.913s tokens=2762 usd=0.008
+    synthesize: 81.614s tokens=110004 usd=0.035
+  trajectory: steps=0 rejected=0 turns_without_new_evidence=0
+  evidence: assembled=90 composed=58 composed_share=0.644
+  accuracy (four measures, never summed -- §10.0):
+    attribution_completeness: 1.000
+    retrieval_hit: 0.833
+    grounding_support_rate: n/a (not scored: a judged measure (§10.0) needs a judge client running under its own pass name; the report itself makes no model call)
+    instant_dismissal_violations: n/a (not scored: a judged measure (§10.0) needs a judge client running under its own pass name; the report itself makes no model call)
+  cross-source rate (headline, D9): 0.571 over 7 (b) claim(s)
+  sources cited: 6 top_1_share=0.350 hhi=0.250
+  claim mix: {'a': 9, 'b': 7, 'c': 2}
+  commentary mix (issue #563): 0.050 vs. corpus baseline 0.055
+  coverage bands: {'thin': 0, 'moderate': 0, 'dense': 0}
+
+=== the persisted record's map_retrieval.vocabulary block ===
+record: dae632c369c18ffc.json  pin=9b796b3a6312b329
+trajectory: []   <- the honest empty list, unchanged
+column=mechanism level=1 cap=20 categories=12
+   20 notes /  8 sources  cap_applied=True  economic-dependency-and-structural-adjustment
+   20 notes /  9 sources  cap_applied=True  ideological-persuasion-and-legitimation
+   20 notes /  8 sources  cap_applied=True  institutional-path-dependence-and-state-capacity
+   20 notes /  4 sources  cap_applied=True  international-norms-and-external-intervention
+   20 notes /  6 sources  cap_applied=True  modernization-and-cultural-change
+   20 notes /  5 sources  cap_applied=True  organizational-logics-and-bureaucratic-rationality
+   20 notes / 12 sources  cap_applied=True  resource-extraction-and-rentier-state
+   20 notes /  8 sources  cap_applied=True  social-mobilization-and-collective-action
+   20 notes /  1 sources  cap_applied=True  state-repression-and-violence
+   20 notes / 11 sources  cap_applied=True  technological-change-and-infrastructure
+   20 notes /  3 sources  cap_applied=True  territorial-control-and-conflict-dynamics
+   20 notes /  8 sources  cap_applied=True  war-and-state-formation
+
+=== the acceptance clause, measured on the real corpus ===
+landed positions: 22   corridor positions: 30
+chunks reachable WITHOUT the vocabulary step: 202
+chunks assembled: 90
+assembled ONLY through the category edge: 38 (42.2%), spanning 16 distinct sources
