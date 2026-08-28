@@ -192,20 +192,30 @@ edited. They are the name-layer loop's tool surface, and this arm has no loop.
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for
       the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] `uv run ruff check` clean.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] **Exercised against the real vocabulary** built in slice 02, on at least
+- [x] Refactor pass complete with the bar green.
+- [x] `uv run ruff check` clean.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [~] **Exercised against the real vocabulary** built in slice 02, on at least
       three `mechanism` categories, with the members **read by a human** to
       confirm they are actually saying the same thing. A model agreeing with the
       scheme it was handed is not evidence that a category means anything, and
       slice 01 measured that agreement at 61.4% on this column. One real brief
       run on the `map+vocab` arm, with the persisted `map_retrieval` block
       inspected. Log to `data/logs/<YYYY-MM-DD>-vocabulary-join/`.
-- [ ] Evidence collected and PR opened into the default branch (`safe-pr`).
+      **[~] PARTIAL, and it stays with this slice.** The two brief runs, the
+      `map_retrieval` inspection and the log are done
+      (`data/logs/2026-08-28-vocabulary-join/`). The **human read** of three
+      `mechanism` categories is not: the sheet is written and unanswered at
+      `category-reading.md` (gitignored -- the members carry source-derived
+      answer text). It belongs to no other issue. One member is already
+      visibly mis-filed: `chouliaraki-2024` under `war-and-state-formation`
+      for a passage about the First World War replacing a horse-drawn
+      streetcar. It gates nothing; it makes a null result in #809
+      interpretable.
+- [x] Evidence collected and PR opened into the default branch (`safe-pr`).
 
 ## Status / progress log
 
