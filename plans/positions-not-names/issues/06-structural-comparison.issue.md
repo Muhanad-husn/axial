@@ -117,7 +117,7 @@ over **raw** positions, 6,070 on the live build, so "selected minus placed"
 prints **-60**. D4 is computed from **distinct chunk ids in
 `positions.jsonl`** (5,596 → 414 unplaced). The offset is not constant: the
 variant's raw-position count and duplicate rate both differ. The misleading
-log line in `build.py` is a separate one-line defect and is not fixed here.
+log line in `build.py` itself is folded into slice 04 (#829), not fixed here.
 
 **(b) Positions overlap, so member slots are not passages.** 344 of 5,596
 placed chunks sit in 2–5 positions (#822); member slots sum to 5,987. Every
@@ -233,7 +233,8 @@ depends-on: 05-category-consolidation
 - Any judged (model-graded) comparison — needs a gate harder than the
   saturated smoke set, which is separate work.
 - Any change to either build.
-- Fixing the `placed` log line at `build.py:1395`. `map compare` computes D4
-  correctly regardless; the log line is its own defect.
+- Fixing the `placed` log line at `build.py:1395` — folded into slice 04
+  (#829), which already edits that file. `map compare` computes D4 correctly
+  regardless.
 - Re-running slice 02's `map purity` against the variant's groups. It measures
   1.000 by construction there.

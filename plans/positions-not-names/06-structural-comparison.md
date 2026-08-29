@@ -156,8 +156,9 @@ depends-on: 05-category-consolidation
 - Any judged (model-graded) comparison — needs a gate harder than the
   saturated smoke set, which is separate work.
 - Any change to either build.
-- Fixing the misleading `placed` log line at `build.py:1395`. `map compare`
-  computes D4 correctly regardless; the log line is its own defect.
+- Fixing the misleading `placed` log line at `build.py:1395` — folded into
+  slice 04 (#829), which already edits that file. `map compare` computes D4
+  correctly regardless.
 - Re-running slice 02's `map purity` against the variant's groups. It joins
   *bags* against a vocabulary column, so under the variant it reads 1.000 by
   construction and measures nothing. D2 is that arithmetic re-pointed from bags
