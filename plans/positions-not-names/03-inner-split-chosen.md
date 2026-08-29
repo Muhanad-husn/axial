@@ -5,7 +5,7 @@
 - **Issue:** [#828](https://github.com/Muhanad-husn/axial/issues/828)
 - **Branch:** feat/positions-not-names/03-inner-split-chosen
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ built — founder chose claim × mechanism
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -100,3 +100,28 @@ not build them in parallel worktrees.)
 ## Status / progress log
 
 - 2026-08-28 planned.
+- 2026-08-29 built: `axial map grouping-report` computes both candidates offline,
+  zero model calls. Real-corpus run in the main checkout at pin
+  `9b796b3a6312b329`, 6,010 selected passages; log in
+  `data/logs/2026-08-28-inner-split-choice/`.
+
+  | | claim × mechanism | claim + subcluster |
+  |---|---|---|
+  | groups | 167 | 1,181 |
+  | size min / median / max | 1 / 15.00 / 248 | 1 / 2.00 / 139 |
+  | ungrouped | 797 | 17 |
+  | projected slices (55) | 207 | 1,190 |
+
+  The subcluster arm's inner threshold was swept (0.50–0.90) before the
+  comparison was read, because it inherits `BAG_DISTANCE_THRESHOLD` from
+  corpus-wide bagging rather than being chosen for splitting inside a category.
+  No setting produces balanced groups: 0.50–0.60 stay fragmented at median 2–3,
+  0.70 gives median 5 with a 484-passage largest group, and 0.80–0.90 collapse
+  to blobs of 1,577 and 1,648. The comparison is not a threshold artifact.
+
+- 2026-08-29 **founder chose `claim` × `mechanism`.** Slice 04 (#829) builds only
+  that variant. Accepted price: 797 passages, 13.3% of the universe, hold no
+  mechanism category and form no cell — the compounded refusal rate §6 predicted.
+  Whether they fall back to a claim-only cell is slice 04's decision.
+  `group_by_subcluster` stays in `grouping.py` as the measured alternative,
+  unwired.
