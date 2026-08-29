@@ -285,6 +285,47 @@ per-round retention *r*: **41 calls for round 1, 79 at r=0.5 through 186 at
 r=0.878** (the default build's own merge ratio), all of it under a dollar
 against extraction's $0.705.
 
+**The echo stays, and the alternative was measured.** The prompt requires
+every handle to appear in exactly one entry, so a call folding two of
+fifty-five arguments retypes all fifty-five. The first real-corpus pass priced
+that: **2.4M completion tokens against 400k prompt**, 8,000–13,000 completion
+tokens a call, **29 of 218 attempts (13%) hitting the client's 600s deadline**,
+and two of the three unreadable answers arriving as JSON truncated around entry
+50 of 55. The obvious fix — ask for the merges alone, and pass every unnamed
+handle through unchanged — was built and probed against one real category,
+`methodological-preconditions`, 98 raw positions, same input and same model:
+
+| | prompt with the echo | merges only |
+|---|---|---|
+| trajectory | 98→72→55→51, converged | 98→…→66, stopped at round cap |
+| calls | 5 | 4 |
+| completion tokens per call | 8,000–13,000 | **15,972** |
+| worst single call | — | **42,909 completion tokens, 418s** |
+
+Both predictions failed. Emitted JSON did shrink, but total completion tokens
+rose by about a third: the model spends far more reasoning deciding what to
+merge when it is not walking the whole list. And folding got *worse* — 66
+against 51 on the same 98 positions. The hypothesis that the echo requirement
+biased the model against merging is refuted; the echo appears to be doing real
+work, as a forcing function to weigh every argument. **The echo costs emitted
+tokens and buys both reasoning economy and folding, so the pass keeps it.** A
+future attempt should not re-propose removing it without re-measuring on this
+category.
+
+**A resume announces its bill, and abandons a read that cannot pass.** An
+error record is re-asked, which is right — but the retry comes back different
+from the error record's pass-through, so that category's later rounds are
+asked a different question and the whole downstream chain is re-asked at full
+price. Observed live: a resume of a completed 188-call pass silently began
+round 2 again. A resumed run now logs, before its first call, how many reads
+it will retry, which categories they touch, and how many later reads that
+costs; `map.json` records the actuals. And a read that has failed as many
+times as the client itself would attempt one call — `axial.llm.MAX_ATTEMPTS`,
+read from there rather than picked again — is abandoned and counted rather
+than retried forever, so the one slice that exceeds the deadline on every
+attempt stops costing thirty minutes per restart. `--force` remains the only
+way to ask it again.
+
 **The restricted merge is enforced per cluster**, not by refusing to cluster:
 a cluster's members are dealt into buckets that never repeat a category, so
 the cross-category fold the merge is kept for still happens and the

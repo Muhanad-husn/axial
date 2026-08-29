@@ -75,6 +75,34 @@ is passed through unchanged, with `consolidated_from: 1`. The alternative
 -- dropping it, as extraction drops a passage no argument names -- would
 discard already-paid extraction work, and a position is the material of the
 map in a way a single passage is not.
+
+**The echo is deliberate, and it was measured.** `PROMPT` requires every
+handle to appear in exactly one entry, so a call folding two of fifty-five
+arguments retypes all fifty-five. That is expensive in emitted tokens -- the
+first real-corpus pass ran 2.4M completion tokens against 400k prompt, with
+13% of attempts hitting the client's 600s deadline -- and the obvious fix,
+asking for the merges alone, was built and is WORSE. Probed on
+`methodological-preconditions` (98 raw positions, same input, same model):
+merges-only spent 15,972 completion tokens a call against the echo prompt's
+8,000-13,000, with one call at 42,909 over 418s, and it folded 98 -> 66
+where the echo prompt reached 51 and converged. The model spends far more
+reasoning deciding what to merge when it is not walking the whole list, and
+walking it is apparently what makes it weigh every argument. The echo costs
+emitted tokens and buys both reasoning economy and folding, so it stays. Do
+not re-propose removing it without re-measuring on that category.
+
+**A resume announces its bill, and gives up on a read that cannot pass.**
+Retrying a read whose ledger record carries `error` changes that category's
+arguments, which changes the `arguments_key` every later round is keyed on,
+so the whole downstream chain is re-asked at full price -- observed live, a
+resume of a completed 188-call pass silently starting round 2 again. Before
+the first call, a resumed run logs how many reads it will retry, which
+categories they touch, and how many later reads that will cost, and the
+manifest records the actuals. And a read that has failed as many times as
+`axial.llm.MAX_ATTEMPTS` -- the client's own budget, not a number chosen
+here -- is abandoned rather than retried forever, so a slice that exceeds
+the deadline on every attempt stops costing thirty minutes per restart.
+`--force` remains the only way to ask it again.
 """
 
 from __future__ import annotations
@@ -82,7 +110,7 @@ from __future__ import annotations
 import collections
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -90,7 +118,7 @@ import httpx
 
 from axial.argmap.build import EXTRACT_SLICE, WORKERS, MapError
 from axial.checkpoint import append_checkpoint_record, load_checkpoint_records
-from axial.llm import LLMClient, LLMError
+from axial.llm import MAX_ATTEMPTS, LLMClient, LLMError
 from axial.model_json import ModelJsonError, parse_model_json
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` /
@@ -198,13 +226,24 @@ class ConsolidationResult:
     """The stage's output: `positions` in exactly the shape
     `merge_positions` already consumes, plus `consolidated_from` and
     `category` on each; the ledger records that produced them; and one
-    `CategoryOutcome` per category that took at least one round."""
+    `CategoryOutcome` per category that took at least one round.
+
+    The last three are what a RESUME cost. `reads_retried` counts reads that
+    carried an `error` and were asked again; `reads_reasked_after_retry`
+    counts reads in a later round of the same category that had to be asked
+    again because the retry changed their input; `reads_abandoned` counts
+    reads that have now failed as many times as the client itself would
+    attempt a call and will never be asked again without `--force`. On a
+    first run all three are zero."""
 
     positions: tuple[dict[str, Any], ...]
     records: tuple[dict[str, Any], ...]
     outcomes: tuple[CategoryOutcome, ...]
     categories: int
     categories_passed_through: int
+    reads_retried: int = 0
+    reads_reasked_after_retry: int = 0
+    reads_abandoned: int = 0
 
 
 def category_of(group_label: Any) -> str:
@@ -380,9 +419,10 @@ def consolidate_category_slice(
     dropped entirely -- `extract_positions_for_slice`'s own contract,
     exception set included, so one bad call never aborts the pass. A failed
     call is re-asked on the next run rather than standing as a completed
-    one (`_ask_round`). A failed call passes its whole slice through
-    unconsolidated: the extraction work behind those positions is already
-    paid for."""
+    one, until it has failed as many times as the client itself would
+    attempt a call (`_ask_round`). A failed call passes its whole slice
+    through unconsolidated: the extraction work behind those positions is
+    already paid for."""
     listing, handles = render_arguments_blind(job.members)
     record: dict[str, Any] = {
         "category": job.category,
@@ -450,6 +490,78 @@ def consolidate_category_slice(
     return record
 
 
+@dataclass
+class _ResumeTally:
+    """What a resume of this pass cost, accumulated across its rounds.
+
+    `retry_round` is the working state the other three are counted from: the
+    round in which a category first had a read retried. Anything that
+    category is asked in a LATER round is a re-ask caused by that retry --
+    the retry's answer differs from the error record's pass-through, so the
+    later round's `arguments_key` changes and the answer already on disk for
+    it no longer applies."""
+
+    retried: int = 0
+    reasked: int = 0
+    abandoned: int = 0
+    retry_round: dict[str, int] = field(default_factory=dict)
+
+
+def _attempts(record: dict[str, Any]) -> int:
+    """How many times this failed read has been asked. A record written
+    before the count existed stands for one attempt, so a live ledger's
+    failures still get their remaining tries rather than being abandoned on
+    sight."""
+    return int(record.get("attempts", 1))
+
+
+def _is_retryable(record: dict[str, Any] | None) -> bool:
+    """A failed read still worth asking again: it has not yet failed as many
+    times as the client itself would attempt one call."""
+    return record is not None and "error" in record and _attempts(record) < MAX_ATTEMPTS
+
+
+def _announce_resume_spend(
+    jobs: Sequence[ConsolidateJob],
+    reads_path: Path,
+    log: Callable[[str], None],
+) -> None:
+    """Before the first call of a resumed run, say what retrying its failed
+    reads will cost.
+
+    A retry is not one call. The retried read comes back different from the
+    error record's pass-through, so that category's later rounds are asked a
+    different question, their `arguments_key` changes, and every answer
+    already on disk for them stops applying -- the whole downstream chain is
+    re-asked at full price. That is right, and it happened silently once
+    (issue #830): a resume of a completed 188-call pass began re-asking round
+    2 with no warning that it was about to spend anything. The figure is an
+    upper bound, since the retry's own answer is not known until it is
+    made."""
+    ledger = load_checkpoint_records(reads_path, CorruptConsolidationLedgerError)
+    if not ledger:
+        return
+    by_key = {(record["category"], record["arguments_key"]): record for record in ledger}
+    retrying = [
+        job for job in jobs if _is_retryable(by_key.get((job.category, job.arguments_key)))
+    ]
+    if not retrying:
+        return
+    from_round = {job.category: job.round for job in retrying}
+    downstream = sum(
+        1
+        for record in ledger
+        if record["category"] in from_round
+        and int(record.get("round", 1)) > from_round[record["category"]]
+    )
+    log(
+        f"consolidation resume: {len(retrying)} failed read(s) to re-ask in "
+        f"{', '.join(sorted(from_round))}; a retry changes those categories' "
+        f"arguments, so {downstream} later read(s) already on disk will be asked "
+        f"again -- this run will spend up to {len(retrying) + downstream} call(s)"
+    )
+
+
 def _ask_round(
     jobs: Sequence[ConsolidateJob],
     *,
@@ -458,6 +570,7 @@ def _ask_round(
     pass_name: str,
     workers: int,
     log: Callable[[str], None],
+    tally: _ResumeTally,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Make one round's calls and return every record now on disk, keyed by
     `(category, arguments_key)`. A slice already on the ledger costs no call:
@@ -479,15 +592,38 @@ def _ask_round(
     # the same error and end it identically -- only `--force`, at full
     # price, could recover. The resume contract is never re-ask a COMPLETED
     # call.
-    pending = [
-        job
-        for job in jobs
-        if "error" in done.get((job.category, job.arguments_key), {"error": None})
-    ]
+    #
+    # But a read can fail in a way no retry fixes: one live slice exceeded
+    # the client's 600s deadline on all three of its attempts, and re-asking
+    # error records then meant every future resume spent thirty minutes
+    # rediscovering it. A read that has already failed as many times as the
+    # client would attempt one call is abandoned instead -- counted, its
+    # members still passing through unchanged, and re-askable only under
+    # `--force`.
+    pending: list[ConsolidateJob] = []
+    abandoned_before = tally.abandoned
+    for job in jobs:
+        prior = done.get((job.category, job.arguments_key))
+        if prior is not None and "error" not in prior:
+            continue
+        if prior is None:
+            # A read this category was never asked, in a round after one of
+            # its reads was retried: the retry is what changed the input,
+            # and this is the downstream price of it.
+            if tally.retry_round.get(job.category, job.round) < job.round:
+                tally.reasked += 1
+            pending.append(job)
+        elif _is_retryable(prior):
+            tally.retried += 1
+            tally.retry_round.setdefault(job.category, job.round)
+            pending.append(job)
+        else:
+            tally.abandoned += 1
     retries = sum(1 for job in pending if (job.category, job.arguments_key) in done)
     log(
         f"  round reads: {len(pending)} of {len(jobs)} "
-        f"({retries} retrying an earlier failure)"
+        f"({retries} retrying an earlier failure, "
+        f"{tally.abandoned - abandoned_before} abandoned)"
     )
 
     if pending:
@@ -499,8 +635,14 @@ def _ask_round(
             completed = 0
             for future in as_completed(futures):
                 record = future.result()
+                key = (record["category"], record["arguments_key"])
+                if "error" in record:
+                    # Attempts accumulate on the ledger record, so the next
+                    # resume can tell a transient blip from a read that
+                    # cannot pass.
+                    record["attempts"] = _attempts(done[key]) + 1 if key in done else 1
                 append_checkpoint_record(reads_path, record)
-                done[(record["category"], record["arguments_key"])] = record
+                done[key] = record
                 completed += 1
                 log(f"  consolidated {completed}/{len(pending)} (category {record['category']})")
     return done
@@ -536,7 +678,11 @@ def run_consolidation(
     correctness. The bound is read off the data -- a category read in nine
     slices gets nine rounds -- and is not a number picked here. A round whose
     output already fits one slice is never denied: that round is one call and
-    it is the whole point."""
+    it is the whole point.
+
+    A resumed run says up front what its retries will cost, and gives up on a
+    read that has failed as many times as the client itself would attempt one
+    (`_announce_resume_spend`, `_ask_round`). Both figures reach the manifest."""
     to_consolidate, passed_through, categories_passed_through = partition_by_category(reads)
     categories = len(to_consolidate) + categories_passed_through
     log(
@@ -551,6 +697,7 @@ def run_consolidation(
     finished: dict[str, list[dict[str, Any]]] = {}
     outcomes: list[CategoryOutcome] = []
     used: dict[tuple[str, str], dict[str, Any]] = {}
+    tally = _ResumeTally()
     round_number = 0
 
     while active:
@@ -560,6 +707,10 @@ def run_consolidation(
             for category in sorted(active)
         }
         jobs = [job for category_jobs in jobs_by_category.values() for job in category_jobs]
+        if round_number == 1:
+            # Before a single call is made, and only when there is something
+            # to warn about.
+            _announce_resume_spend(jobs, reads_path, log)
         log(f"consolidation round {round_number}: {len(jobs)} read(s) over {len(jobs_by_category)}")
         records = _ask_round(
             jobs,
@@ -568,6 +719,7 @@ def run_consolidation(
             pass_name=pass_name,
             workers=workers,
             log=log,
+            tally=tally,
         )
 
         still: dict[str, list[dict[str, Any]]] = {}
@@ -630,6 +782,9 @@ def run_consolidation(
         outcomes=tuple(sorted(outcomes, key=lambda outcome: outcome.category)),
         categories=categories,
         categories_passed_through=categories_passed_through,
+        reads_retried=tally.retried,
+        reads_reasked_after_retry=tally.reasked,
+        reads_abandoned=tally.abandoned,
     )
 
 

@@ -39,7 +39,7 @@ from axial.argmap.consolidate import (
     partition_by_category,
     run_consolidation,
 )
-from axial.llm import LLMError, StubLLMClient
+from axial.llm import MAX_ATTEMPTS, LLMError, StubLLMClient
 
 ALPHA = "alpha-2020-book"
 BETA = "beta-2021-book"
@@ -813,6 +813,10 @@ def test_the_manifest_reports_the_rounds_and_how_each_category_stopped(
     assert counts["categories_converged"] == 1
     assert counts["categories_stopped_no_progress"] == 0
     assert counts["categories_stopped_at_round_cap"] == 0
+    # Nothing failed, so nothing was retried, re-asked or abandoned.
+    assert counts["reads_retried"] == 0
+    assert counts["reads_reasked_after_retry"] == 0
+    assert counts["reads_abandoned"] == 0
     # One round, so nothing needed slicing.
     assert counts["categories_sliced"] == 0
 
@@ -1083,3 +1087,204 @@ def test_no_prior_manifest_leaves_an_unpriced_run_null_rather_than_zero() -> Non
     read as a free build."""
     assert _accumulated_totals(None, None, None, 1.0)["cost_usd"] is None
     assert _accumulated_totals(None, None, None, 1.0)["runs"] == 1
+
+
+# ---------------------------------------------------------------------------
+# What a resume costs, and what it can never buy (issue #830, found while
+# capturing evidence on the real corpus).
+# ---------------------------------------------------------------------------
+
+
+class _FailsChosenCallsThenFoldsClient(StubLLMClient):
+    """Fails the calls whose 1-based ordinal is in `fail_calls` and folds
+    every run of five handles otherwise. Run with `workers=1` so the
+    ordinals are the job order."""
+
+    def __init__(self, fail_calls: set[int]) -> None:
+        super().__init__()
+        self.fail_calls = fail_calls
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        if self.call_count in self.fail_calls:
+            raise LLMError("the model call failed")
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {
+                "arguments": [
+                    {
+                        "argument": f"Folded {handles[offset]}.",
+                        "handles": handles[offset : offset + 5],
+                    }
+                    for offset in range(0, len(handles), 5)
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_resume_says_what_a_retry_will_cost_downstream_before_it_spends(
+    tmp_path: Path,
+) -> None:
+    """A retry that succeeds returns different positions than the error
+    record's pass-through, so every later round for that category is asked a
+    different question and re-asked at full price. That is right, and it must
+    not be silent: a resume of a completed pass began re-asking round 2 with
+    no warning that it was about to spend anything."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _two_groups_of(EXTRACT_SLICE)
+
+    first = run_consolidation(
+        reads,
+        client=_FailsChosenCallsThenFoldsClient({1}),
+        reads_path=ledger,
+        workers=1,
+        log=lambda _m: None,
+    )
+    assert first.outcomes[0].rounds == 3
+
+    lines: list[str] = []
+    resumed = run_consolidation(
+        reads,
+        client=_FoldsEveryFiveClient(),
+        reads_path=ledger,
+        workers=1,
+        log=lines.append,
+    )
+
+    # The warning names the categories and the reads, and lands BEFORE any
+    # call is made.
+    warning = next(line for line in lines if "will spend" in line)
+    assert CAT_A in warning
+    # One failed read to re-ask, and three later reads whose input it
+    # changes -- an upper bound, since the retry's own answer is not known
+    # until it is made.
+    assert "up to 4" in warning
+    assert lines.index(warning) < min(
+        index for index, line in enumerate(lines) if "consolidated 1/" in line
+    )
+
+    # And the manifest's own figures are the actuals, not the projection.
+    assert resumed.reads_retried == 1
+    assert resumed.reads_reasked_after_retry == 1
+    assert resumed.outcomes[0].stopped == STOPPED_CONVERGED
+
+
+def test_a_read_that_cannot_succeed_is_abandoned_at_the_clients_own_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    """One slice exceeded the 600s deadline, was retried three times inside
+    the client at 600s each, and landed on the ledger as an error. Retrying
+    an error record then meant every future resume spent thirty minutes
+    rediscovering the same failure. A read that failed as many times as the
+    client itself would attempt one is not transient; it is abandoned, its
+    members pass through as they already did, and `--force` remains the way
+    to ask it again."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _two_group_reads()
+    client = _FailingClient()
+
+    for _run_number in range(MAX_ATTEMPTS + 2):
+        result = run_consolidation(reads, client=client, reads_path=ledger, log=lambda _m: None)
+
+    # Tried exactly as many times as the client's own budget, then never
+    # again -- the extra runs above cost nothing.
+    assert client.call_count == MAX_ATTEMPTS
+    assert result.reads_abandoned == 1
+    assert result.records[0]["attempts"] == MAX_ATTEMPTS
+    assert result.outcomes[0].stopped == STOPPED_FINAL_ROUND_FAILED
+    # The members are still in the map, exactly as the failure path already
+    # left them.
+    assert sorted(p["argument"] for p in result.positions) == [
+        "The first naming.",
+        "The second naming.",
+    ]
+
+    # A settled run makes no call at all, and says so without a spend warning.
+    lines: list[str] = []
+    run_consolidation(
+        reads, client=_RefusingClient(), reads_path=ledger, log=lines.append
+    )
+    assert not any("will spend" in line for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# The echo, and why it stays (issue #830). `PROMPT` makes a call folding two
+# of fifty-five arguments retype all fifty-five, and the first real-corpus
+# pass showed what that costs: 2.4M completion tokens against 400k prompt, 29
+# of 218 attempts (13%) hitting the 600s deadline. Asking for the merges alone
+# was built and PROBED on `methodological-preconditions` (98 raw positions),
+# and it lost on both counts -- 15,972 completion tokens a call against
+# 8,000-13,000, one call at 42,909 over 418s, and 98 -> 66 where the echo
+# prompt reached 51 and converged. Reverted. What these two tests hold is the
+# part that is true either way: what the model does not name survives, and the
+# raw positions offered are closed under the output.
+# ---------------------------------------------------------------------------
+
+
+class _FoldsOnePairOfThreeClient(StubLLMClient):
+    """Merges the first two of the three arguments it is shown and names the
+    third in no entry at all."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {"arguments": [{"argument": "The merged argument.", "handles": handles[:2]}]}
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_handle_the_model_never_names_passes_through_with_its_own_sentence(
+    tmp_path: Path,
+) -> None:
+    """Silence about an argument is not a refusal to keep it. It survives
+    with the sentence extraction already paid for, and its
+    `consolidated_from` intact."""
+    result = run_consolidation(
+        _three_positions_over_two_groups(),
+        client=_FoldsOnePairOfThreeClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert sorted(p["argument"] for p in result.positions) == [
+        "Second naming.",
+        "The merged argument.",
+    ]
+    merged = next(p for p in result.positions if p["argument"] == "The merged argument.")
+    assert merged["consolidated_from"] == 2
+    standing = next(p for p in result.positions if p["argument"] == "Second naming.")
+    assert standing["consolidated_from"] == 1
+    assert standing["chunk_ids"] == [_chunk_id(ALPHA, 2)]
+    # The invariant the manifest's headline number rests on, and which a
+    # real-corpus check reads (2,036 exactly): every raw position offered is
+    # accounted for exactly once.
+    assert sum(p["consolidated_from"] for p in result.positions) == 3
+
+
+def test_an_empty_answer_passes_every_position_through_and_loses_none(
+    tmp_path: Path,
+) -> None:
+    """A call that names nothing at all is a degenerate answer, not a
+    licence to drop the slice: every position stands in its own words and
+    the raw count still closes."""
+    client = _RecordingClient()
+    result = run_consolidation(
+        _three_positions_over_two_groups(),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert client.call_count == 1
+    assert sorted(p["argument"] for p in result.positions) == [
+        "First naming.",
+        "Second naming.",
+        "Third naming.",
+    ]
+    assert sum(p["consolidated_from"] for p in result.positions) == 3

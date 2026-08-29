@@ -1994,7 +1994,7 @@ _REQUEST_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=15.0
 # Issue #108: `_REQUEST_TIMEOUT.read` above only bounds a single httpx *read*
 # -- a slow-drip stall (or a provider/proxy that emits keep-alive bytes more
 # often than every 180s) resets that per-read timer forever, so a stalled
-# attempt can hang indefinitely at 0% CPU and the `_MAX_ATTEMPTS` retry
+# attempt can hang indefinitely at 0% CPU and the `MAX_ATTEMPTS` retry
 # budget below never gets a chance to fire. `_REQUEST_DEADLINE_SECONDS` is a
 # hard, per-attempt WALL-CLOCK ceiling enforced independently of httpx (via a
 # watchdog thread in `OpenRouterClient._post_with_deadline`): once it
@@ -2072,7 +2072,12 @@ class _RequestDeadlineExceeded(Exception):
 # module's "every error is an LLMError" promise. Retried like any other
 # transient failure; a final-attempt failure raises `OpenRouterError` naming
 # the decode error plus a truncated body snippet for diagnosability.
-_MAX_ATTEMPTS = 3
+#
+# Public (issue #830): a caller that keeps its own resume ledger has to know
+# when a read has failed as many times as this client would ever attempt one,
+# so it can stop rediscovering the same failure on every restart. That bound
+# is this number, read from here rather than picked a second time.
+MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = (0.5, 2.0)
 
 # Explicit, generous `max_tokens` sent with every request (issue #69, raised
@@ -2111,13 +2116,13 @@ def _log_retry(
     this repo has no logging framework (see `src/axial/xref.py:334`).
 
     Carries the pass name, the attempt number and the total attempt budget
-    (`_MAX_ATTEMPTS`), and a machine-readable trigger token (an HTTP status,
+    (`MAX_ATTEMPTS`), and a machine-readable trigger token (an HTTP status,
     an exception class name, or a `finish_reason` value). When `prompt` is
     given (the content_filter reroute path only), also carries a stable
     hash of the refused prompt plus a text prefix, so a fallback model can
     later be validated against real refused chunks.
     """
-    line = f"llm_retry pass={pass_name} attempt={attempt}/{_MAX_ATTEMPTS} trigger={trigger}"
+    line = f"llm_retry pass={pass_name} attempt={attempt}/{MAX_ATTEMPTS} trigger={trigger}"
     if prompt is not None:
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         line += f" prompt_hash={prompt_hash} prompt_prefix={prompt[:_PROMPT_PREFIX_LEN]!r}"
@@ -2146,7 +2151,7 @@ def _log_call_request(
     `run_id` (a sweep draw's `set_run_id`, `OpenRouterClient.__init__`'s
     docstring) is appended only when given, so every pre-existing caller
     that never sets it keeps logging the exact same line as before."""
-    attempt_suffix = f" attempt={attempt}/{_MAX_ATTEMPTS}" if attempt > 1 else ""
+    attempt_suffix = f" attempt={attempt}/{MAX_ATTEMPTS}" if attempt > 1 else ""
     run_id_suffix = f" run_id={run_id}" if run_id is not None else ""
     emit_event(
         None,
@@ -2550,8 +2555,8 @@ class OpenRouterClient:
         return response
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            is_last_attempt = attempt == _MAX_ATTEMPTS
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == MAX_ATTEMPTS
             try:
                 response = self._post_with_deadline(prompt, pass_name=pass_name, attempt=attempt)
             except httpx.TransportError as exc:
@@ -2564,7 +2569,7 @@ class OpenRouterClient:
                 if is_last_attempt:
                     raise OpenRouterError(
                         f"request wall-clock deadline of {self._request_deadline_seconds}s "
-                        f"exceeded on attempt {attempt}/{_MAX_ATTEMPTS} (issue #108)"
+                        f"exceeded on attempt {attempt}/{MAX_ATTEMPTS} (issue #108)"
                     ) from exc
                 _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])
@@ -2707,8 +2712,8 @@ class OpenRouterClient:
         end ONLY when `finish_reason` is a genuine clean stop (`"stop"` or
         absent/`None`).
         """
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            is_last_attempt = attempt == _MAX_ATTEMPTS
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            is_last_attempt = attempt == MAX_ATTEMPTS
             try:
                 response = self._post_with_deadline(
                     prompt, pass_name=pass_name, tools=tools, attempt=attempt
@@ -2723,7 +2728,7 @@ class OpenRouterClient:
                 if is_last_attempt:
                     raise OpenRouterError(
                         f"request wall-clock deadline of {self._request_deadline_seconds}s "
-                        f"exceeded on attempt {attempt}/{_MAX_ATTEMPTS} (issue #108)"
+                        f"exceeded on attempt {attempt}/{MAX_ATTEMPTS} (issue #108)"
                     ) from exc
                 _log_retry(pass_name, attempt, type(exc).__name__)
                 _sleep(_RETRY_BACKOFF_SECONDS[attempt - 1])

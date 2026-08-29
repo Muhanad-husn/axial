@@ -1879,6 +1879,17 @@ def run_map_build(
                 "max_rounds_one_category": max((o.rounds for o in outcomes), default=0),
                 "reads": len(consolidation.records),
                 "failed_reads": len([r for r in consolidation.records if "error" in r]),
+                # What this RESUME cost, all zero on a first run. A retried
+                # read changes its category's arguments, so every later
+                # round of that category is asked again at full price
+                # (`reads_reasked_after_retry`) -- the pass says so up front
+                # and records it here. `reads_abandoned` is a read that has
+                # failed as many times as the client would attempt one call
+                # and will never be asked again without `--force` (issue
+                # #830).
+                "reads_retried": consolidation.reads_retried,
+                "reads_reasked_after_retry": consolidation.reads_reasked_after_retry,
+                "reads_abandoned": consolidation.reads_abandoned,
                 "dropped_handles": sum(
                     record.get("dropped_handles", 0) for record in consolidation.records
                 ),

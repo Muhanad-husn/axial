@@ -10,7 +10,7 @@ Given  `OpenRouterClient` sends a request whose underlying transport blocks
        observed live for 15-40 minutes on three gold-ingestion sources)
 When   the client's per-attempt wall-clock ceiling elapses
 Then   the attempt self-aborts and is treated as a transient failure, so
-       the existing `_MAX_ATTEMPTS` retry budget (issue #60) re-issues it in
+       the existing `MAX_ATTEMPTS` retry budget (issue #60) re-issues it in
        process, exactly like a `httpx.ReadTimeout` is treated today
 And    a call that keeps stalling past the ceiling on every attempt still
        gives up within a bounded time and raises a loud typed error (an
@@ -172,10 +172,10 @@ def test_ceiling_breach_is_retried_within_the_existing_retry_budget(monkeypatch)
     """Two consecutive ceiling breaches (stalled attempts) followed by a
     successful third attempt must still return the successful response --
     proving a wall-clock breach is treated as a retryable/transient failure
-    within `_MAX_ATTEMPTS`, exactly like a `httpx.ReadTimeout` is today, not
+    within `MAX_ATTEMPTS`, exactly like a `httpx.ReadTimeout` is today, not
     a hard abort."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient, _MAX_ATTEMPTS
+    from axial.llm import OpenRouterClient, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     call_count = 0
@@ -183,7 +183,7 @@ def test_ceiling_breach_is_retried_within_the_existing_retry_budget(monkeypatch)
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal call_count
         call_count += 1
-        if call_count < _MAX_ATTEMPTS:
+        if call_count < MAX_ATTEMPTS:
             return _blocking_forever_handler(request)
         return _ok_response()
 
@@ -198,8 +198,8 @@ def test_ceiling_breach_is_retried_within_the_existing_retry_budget(monkeypatch)
     elapsed, outcome = _complete_with_hang_guard(client, "hello world")
 
     assert outcome == ("ok", "model reply")
-    assert call_count == _MAX_ATTEMPTS
-    assert elapsed < SHORT_CEILING_SECONDS * _MAX_ATTEMPTS + 2.0, (
+    assert call_count == MAX_ATTEMPTS
+    assert elapsed < SHORT_CEILING_SECONDS * MAX_ATTEMPTS + 2.0, (
         f"expected the retried call to finish within a few ceilings, took {elapsed:.2f}s"
     )
 
@@ -213,7 +213,7 @@ def test_persistent_ceiling_breach_raises_a_typed_llm_error_within_a_bounded_tim
     a loud, typed `axial.llm.LLMError` -- never hang, and never silently
     swallow the failure."""
     import axial.llm as llm_module
-    from axial.llm import LLMError, OpenRouterClient, _MAX_ATTEMPTS
+    from axial.llm import LLMError, OpenRouterClient, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     call_count = 0
@@ -239,10 +239,10 @@ def test_persistent_ceiling_breach_raises_a_typed_llm_error_within_a_bounded_tim
         f"expected a typed axial.llm.LLMError on persistent ceiling breach, got "
         f"{type(value).__name__}: {value}"
     )
-    assert call_count == _MAX_ATTEMPTS
-    # Bounded by roughly _MAX_ATTEMPTS ceilings -- not the hang-guard, and
+    assert call_count == MAX_ATTEMPTS
+    # Bounded by roughly MAX_ATTEMPTS ceilings -- not the hang-guard, and
     # certainly not an indefinite hang.
-    assert elapsed < SHORT_CEILING_SECONDS * _MAX_ATTEMPTS + 2.0, (
+    assert elapsed < SHORT_CEILING_SECONDS * MAX_ATTEMPTS + 2.0, (
         f"expected the give-up to happen within a few ceilings, took {elapsed:.2f}s"
     )
 
