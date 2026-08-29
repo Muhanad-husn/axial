@@ -137,7 +137,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import httpx
 import numpy as np
@@ -260,6 +260,34 @@ class MapError(Exception):
     """Base class for all argument-map build errors."""
 
 
+# The two grouping modes `run_map_build` takes (issue #829). `GROUPING_BAG`
+# is what every build before this slice did and stays the default;
+# `GROUPING_CATEGORY` groups by slice 03's chosen `claim x mechanism` split
+# and writes beside the default build, under `<pin>` + `CATEGORY_VARIANT_
+# SUFFIX`, so the two maps exist at once and can be compared (slice 06).
+GROUPING_BAG = "bag"
+GROUPING_CATEGORY = "category"
+GROUPING_MODES = (GROUPING_BAG, GROUPING_CATEGORY)
+CATEGORY_VARIANT_SUFFIX = "-category"
+
+
+class SchemeVersionMismatchError(MapError):
+    """Raised when a category-grouped build finds its own directory already
+    holds work grouped under different vocabulary scheme versions. Resuming
+    would finish one half of a map under a scheme the other half was never
+    asked under -- the ledger is keyed by group label, and a scheme change
+    silently re-labels every group. The fix is a fresh variant directory or
+    `--force`, both deliberate acts."""
+
+    def __init__(self, column: str, recorded: str, on_disk: str, outdir: Path) -> None:
+        self.column = column
+        super().__init__(
+            f"{outdir} was grouped under {column} scheme {recorded!r}, but "
+            f"{column} on disk is now {on_disk!r} -- refusing to resume a "
+            "variant build across two schemes"
+        )
+
+
 class CorruptReadsLedgerError(MapError):
     """Raised when a line of `reads.jsonl` -- other than a torn final line
     left by a hard kill mid-append (healed, not an error; see
@@ -300,9 +328,17 @@ class Passage:
 @dataclass(frozen=True)
 class ExtractJob:
     """One model call's worth of work: `bag`'s `slice_index`-th slice of at
-    most `EXTRACT_SLICE` passages, already author-spread."""
+    most `EXTRACT_SLICE` passages, already author-spread.
 
-    bag: int
+    `bag` is the group's own identity, and what that is depends on the
+    grouping mode: a wording bag's integer label under `GROUPING_BAG`, a
+    category cell's own label string (`<claim>::<mechanism>`) under
+    `GROUPING_CATEGORY` (issue #829). It is only ever used as half of the
+    `(bag, slice)` resume key and printed in the progress log, so both types
+    work unchanged -- and both survive the JSON round-trip through
+    `reads.jsonl` as themselves."""
+
+    bag: int | str
     slice_index: int
     members: tuple[Passage, ...]
 
@@ -551,6 +587,79 @@ def _write_bag_state(
     path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def _write_category_group_state(
+    path: Path, groups: Mapping[str, list[Passage]], scheme_versions: Mapping[str, str]
+) -> None:
+    """The category-grouped build's own `bag_state.json` (issue #829).
+
+    It exists for two readers already on disk. `axial.argmap.purity._load_
+    bag_assignments` and `axial.argmap.grouping.compute_grouping_report`
+    both take this file as the passage universe of a built map, and slice
+    06 measures the variant directory through them. That is why the
+    assignment values are INTEGERS -- `_load_bag_assignments` calls
+    `int(...)` on each one, and a raw label string would raise there -- with
+    the labels themselves kept alongside in `group_labels`, indexed by the
+    same numbering.
+
+    It can never be mistaken for a bag fit to reuse: `_bag_state_reusable`
+    requires `config.encoder`/`bag_distance_threshold`/`sklearn_version`,
+    and this config carries none of them, because none of them decided
+    anything here. `centroids` is written empty for the same reason -- a
+    category cell has no centroid, and an incremental build has nothing to
+    place a new passage against.
+
+    `scheme_versions` is written here rather than only in `map.json`
+    because this file lands BEFORE the first model call and `map.json` only
+    after the last one: a run killed halfway leaves the ledger and this,
+    and `_check_scheme_versions` needs something to compare against in
+    exactly that case."""
+    ordered = sorted(groups)
+    index_by_label = {label: index for index, label in enumerate(ordered)}
+    state = {
+        "config": {
+            "grouping": GROUPING_CATEGORY,
+            "scheme_versions": dict(scheme_versions),
+        },
+        "assignments": {
+            member.chunk_id: index_by_label[label]
+            for label, members in groups.items()
+            for member in members
+        },
+        "group_labels": {str(index): label for label, index in index_by_label.items()},
+        "centroids": {},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _check_scheme_versions(
+    outdir: Path, scheme_versions: Mapping[str, str], *, force: bool
+) -> None:
+    """Refuse to resume a category-grouped build under a scheme it was not
+    started under (issue #829).
+
+    There is nothing to compare against on a FIRST run -- no prior state
+    exists, and the build simply records what it grouped under. The refusal
+    is meaningful on a re-run: the group labels the resume ledger is keyed
+    by are category ids, so a scheme change re-labels every group, and
+    finishing the ledger would produce a map half-asked under each scheme.
+    Compared against `bag_state.json` rather than `map.json` because that
+    file is written before the first call and covers a killed run too.
+
+    `force` skips the check, because it is exactly the deliberate act this
+    refusal asks for: it sets the whole prior ledger aside and re-asks every
+    group under the scheme now on disk."""
+    if force:
+        return
+    state = _load_json_or_none(_bag_state_path(outdir))
+    recorded = (state or {}).get("config", {}).get("scheme_versions")
+    if not isinstance(recorded, dict):
+        return
+    for column, version in sorted(scheme_versions.items()):
+        if recorded.get(column, version) != version:
+            raise SchemeVersionMismatchError(column, recorded[column], version, outdir)
+
+
 def _average_linkage_distance(vector: np.ndarray, centroid: np.ndarray) -> float:
     """The distance a candidate point's placement against `centroid` must
     clear -- the SAME criterion `_agglomerative_cluster`'s own average
@@ -670,13 +779,19 @@ def author_spread(members: Sequence[Passage]) -> list[Passage]:
     return out
 
 
-def build_jobs(bags: dict[int, list[Passage]]) -> list[ExtractJob]:
+def build_jobs(
+    bags: Mapping[int, list[Passage]] | Mapping[str, list[Passage]],
+) -> list[ExtractJob]:
     """Every bag read in full, in author-spread slices of at most
     `EXTRACT_SLICE`. A bag with a single member still yields one job of size
     one -- there is no special case: the model is asked about it exactly
     like any other slice, and its answer (an argument, or nothing usable)
     flows through the same placed/unassigned/failed accounting as every
-    other job."""
+    other job.
+
+    A category-grouped build (issue #829) passes label-keyed groups here
+    instead of integer-keyed bags; `sorted` orders either kind, since one
+    build's keys are all of one type."""
     jobs: list[ExtractJob] = []
     for label, members in sorted(bags.items()):
         ordered = author_spread(members)
@@ -1176,14 +1291,30 @@ def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
     pin" issue #677 seeds a new pin's bag state and reads ledger from.
     `None` when `map_dir` does not exist or holds no other completed pin
     (`map.json` is written last, at the very end of a build, so a directory
-    without one was never a completed build to seed from)."""
+    without one was never a completed build to seed from).
+
+    A category variant directory (issue #829) is never a candidate. It is a
+    sibling under the same `map_dir` and it does carry a `map.json`, so
+    without this it would be the newest "prior pin" the moment it is built --
+    and a later default rebuild would then seed its ledger from reads asked
+    over category groups. A real pin is a 16-character hex digest, so it can
+    never end in this suffix.
+
+    That exclusion reaches the second caller too: `axial.argmap.purity.
+    resolve_map_pin_dir` resolves a bare `axial map purity`/`map
+    grouping-report` through here, so those keep measuring the DEFAULT build
+    once a variant exists beside it. Reading the variant is `--pin
+    <pin>-category`, which bypasses this resolution entirely."""
     root = Path(map_dir)
     if not root.is_dir():
         return None
     candidates = [
         child
         for child in root.iterdir()
-        if child.is_dir() and child.name != current_pin and (child / "map.json").is_file()
+        if child.is_dir()
+        and child.name != current_pin
+        and not child.name.endswith(CATEGORY_VARIANT_SUFFIX)
+        and (child / "map.json").is_file()
     ]
     if not candidates:
         return None
@@ -1246,6 +1377,7 @@ def run_map_build(
     envelopes_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_dir: Path | None = None,
+    vocabulary_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
     encode: Encoder | None = None,
@@ -1253,6 +1385,7 @@ def run_map_build(
     guard: bool = True,
     pin: str | None = None,
     force: bool = False,
+    grouping: str = GROUPING_BAG,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Run both stages -- positions, then relations -- and write
@@ -1291,8 +1424,24 @@ def run_map_build(
     the prior pin's own read for every slice whose ordered claims match
     exactly (`_seed_reads_from_prior_pin`), so `run_extraction`'s existing
     `(bag, slice)` resume skips those with no model call. `force=True`
-    skips both -- a full re-bag is always available and never automatic."""
+    skips both -- a full re-bag is always available and never automatic.
+
+    **Issue #829: `grouping=GROUPING_CATEGORY` builds the re-formed map
+    beside the default one.** Step 2 groups by slice 03's chosen `claim x
+    mechanism` split plus the claim-only fallback (`axial.argmap.grouping.
+    load_category_grouping`) instead of wording similarity, and everything
+    downstream -- author-spread slicing, the blind render, the extraction
+    call, the resume ledger, the merge -- is the same code over a different
+    grouping. The variant writes to `<pin>-category/`, never `<pin>/`, and
+    it consults no prior pin at all: neither for bag state (a category cell
+    has no centroid to place against) nor for seeded reads (a prior pin's
+    reads are the DEFAULT build's, and seeding from them would silently
+    reproduce the very map this variant exists to be compared against).
+    Stage 2, relations, is skipped -- it is slice 07's, and the variant's
+    manifest carries no relations block."""
     started = time.monotonic()
+    if grouping not in GROUPING_MODES:
+        raise MapError(f"unknown grouping {grouping!r} (expected one of {GROUPING_MODES})")
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
     if trees_dir is None:
@@ -1308,40 +1457,72 @@ def run_map_build(
     if pin is None:
         pin = compute_corpus_pin(envelopes_dir, sources_dir)
 
-    outdir = Path(map_dir) / pin
+    category_grouped = grouping == GROUPING_CATEGORY
+    outdir = Path(map_dir) / (f"{pin}{CATEGORY_VARIANT_SUFFIX}" if category_grouped else pin)
     outdir.mkdir(parents=True, exist_ok=True)
     if guard:
         claim_single_instance(outdir)
-    log(f"corpus pin {pin} -> {outdir}")
+    log(f"corpus pin {pin} | grouping {grouping} -> {outdir}")
 
     passages = select_passages(answers_dir, trees_dir)
     log(f"passages {len(passages)} | authors {len({p.author for p in passages})}")
 
-    # Issue #677: `--force` always re-bags globally (the founder's chosen
-    # escape hatch), so a forced run never even looks for a prior pin.
-    prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
-    prior_bag_state = (
-        _load_json_or_none(_bag_state_path(prior_pin_dir)) if prior_pin_dir is not None else None
-    )
-    if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
-        log(
-            f"map: prior bag state at {prior_pin_dir} does not match this run's "
-            "encoder/threshold/library version -- falling back to a full re-bag"
-        )
-        prior_bag_state = None
+    ungrouped_chunk_ids: tuple[str, ...] = ()
+    scheme_versions: dict[str, str] = {}
+    if category_grouped:
+        # Imported here, not at module scope: `axial.argmap.grouping` imports
+        # this module for its own constants and clustering seam, so a
+        # top-level import either way is a cycle.
+        from axial.argmap.grouping import load_category_grouping
 
-    if prior_bag_state is not None:
-        bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
-        log(
-            f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
-            f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
-            "their prior bag)"
+        by_chunk_id = {passage.chunk_id: passage for passage in passages}
+        grouped = load_category_grouping(by_chunk_id.keys(), vocabulary_dir=vocabulary_dir)
+        scheme_versions = grouped.scheme_versions
+        _check_scheme_versions(outdir, scheme_versions, force=force)
+        bags = {
+            group.label: [by_chunk_id[chunk_id] for chunk_id in group.chunk_ids]
+            for group in grouped.result.groups
+        }
+        ungrouped_chunk_ids = grouped.result.ungrouped_chunk_ids
+        prior_pin_dir = None
+        schemes = ", ".join(
+            f"{column} {version}" for column, version in sorted(scheme_versions.items())
         )
+        log(
+            f"groups {len(bags)} (claim x mechanism, schemes {schemes}; "
+            f"{len(ungrouped_chunk_ids)} passage(s) reached no group)"
+        )
+        _write_category_group_state(_bag_state_path(outdir), bags, scheme_versions)
     else:
-        bags, centroids = _bag_passages_with_centroids(passages, encode)
-        log(f"bags {len(bags)} (full re-bag)")
+        # Issue #677: `--force` always re-bags globally (the founder's chosen
+        # escape hatch), so a forced run never even looks for a prior pin.
+        prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
+        prior_bag_state = (
+            _load_json_or_none(_bag_state_path(prior_pin_dir))
+            if prior_pin_dir is not None
+            else None
+        )
+        if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
+            log(
+                f"map: prior bag state at {prior_pin_dir} does not match this run's "
+                "encoder/threshold/library version -- falling back to a full re-bag"
+            )
+            prior_bag_state = None
 
-    _write_bag_state(_bag_state_path(outdir), bags, centroids)
+        if prior_bag_state is not None:
+            bags, centroids, new_count = _incremental_bag_passages(
+                passages, encode, prior_bag_state
+            )
+            log(
+                f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
+                f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
+                "their prior bag)"
+            )
+        else:
+            bags, centroids = _bag_passages_with_centroids(passages, encode)
+            log(f"bags {len(bags)} (full re-bag)")
+
+        _write_bag_state(_bag_state_path(outdir), bags, centroids)
 
     jobs = build_jobs(bags)
     log(f"reads {len(jobs)} (every passage shown once)")
@@ -1392,9 +1573,20 @@ def run_map_build(
     raw_positions = [position for read in reads for position in read["positions"]]
     errors = [read for read in reads if "error" in read]
     unassigned = sum(read.get("unassigned", 0) for read in reads)
-    placed = sum(position["size"] for position in raw_positions)
+    # Issue #829: two different numbers, both named. `placed_slots` sums
+    # member slots over RAW positions, so a passage named in two raw
+    # positions of the same read counts twice -- on the live build that read
+    # 6,070 against 6,010 selected, as if more passages were placed than were
+    # shown. `placed_distinct` is the honest figure: how many passages reach
+    # a position at all, and it is the same set the merge writes to
+    # `positions.jsonl`, since merging only unions chunk ids.
+    placed_slots = sum(position["size"] for position in raw_positions)
+    placed_distinct = len(
+        {chunk_id for position in raw_positions for chunk_id in position["chunk_ids"]}
+    )
     log(
-        f"raw positions {len(raw_positions)} | placed {placed} | "
+        f"raw positions {len(raw_positions)} | placed slots {placed_slots} | "
+        f"distinct passages placed {placed_distinct} | "
         f"unassigned {unassigned} | failed reads {len(errors)}"
     )
 
@@ -1415,70 +1607,94 @@ def run_map_build(
     # ------------------------------------------------------------------
     # Stage 2: relations between positions (issue #572, PR 2 of 4).
     # ------------------------------------------------------------------
-    by_id = {position["position_id"]: position for position in stamped}
-    neighbourhoods = build_neighbourhoods(stamped, encode)
-    singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
-    log(
-        f"neighbourhoods {len(neighbourhoods)} (positions {len(stamped)}, "
-        f"target size {TARGET_NEIGHBOURHOOD}, max {MAX_NEIGHBOURHOOD}, "
-        f"{singletons} singleton(s) skipped)"
-    )
-
-    relation_reads_path = outdir / "relation_reads.jsonl"
-    if force and relation_reads_path.exists():
-        prior_relation_reads = load_checkpoint_records(
-            relation_reads_path, CorruptRelationsLedgerError
-        )
-        relation_aside_path = outdir / f"relation_reads.{_force_aside_suffix()}.jsonl"
-        relation_reads_path.replace(relation_aside_path)
+    # Skipped entirely for a category-grouped variant (issue #829):
+    # relations over the variant are slice 07's, and asking them here
+    # would spend a paid pass on a map the consolidation pass has not
+    # run over yet. The manifest then carries no relations block at all.
+    relations_manifest: dict[str, Any] | None = None
+    if not category_grouped:
+        by_id = {position["position_id"]: position for position in stamped}
+        neighbourhoods = build_neighbourhoods(stamped, encode)
+        singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
         log(
-            f"--force: set aside {len(prior_relation_reads)} prior relation read(s) to "
-            f"{relation_aside_path.name}; re-asking all {len(neighbourhoods)} "
-            "neighbourhood(s) under this pin"
+            f"neighbourhoods {len(neighbourhoods)} (positions {len(stamped)}, "
+            f"target size {TARGET_NEIGHBOURHOOD}, max {MAX_NEIGHBOURHOOD}, "
+            f"{singletons} singleton(s) skipped)"
         )
-    relation_reads = run_relations(
-        neighbourhoods,
-        by_id,
-        client=client,
-        reads_path=relation_reads_path,
-        workers=workers,
-        log=log,
-    )
 
-    flat_relations = [relation for read in relation_reads for relation in read["relations"]]
-    failed_relation_reads = [read for read in relation_reads if "error" in read]
-    dropped_relations = sum(read.get("dropped", 0) for read in relation_reads)
-    pairs_possible = sum(
-        read["positions"] * (read["positions"] - 1) // 2
-        for read in relation_reads
-        if "error" not in read
-    )
-    distinct_labels = len({relation["relation"] for relation in flat_relations})
-    cross_author_relations = sum(
-        1
-        for relation in flat_relations
-        if set(by_id[relation["from_position_id"]]["authors"])
-        != set(by_id[relation["to_position_id"]]["authors"])
-    )
-    log(
-        f"relations {len(flat_relations)} of {pairs_possible} possible pairs "
-        f"(dropped {dropped_relations}, failed reads {len(failed_relation_reads)}, "
-        f"distinct labels {distinct_labels}, cross-author {cross_author_relations})"
-    )
-
-    with (outdir / "relations.jsonl").open("w", encoding="utf-8") as handle:
-        for relation in flat_relations:
-            handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
-
-    relation_usage = client.usage_for_pass(RELATE_PASS_NAME)
-    relation_model = client.model_for_pass(RELATE_PASS_NAME)
-    relation_cost = (
-        estimate_cost(
-            relation_model, relation_usage["prompt_tokens"], relation_usage["completion_tokens"]
+        relation_reads_path = outdir / "relation_reads.jsonl"
+        if force and relation_reads_path.exists():
+            prior_relation_reads = load_checkpoint_records(
+                relation_reads_path, CorruptRelationsLedgerError
+            )
+            relation_aside_path = outdir / f"relation_reads.{_force_aside_suffix()}.jsonl"
+            relation_reads_path.replace(relation_aside_path)
+            log(
+                f"--force: set aside {len(prior_relation_reads)} prior relation read(s) to "
+                f"{relation_aside_path.name}; re-asking all {len(neighbourhoods)} "
+                "neighbourhood(s) under this pin"
+            )
+        relation_reads = run_relations(
+            neighbourhoods,
+            by_id,
+            client=client,
+            reads_path=relation_reads_path,
+            workers=workers,
+            log=log,
         )
-        if relation_usage
-        else None
-    )
+
+        flat_relations = [relation for read in relation_reads for relation in read["relations"]]
+        failed_relation_reads = [read for read in relation_reads if "error" in read]
+        dropped_relations = sum(read.get("dropped", 0) for read in relation_reads)
+        pairs_possible = sum(
+            read["positions"] * (read["positions"] - 1) // 2
+            for read in relation_reads
+            if "error" not in read
+        )
+        distinct_labels = len({relation["relation"] for relation in flat_relations})
+        cross_author_relations = sum(
+            1
+            for relation in flat_relations
+            if set(by_id[relation["from_position_id"]]["authors"])
+            != set(by_id[relation["to_position_id"]]["authors"])
+        )
+        log(
+            f"relations {len(flat_relations)} of {pairs_possible} possible pairs "
+            f"(dropped {dropped_relations}, failed reads {len(failed_relation_reads)}, "
+            f"distinct labels {distinct_labels}, cross-author {cross_author_relations})"
+        )
+
+        with (outdir / "relations.jsonl").open("w", encoding="utf-8") as handle:
+            for relation in flat_relations:
+                handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
+
+        relation_usage = client.usage_for_pass(RELATE_PASS_NAME)
+        relation_model = client.model_for_pass(RELATE_PASS_NAME)
+        relation_cost = (
+            estimate_cost(
+                relation_model, relation_usage["prompt_tokens"], relation_usage["completion_tokens"]
+            )
+            if relation_usage
+            else None
+        )
+        # Nested rather than mixed into the manifest's own fields -- this
+        # manifest describes both stages, and nothing here overwrites the
+        # position stage's own counts/usage/cost.
+        relations_manifest = {
+            "counts": {
+                "neighbourhoods_read": len(relation_reads),
+                "failed_reads": len(failed_relation_reads),
+                "relations_asserted": len(flat_relations),
+                "pairs_possible": pairs_possible,
+                "distinct_labels": distinct_labels,
+                "cross_author_relations": cross_author_relations,
+                "dropped_relations": dropped_relations,
+            },
+            "model": relation_model,
+            "reasoning": POSITION_RELATE_REASONING,
+            "usage": relation_usage,
+            "cost_usd": relation_cost,
+        }
 
     manifest = {
         "corpus_pin": pin,
@@ -1507,10 +1723,24 @@ def run_map_build(
             "units_asked_touching_new": units_asked_touching_new,
             "raw_positions": len(raw_positions),
             "merged_positions": len(stamped),
-            "passages_placed": placed,
+            # Issue #829: the old single `passages_placed` was the slot sum
+            # under a name that read as a passage count. Both figures are
+            # kept, each saying which it is, and neither reuses the
+            # ambiguous name.
+            "passages_placed_slots": placed_slots,
+            "passages_placed_distinct": placed_distinct,
+            # A handle the model itself named as making no argument -- NOT
+            # `passages_ungrouped`, which is a passage that reached no group
+            # to be shown in at all (issue #829).
             "passages_unassigned": unassigned,
+            "passages_ungrouped": len(ungrouped_chunk_ids),
             "failed_reads": len(errors),
         },
+        # Issue #829: what step 2 grouped by, and -- for a category-grouped
+        # build -- the vocabulary scheme versions it grouped under.
+        # `scheme_versions` is empty under `GROUPING_BAG`, which consults no
+        # vocabulary at all.
+        "grouping": {"mode": grouping, "scheme_versions": scheme_versions},
         "model": model,
         "reasoning": POSITION_EXTRACT_REASONING,
         # `ENCODER_MODEL` (issue #572, PR 3 of 4): the position-argument
@@ -1526,25 +1756,9 @@ def run_map_build(
         "usage": usage,
         "cost_usd": cost,
         "wall_time_sec": time.monotonic() - started,
-        # The relation stage's own figures, nested rather than mixed into
-        # the fields above -- this manifest describes both stages, and
-        # nothing here overwrites the position stage's own counts/usage/cost.
-        "relations": {
-            "counts": {
-                "neighbourhoods_read": len(relation_reads),
-                "failed_reads": len(failed_relation_reads),
-                "relations_asserted": len(flat_relations),
-                "pairs_possible": pairs_possible,
-                "distinct_labels": distinct_labels,
-                "cross_author_relations": cross_author_relations,
-                "dropped_relations": dropped_relations,
-            },
-            "model": relation_model,
-            "reasoning": POSITION_RELATE_REASONING,
-            "usage": relation_usage,
-            "cost_usd": relation_cost,
-        },
     }
+    if relations_manifest is not None:
+        manifest["relations"] = relations_manifest
     (outdir / "map.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",

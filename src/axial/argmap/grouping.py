@@ -195,6 +195,83 @@ def group_by_intersection(
     )
 
 
+# The mechanism slot a claim-only group takes (issue #829, founder ruling
+# 2026-08-29). It cannot collide with a real cell label because no committed
+# scheme carries a category id shaped like this -- every id in
+# `config/vocabulary.yaml` is a lowercase hyphen slug, and this holds a space
+# and parentheses. That is a convention of the scheme, not something
+# `axial.vocabulary._walk_categories` enforces (it accepts any non-empty
+# string), so the guarantee is one line thick: an id written this way would be
+# a scheme bug in its own right, and it would show up as one group holding
+# both kinds of passage rather than as a silent misplacement.
+CLAIM_ONLY_MECHANISM_LABEL = "(no mechanism)"
+
+
+def group_by_intersection_with_claim_fallback(
+    chunk_ids: Iterable[str],
+    claim_category_by_chunk: Mapping[str, str],
+    mechanism_category_by_chunk: Mapping[str, str],
+) -> GroupingResult:
+    """`group_by_intersection`, plus a claim-only cell for every passage that
+    holds a `claim` category and no `mechanism` one -- what `axial map build
+    --grouping category` actually groups by (issue #829).
+
+    Measured on the real corpus at the time of the ruling: 797 of 6,010
+    selected passages form no `claim x mechanism` cell, and 780 of those hold
+    `claim` alone. Leaving all 797 out would put 13.3% of selected passages
+    beyond any position, against the 6.9% floor #831's D4 guard allows for
+    "passages reaching no position" -- slice 06 would fail on arithmetic
+    before any structural question was asked. So the 780 are read as groups
+    like any other, labelled `<claim_category>::(no mechanism)`; the 17
+    holding no `claim` at all stay in `ungrouped_chunk_ids`, because there is
+    no cell for them to fall into.
+
+    Kept as a sibling rather than a flag on `group_by_intersection`: slice
+    03's report (167 groups, 797 ungrouped) calls that function directly and
+    its measured numbers must stay reproducible.
+
+    `missing_axis_counts` is restated against THIS result's own ungrouped
+    set, so `mechanism_only` reads 0 -- a passage missing only `mechanism` is
+    no longer ungrouped here, and reporting it as if it were would double-count
+    it against the same guard the fallback exists to satisfy."""
+    intersection = group_by_intersection(
+        chunk_ids, claim_category_by_chunk, mechanism_category_by_chunk
+    )
+    claim_only: dict[str, list[str]] = collections.defaultdict(list)
+    ungrouped: list[str] = []
+    for chunk_id in intersection.ungrouped_chunk_ids:
+        claim_category = claim_category_by_chunk.get(chunk_id)
+        if claim_category is None:
+            ungrouped.append(chunk_id)
+            continue
+        claim_only[claim_category].append(chunk_id)
+
+    groups = sorted(
+        [
+            *intersection.groups,
+            *(
+                Group(
+                    label=f"{claim_category}::{CLAIM_ONLY_MECHANISM_LABEL}",
+                    chunk_ids=tuple(sorted(members)),
+                )
+                for claim_category, members in claim_only.items()
+            ),
+        ],
+        key=lambda group: group.label,
+    )
+    prior = intersection.missing_axis_counts
+    return GroupingResult(
+        candidate=CANDIDATE_INTERSECTION,
+        groups=tuple(groups),
+        ungrouped_chunk_ids=tuple(sorted(ungrouped)),
+        missing_axis_counts=MissingAxisCounts(
+            claim_only=prior.claim_only if prior else 0,
+            mechanism_only=0,
+            both=prior.both if prior else 0,
+        ),
+    )
+
+
 def group_by_subcluster(
     chunk_ids: Iterable[str],
     claim_category_by_chunk: Mapping[str, str],
@@ -358,6 +435,48 @@ def _load_column(
         if isinstance(category_id, str):
             category_by_chunk[chunk_id] = category_id
     return category_by_chunk, value_by_chunk, resolved_level
+
+
+GROUPING_COLUMNS = ("claim", "mechanism")
+
+
+@dataclass(frozen=True)
+class CategoryGrouping:
+    """What `axial map build --grouping category` needs off disk in one
+    call: the grouping itself, and the `scheme_version` each column was
+    grouped under -- recorded in `map.json` and compared on a resume, so a
+    half-built variant can never be finished under a scheme the rest of it
+    was not asked under."""
+
+    result: GroupingResult
+    scheme_versions: dict[str, str]
+
+
+def load_category_grouping(
+    chunk_ids: Iterable[str],
+    *,
+    vocabulary_dir: Path | None = None,
+    level: int | None = None,
+) -> CategoryGrouping:
+    """Read `claim` and `mechanism` off disk and group `chunk_ids` by
+    `group_by_intersection_with_claim_fallback` -- slice 03's chosen split
+    (#828/PR #843) with slice 04's claim-only fallback. Raises
+    `NoVocabularyError` when either column has never been built, the same
+    failure `compute_grouping_report` names."""
+    vocab_root = Path(vocabulary_dir) if vocabulary_dir is not None else VOCABULARY_DIR
+    categories: dict[str, dict[str, str]] = {}
+    scheme_versions: dict[str, str] = {}
+    for column in GROUPING_COLUMNS:
+        category_by_chunk, _values, _resolved_level = _load_column(vocab_root, column, level)
+        categories[column] = category_by_chunk
+        manifest = _load_json_or_none(vocab_root / column / MANIFEST_FILENAME) or {}
+        scheme_versions[column] = str(manifest.get("scheme_version", ""))
+    return CategoryGrouping(
+        result=group_by_intersection_with_claim_fallback(
+            chunk_ids, categories["claim"], categories["mechanism"]
+        ),
+        scheme_versions=scheme_versions,
+    )
 
 
 @dataclass(frozen=True)

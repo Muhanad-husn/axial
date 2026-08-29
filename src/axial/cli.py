@@ -16,7 +16,7 @@ from axial.argmap.vocabulary_join import (
     PER_CATEGORY_CAP,
     NoVocabularyError,
 )
-from axial.argmap.build import MapError
+from axial.argmap.build import GROUPING_BAG, GROUPING_MODES, MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
@@ -828,6 +828,21 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "bounded concurrent extraction workers (this pass is I/O-bound) "
             f"(default: {MAP_BUILD_DEFAULT_WORKERS})"
+        ),
+    )
+    map_build_parser.add_argument(
+        "--grouping",
+        choices=GROUPING_MODES,
+        default=GROUPING_BAG,
+        help=(
+            "what step 2 groups passages by (issue #829). 'bag' is wording "
+            "similarity, the current build, written to data/map/<pin>/. "
+            "'category' groups by the claim x mechanism cells of the built "
+            "vocabulary instead, writing a whole variant artifact set to "
+            "data/map/<pin>-category/ and leaving the default build "
+            "untouched beside it; it skips the relations stage and refuses "
+            "to resume across a vocabulary scheme change "
+            f"(default: {GROUPING_BAG})"
         ),
     )
     map_ask_parser = map_subparsers.add_parser(
@@ -3563,6 +3578,7 @@ def _format_map_build_summary(manifest: dict[str, Any]) -> str:
         "# Run: map-build",
         "",
         f"corpus pin: {manifest['corpus_pin']}",
+        f"grouping: {manifest['grouping']['mode']}",
         f"model: {manifest['model']} (reasoning={manifest['reasoning']})",
         f"cost: ${manifest['cost_usd']:.4f}"
         if manifest["cost_usd"] is not None
@@ -3596,6 +3612,7 @@ def _map_build(
     *,
     workers: int = MAP_BUILD_DEFAULT_WORKERS,
     force: bool = False,
+    grouping: str = GROUPING_BAG,
     root: Path | None = None,
     clock: Callable[[], str] | None = None,
 ) -> int:
@@ -3604,7 +3621,12 @@ def _map_build(
     build (both stages), `console.log` teed with real-time per-read
     progress, and (uniquely to this pass, see `_format_map_build_summary`) a
     real `summary.md` carrying the measured cost, not just the header
-    stub."""
+    stub.
+
+    `grouping="category"` (issue #829) builds the re-formed variant instead,
+    into `data/map/<pin>-category/`. It runs no relations stage, so the
+    manifest carries no `relations` block and the printing below skips it --
+    the same `manifest.get(...)` guard that was already there."""
     with run_context("map-build", root=root, clock=clock) as run:
         start = time.monotonic()
         try:
@@ -3618,7 +3640,9 @@ def _map_build(
             run.logger.info(message)
 
         try:
-            manifest = run_map_build(client=client, log=_tee, workers=workers, force=force)
+            manifest = run_map_build(
+                client=client, log=_tee, workers=workers, force=force, grouping=grouping
+            )
         except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
             run.record(
                 source_id="",
@@ -3644,6 +3668,7 @@ def _map_build(
     summary_path.write_text(_format_map_build_summary(manifest), encoding="utf-8")
     for key in ("corpus_pin", "model", "reasoning", "cost_usd", "wall_time_sec"):
         print(f"{key}: {manifest[key]}")
+    print(f"grouping: {manifest['grouping']['mode']}")
     for key, value in manifest["counts"].items():
         print(f"{key}: {value}")
     relations = manifest.get("relations")
@@ -4136,7 +4161,7 @@ def main(argv: list[str] | None = None) -> int:
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
 
     if args.command == "map" and args.map_command == "build":
-        return _map_build(workers=args.workers, force=args.force)
+        return _map_build(workers=args.workers, force=args.force, grouping=args.grouping)
 
     if args.command == "map" and args.map_command == "ask":
         return _map_ask(args.brief_path)

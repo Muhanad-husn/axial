@@ -2322,3 +2322,58 @@ def test_main_map_grouping_report_reports_a_missing_bag_state_by_name_not_a_trac
     assert exit_code == 1
     assert "bag_state.json" in captured.err
     assert "pin-1" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# `axial map build --grouping` (issue #829, positions-not-names slice 04)
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_map_build_grouping_defaults_to_bag_and_accepts_category():
+    from axial.cli import build_parser
+
+    parser = build_parser()
+
+    assert parser.parse_args(["map", "build"]).grouping == "bag"
+    assert parser.parse_args(["map", "build", "--grouping", "category"]).grouping == "category"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["map", "build", "--grouping", "wording"])
+
+
+def _stub_map_build_manifest(grouping: str) -> dict:
+    """What a category-grouped build returns: no `relations` block at all
+    (slice 07's, not this slice's), so `_map_build`'s own printing has to
+    survive its absence."""
+    return {
+        "corpus_pin": "testpin",
+        "model": "fake-model",
+        "reasoning": "high",
+        "cost_usd": 0.5,
+        "wall_time_sec": 1.0,
+        "grouping": {"mode": grouping, "scheme_versions": {"claim": "v1", "mechanism": "v1"}},
+        "counts": {"passages_selected": 4, "passages_ungrouped": 1},
+    }
+
+
+def test_main_map_build_forwards_grouping_and_prints_a_manifest_carrying_no_relations(
+    tmp_path, monkeypatch, capsys
+):
+    import axial.cli as cli
+
+    monkeypatch.setenv("AXIAL_LOGS_ROOT", str(tmp_path / "logs"))
+    monkeypatch.setattr(cli, "get_client", lambda *a, **k: object())
+    captured_kwargs = {}
+
+    def _fake_run_map_build(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _stub_map_build_manifest(kwargs["grouping"])
+
+    monkeypatch.setattr(cli, "run_map_build", _fake_run_map_build)
+
+    exit_code = cli.main(["map", "build", "--grouping", "category"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert captured_kwargs["grouping"] == "category"
+    assert "grouping: category" in out
+    assert "passages_ungrouped: 1" in out

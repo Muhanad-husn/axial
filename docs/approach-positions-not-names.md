@@ -233,6 +233,18 @@ structural gains (§13 slice 5 would show it), a one-shot adjudication pass over
 borderline assignments is the fallback, and it is a new decision, not part of
 this design.
 
+**A refusal on the inner axis does not cost a passage its group.** The chosen
+inner split is `claim` × `mechanism` (measured in
+[#828](https://github.com/Muhanad-husn/axial/issues/828)), and on the real
+corpus 797 of 6,010 selected passages form no cell: 780 hold a `claim`
+category and no `mechanism` one, 9 the reverse, 8 neither. Dropping all 797
+would leave 13.3% of selected passages beyond any position, against the 6.9%
+ceiling §13's D4 allows. So the 780 are grouped by `claim` alone, in a
+distinctly labelled claim-only cell per category, and read like any other
+group; only the 17 with no `claim` category at all stay ungrouped, and they
+are counted in the variant's `map.json`. Founder ruling, 2026-08-29, in
+[#829](https://github.com/Muhanad-husn/axial/issues/829).
+
 ### What a position carries afterwards
 
 A re-formed position inherits the category values its passages hold, on every
@@ -431,12 +443,14 @@ sizes, coverage lost to compounded refusals, and slice counts. No extraction
 calls yet. Done when: one inner split is chosen in writing, with the two
 tables beside the choice.
 
-**Slice 4 — the map is re-formed once.** `map build` variant: category
-grouping (outer axis + chosen inner split), per-group extraction unchanged,
-the new second consolidation pass per category, embedding merge retained
-across categories only. Run against the same corpus pin as the current build.
-Done when: a complete `positions.jsonl` exists under a variant directory,
-with the current build untouched beside it.
+**Slice 4 — the map is re-formed once.** `map build --grouping category`:
+category grouping (outer axis + chosen inner split), per-group extraction
+unchanged, embedding merge retained. Run against the same corpus pin as the
+current build. Done when: a complete `positions.jsonl` exists under a variant
+directory, with the current build untouched beside it. The second
+consolidation pass per category, and relations over the variant, are their
+own slices after this one ([#829](https://github.com/Muhanad-husn/axial/issues/829)
+scopes both out).
 
 **Slice 5 — the structural comparison decides.** No judged gate, structure
 only, both maps side by side. Five metrics decide, and the bar for each is
