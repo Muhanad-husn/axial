@@ -58,12 +58,14 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
   §13 both point at it. Position count, size, single-passage share and the raw
   cross-book rate are **context lines, never the verdict** — they move by
   arithmetic when 113–207 extraction calls replace 679, and the cross-book
-  null is 96% at size two. The `position` assignment's two-model agreement
-  (73.8%) is a rate while D2 is in purity points, so it cannot bind as it
-  stands. **Ruled 2026-08-29:** recompute D2 over the second model's draw
-  (~$0.075), before slice 04, and take the gap between the two D2 baselines as
-  D2's assignment-instability floor — the rate converted into purity points.
-  D2 must clear it as well as the replicate gap.
+  null is 96% at size two. **D2's floor was measured 2026-08-29** by drawing the
+  `position` column a second time under the second model ($0.1878,
+  `data/logs/2026-08-29-position-draw-b/`): default build D2 **0.7597**,
+  assignment-instability floor **0.0331** purity points. That draw also retired
+  two things — the 0.349 threshold, which never binds and is not on D2's scale,
+  and the claim that D2 is blind on three particular books, which the second
+  draw contradicts. Roughly 5% of the column is refused and which passages
+  varies by model.
 
 - **Hard gates between slices.** Slice 02 can kill the feature (claim-axis
   purity high → diagnosis wrong). Slice 03 ends in a founder choice. Slice 06

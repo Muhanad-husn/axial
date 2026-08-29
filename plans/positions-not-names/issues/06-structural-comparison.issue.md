@@ -68,7 +68,7 @@ argument" **before** the labels are revealed.
 | metric | bar | measured against |
 |---|---|---|
 | **D1** book-spread ratio | rises to **at least 2×** the default build's value in the size band holding the plurality of the variant's placed passages, **and** exceeds the replicate gap by 2×, **and** does not fall in any band | 0.59 / 0.37 / 0.24 / 0.14 above; the replicate gap measured, not assumed |
-| **D2** held-out `position` purity | **above 0.349**, and above the default build's value, by **at least 2× the replicate gap**; a lift at or below 1.00 fails outright whatever the gap | the 0.349 floor below, not the 0.196 null |
+| **D2** held-out `position` purity | above the default build's **0.7597**, by more than **0.0331** (the assignment-instability floor) **and** by at least 2× the replicate gap; a lift at or below 1.00 fails outright whatever the gap | measured on the default build, both draws: `data/logs/2026-08-29-position-draw-b/` |
 | **D3** coherence | in every populated size band, **at or above the midpoint between the default build's value in that band and that band's permutation null**. For 11–48 that is **0.664** | this build's own bands and nulls |
 | **D4** no-position share | **at or below 6.9%** of selected, distinct chunk ids in `positions.jsonl` | 414 of 6,010 |
 | **D5** hand-sample | **8 or more of 12**, and **at or above the default build's score** on the same blind pass | the paired draw itself |
@@ -94,20 +94,29 @@ against the gap, and print it.
    666 excluded abstentions the built column carries a category for **5,549 of
    6,010 selected (92.3%)** and **5,257 of 5,596 placed (93.9%)**. D2 decides
    over categorised members — quote that base, both numbers.
-2. **The gap is not random, and D2 is partly blind where it falls.** Refusals
-   concentrate in `vignal-2021` (39.8%), `batatu-1999` (38.0%) and
-   `tilly-1978` (34.1%) — 47% of all 379 refusals across three of 35 sources,
-   because two committed categories exclude single-country material and this
-   corpus is geographically concentrated. If the rebuild changes how those
-   books' passages group, D2 partly cannot see it. Print the per-source
-   coverage next to the verdict.
-3. **D2's floor is 0.349, not the null.** Over the 5,773 passages carrying
-   both columns, the weighted conditional purity of `position` given `claim` is
-   **0.349** against a permutation null of **0.196** (20 shuffles, max 0.198),
-   lift **1.78×**; largest `position` category share 0.195. So a variant
-   grouped on `claim` starts at `position` purity ≈ 0.349 **before the rebuild
-   contributes anything**. A D2 result of 0.38 is inside the arithmetic, not
-   evidence.
+2. **Roughly 5% of the column is refused, and which passages varies by model.**
+   Draw A refuses 379 of 6,176 answered values (6.1%), draw B 305 (4.9%). An
+   earlier version of this correction read draw A's concentration —
+   `vignal-2021` 39.8%, `batatu-1999` 38.0%, `tilly-1978` 34.1% — as structural,
+   a consequence of two committed categories excluding single-country material
+   in a geographically concentrated corpus. **Draw B refuses on none of those
+   three** (2.3% / 8.6% / 4.3%) and concentrates on three different books
+   instead, with **empty overlap** between the two worst-three sets. A property
+   of the corpus would appear in both draws; this does not. So the refusal rate
+   is stable and its landing place is not, and no claim that D2 is blind on
+   particular books is supported. Print the per-source coverage next to the
+   verdict, **per draw**, never as a fixed corpus fact
+   (`data/logs/2026-08-29-position-draw-b/summary.md`).
+3. **`claim` and `position` correlate, which is why D2 is size-matched.** Over
+   the 5,773 passages carrying both columns, the weighted conditional purity of
+   `position` given `claim` is **0.349** against a permutation null of 0.196
+   (20 shuffles), lift **1.78×**. Grouping on `claim` therefore moves `position`
+   by construction, and that is the circularity D2 has to survive. **The
+   size-matched permutation null carries that guard**, at the variant's own
+   position sizes — 0.349 is the reason the guard is needed, not a threshold.
+   It is not on D2's scale either: it is purity within a `claim` category, nine
+   groups of several hundred, while D2 is purity within a position, 1,121 groups
+   of median size 2, and purity falls with group size mechanically.
 
 ## Normalisation rules the command must obey
 
@@ -168,7 +177,7 @@ Then  it prints D1 book-spread ratio per size band for each build, observed
       over its own size-matched permutation null
 And   it prints D2 held-out `position` purity per build over the same null,
       naming the categorised base (5,549 of 6,010 selected; 5,257 of 5,596
-      placed on the default build) and the 0.349 conditional-purity floor
+      placed on the default build) and the assignment-instability floor
 And   it prints D3 mean member coherence per size band per build with that
       band's null
 And   it prints D4 passages reaching no position as distinct chunk ids in
@@ -191,8 +200,8 @@ And   comparing builds that disagree on any of those pins or versions refuses
 Any one of these is a no-go on slices 07–09:
 
 1. **D1 does not clear 2× in the plurality band, or falls in any band.**
-2. **D2 is at or below 0.349, at or below the default build's value, or the
-   lift is at or below 1.00.**
+2. **D2 is at or below the default build's 0.7597, clears it by less than the
+   0.0331 assignment-instability floor, or the lift is at or below 1.00.**
 3. **D3 breaches a band floor** (11–48: below 0.664). That is gluing, and no
    story about deliberately removing wording similarity survives it.
 4. **D4 rises above 6.9%.** On a `claim × mechanism` inner split this already
@@ -206,31 +215,34 @@ Any one of these is a no-go on slices 07–09:
    exceed D2's assignment-instability floor, the answer is "not resolved at
    this sample", not "passed". That is the #809 lesson.
 
-## D2's readability floor — ruled 2026-08-29
+## D2's readability floor — measured 2026-08-29
 
-The founder ruled option (iii): **recompute D2 over the second model's draw**
-(~$0.075).
+The founder ruled option (iii) and the draw has been run: **$0.1878, 62 calls,
+`openai/gpt-5.6-luna`**, same scheme `2026-08-29-position-v1`, same answers pin,
+written to `data/vocabulary-draw-b/position/` with draw A untouched. Full log:
+`data/logs/2026-08-29-position-draw-b/`.
 
-Correction 3 gave the `position` assignment a two-model agreement of 73.8%
-where assigned (n=84). That is a **rate**, and D2 is measured in **purity
-points**, so it could not become a threshold as it stood. Recomputing settles
-it in D2's own units:
+D2 on the default build's 1,937 positions, scored over positions with 2+
+categorised members against a size-matched permutation null, 20 seeded trials:
 
-1. Build the `position` column a second time with the second model, over the
-   same 6,010 selected passages.
-2. Recompute D2's baseline **on the default build** over that second draw.
-3. **|D2(draw A) - D2(draw B)| is D2's assignment-instability floor**, in
-   purity points.
+| | draw A (deepseek-v4-flash) | draw B (gpt-5.6-luna) |
+|---|---|---|
+| categorised placed chunks | 5,257 of 5,596 (93.9%) | 5,319 of 5,596 (95.1%) |
+| positions scored | 1,121 | 1,125 |
+| **member-weighted purity** | **0.7597** | **0.7266** |
+| null | 0.4019 | 0.3987 |
+| lift | 1.890 | 1.823 |
+| per-position mean purity | 0.7804 | 0.7510 |
 
-It then binds exactly as the replicate gap does: a variant-versus-default D2
-gap that does not exceed the floor is reported as **not resolved at this
-sample**, never as passed. Where the two floors differ, D2 must clear the
-larger of them.
+**D2's assignment-instability floor is 0.0331 purity points** (0.0294 on the
+per-position mean, 0.068 on lift) — roughly twice the permutation null's own
+trial spread of 0.016–0.017, so the assignment dominates the noise, not the null
+estimate. Full-column label agreement between the draws is **73.0%** where both
+assigned (5,581 chunks), confirming #838's 73.8% at n=84.
 
-**Runs before slice 04**, for the reason the first baseline does: a floor
-measured after the variant exists is a floor chosen having seen the result.
-The second draw is also reported per source, since the refusal concentration
-in correction 2 may not be the same for a different model.
+It binds as the replicate gap does: a variant-versus-default D2 gap that does not
+exceed the floor is reported as **not resolved at this sample**, never as passed,
+and D2 clears whichever floor is larger.
 
 ## Files
 
