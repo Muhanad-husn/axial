@@ -1,19 +1,20 @@
 $ uv run axial map grouping-report --map-dir D:/axial/data/map --vocabulary-dir D:/axial/data/vocabulary
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 2915.74it/s]
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 3122.18it/s]
 pin: 9b796b3a6312b329 (D:\axial\data\map\9b796b3a6312b329)
 vocabulary: D:\axial\data\vocabulary
-claim level: 1  mechanism level: 1
+claim level: 1  mechanism level: 1  subcluster inner distance threshold: 0.55
 passages (selected, this pin): 6010
 
-                                   claim x mechanism   claim + subcluster
-groups                             167                 1181              
-group size min/median/max          1 / 15.00 / 248     1 / 2.00 / 139    
-ungrouped                          797                 17                
-projected extraction slices (55)   207                 1190              
+                                                claim x mechanism   claim + subcluster
+groups                                          167                 1181              
+group size min/median/max                       1 / 15.00 / 248     1 / 2.00 / 139    
+ungrouped                                       797                 17                
+projected extraction slices (EXTRACT_SLICE=55)  207                 1190              
+  claim x mechanism ungrouped breakdown: claim missing only 9, mechanism missing only 780, missing both 8
 EXIT=0
 
-$ uv run python sweep.py   # subcluster inner-threshold sweep, local encoder only
+$ uv run python docs/tdd-evidence/positions-not-names/03-inner-split-chosen/sweep.py   # subcluster inner-threshold sweep, local encoder only
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 5333.83it/s]
 pin=9b796b3a6312b329 passages=6010 baseline_threshold=0.55

@@ -112,7 +112,10 @@ not build them in parallel worktrees.)
   | groups | 167 | 1,181 |
   | size min / median / max | 1 / 15.00 / 248 | 1 / 2.00 / 139 |
   | ungrouped | 797 | 17 |
-  | projected slices (55) | 207 | 1,190 |
+  | projected slices (EXTRACT_SLICE=55) | 207 | 1,190 |
+
+  The intersection arm's 797 ungrouped, per axis: 9 hold no claim category, 780
+  no mechanism category, 8 neither.
 
   The subcluster arm's inner threshold was swept (0.50–0.90) before the
   comparison was read, because it inherits `BAG_DISTANCE_THRESHOLD` from
@@ -122,8 +125,19 @@ not build them in parallel worktrees.)
   to blobs of 1,577 and 1,648. The comparison is not a threshold artifact.
 
 - 2026-08-29 **founder chose `claim` × `mechanism`.** Slice 04 (#829) builds only
-  that variant. Accepted price: 797 passages, 13.3% of the universe, hold no
-  mechanism category and form no cell — the compounded refusal rate §6 predicted.
-  Whether they fall back to a claim-only cell is slice 04's decision.
+  that variant. Accepted price: 797 passages, 13.3% of the universe, are missing
+  a category on at least one axis and form no cell — the compounded refusal rate
+  §6 predicted. 780 are missing only the mechanism axis, 9 only the claim axis,
+  8 both, so the claim-only fallback slice 04 has to decide about covers 788 of
+  them, not all 797.
   `group_by_subcluster` stays in `grouping.py` as the measured alternative,
   unwired.
+- 2026-08-29 review pass: reviewer and verifier both DONE_WITH_CONCERNS, six
+  findings fixed in `e55df01` and the report re-run over the same pin with no
+  number moving. The load-bearing one was in this log: it attributed all 797
+  ungrouped passages to a missing mechanism category, which the report had never
+  measured per axis. Corrected above. The others were disclosure and dead code —
+  the subcluster threshold now prints in the header, the slices row names
+  `EXTRACT_SLICE`, the unreachable `NOISE_LABEL` branch is gone, the "zero
+  network" claim is corrected to what the local encoder actually does, and
+  `sweep.py` is committed as evidence.
