@@ -2095,3 +2095,218 @@ def test_main_map_purity_reports_a_malformed_named_pair_by_name_not_a_traceback(
 
     assert exit_code == 1
     assert "only-one-id" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# `axial map grouping-report` (issue #828): both candidate inner splits from
+# the approach doc's own §6 -- claim x mechanism intersection, and per-claim-
+# category embedding sub-clustering -- computed offline and printed side by
+# side. Fixture dirs only; the local encoder/cluster seam
+# (`axial.argmap.grouping._default_encoder` / `_agglomerative_cluster`) is
+# monkeypatched away so the fast tier never imports sentence-transformers or
+# scikit-learn for a report this cheap (issue #828's own "zero model calls").
+# ---------------------------------------------------------------------------
+
+
+def _grouping_write_bag_state(outdir, chunk_ids):
+    import json as _json
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "config": {"encoder": "test-encoder", "bag_distance_threshold": 0.2},
+        "assignments": {chunk_id: 0 for chunk_id in chunk_ids},
+        "centroids": {},
+    }
+    (outdir / "bag_state.json").write_text(_json.dumps(state), encoding="utf-8")
+
+
+def _grouping_write_map_json(outdir):
+    import json as _json
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "map.json").write_text(_json.dumps({"corpus_pin": outdir.name}), encoding="utf-8")
+
+
+def _grouping_assignment(chunk_id, category_id, value, **overrides):
+    record = {
+        "chunk_id": chunk_id,
+        "source_id": f"{chunk_id}-source",
+        "column": "claim",
+        "element_index": 0,
+        "level": 1,
+        "value": value,
+        "category_id": category_id,
+        "refused": category_id is None,
+    }
+    record.update(overrides)
+    return record
+
+
+def _grouping_write_vocabulary(root, column, assignments, categories):
+    import json as _json
+
+    column_dir = root / column
+    column_dir.mkdir(parents=True, exist_ok=True)
+    (column_dir / "assignments.jsonl").write_text(
+        "\n".join(_json.dumps(record) for record in assignments), encoding="utf-8"
+    )
+    manifest = {"column": column, "scheme_version": "v1", "max_level": 1, "categories": categories}
+    (column_dir / "manifest.json").write_text(_json.dumps(manifest), encoding="utf-8")
+
+
+def _grouping_category(category_id):
+    return {"category_id": category_id, "name": category_id, "member_count": 0, "source_count": 0}
+
+
+def test_build_parser_recognises_map_grouping_report_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "map",
+            "grouping-report",
+            "--pin",
+            "abc123",
+            "--map-dir",
+            str(tmp_path / "map"),
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--level",
+            "1",
+        ]
+    )
+
+    assert args.command == "map"
+    assert args.map_command == "grouping-report"
+    assert args.pin == "abc123"
+    assert args.map_dir == str(tmp_path / "map")
+    assert args.vocabulary_dir == str(tmp_path / "vocab")
+    assert args.level == 1
+
+
+def test_main_map_grouping_report_prints_both_candidates_side_by_side(
+    tmp_path, capsys, monkeypatch
+):
+    """Acceptance criterion (issue #828): group count, group-size min/median/
+    max, passages left ungrouped, and projected extraction slices, for BOTH
+    candidates, side by side in one table.
+
+    Fixture: n1-n4 share claim category cat-a, split mech-x (n1, n2) / mech-y
+    (n3, n4) on the mechanism axis, so the intersection candidate makes two
+    cells of 2. n5 is claim category cat-b with no mechanism record at all --
+    ungrouped on the intersection candidate (refused on the mechanism axis),
+    its own singleton group on the sub-cluster candidate. n6 has no claim
+    category at all -- ungrouped on BOTH candidates. The fake encoder maps a
+    value's own text to `len(text) % 2`, and the fake cluster_fn passes that
+    straight through as the label, splitting cat-a's four members 3-1
+    (n1/n2/n4 land on 0, n3 lands on 1)."""
+    from axial.argmap import grouping as grouping_mod
+    from axial.cli import main
+
+    def fake_encode(texts):
+        import numpy as np
+
+        return np.array([[float(len(text) % 2)] for text in texts])
+
+    def fake_cluster(vectors, _threshold):
+        return [int(row[0]) for row in vectors]
+
+    monkeypatch.setattr(grouping_mod, "_default_encoder", lambda: fake_encode)
+    monkeypatch.setattr(grouping_mod, "_agglomerative_cluster", fake_cluster)
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _grouping_write_map_json(outdir)
+    chunk_ids = ["n1", "n2", "n3", "n4", "n5", "n6"]
+    _grouping_write_bag_state(outdir, chunk_ids)
+
+    vocabulary_dir = tmp_path / "vocab"
+    _grouping_write_vocabulary(
+        vocabulary_dir,
+        "claim",
+        [
+            _grouping_assignment("n1", "cat-a", "aa"),  # len 2 -> 0
+            _grouping_assignment("n2", "cat-a", "bb"),  # len 2 -> 0
+            _grouping_assignment("n3", "cat-a", "aaa"),  # len 3 -> 1
+            _grouping_assignment("n4", "cat-a", "bbbb"),  # len 4 -> 0
+            _grouping_assignment("n5", "cat-b", "c"),
+            _grouping_assignment("n6", None, "unassigned", refused=True),
+        ],
+        categories=[_grouping_category("cat-a"), _grouping_category("cat-b")],
+    )
+    _grouping_write_vocabulary(
+        vocabulary_dir,
+        "mechanism",
+        [
+            _grouping_assignment("n1", "mech-x", "mx1"),
+            _grouping_assignment("n2", "mech-x", "mx2"),
+            _grouping_assignment("n3", "mech-y", "my1"),
+            _grouping_assignment("n4", "mech-y", "my2"),
+            # n5, n6: never answered for this column at all.
+        ],
+        categories=[_grouping_category("mech-x"), _grouping_category("mech-y")],
+    )
+
+    exit_code = main(
+        [
+            "map",
+            "grouping-report",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+            "--vocabulary-dir",
+            str(vocabulary_dir),
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "pin: pin-1" in out
+    lines = out.splitlines()
+
+    def row(label):
+        return next(line for line in lines if line.strip().startswith(label))
+
+    header = row("claim x mechanism")
+    assert "claim + subcluster" in header
+
+    groups_row = row("groups")
+    assert groups_row.split()[-2:] == ["2", "3"]
+
+    size_row = row("group size min/median/max")
+    assert "2 / 2.00 / 2" in size_row
+    assert "1 / 1.00 / 3" in size_row
+
+    ungrouped_row = row("ungrouped")
+    assert ungrouped_row.split()[-2:] == ["2", "1"]
+
+    slices_row = row("projected extraction slices")
+    assert slices_row.split()[-2:] == ["2", "3"]
+
+
+def test_main_map_grouping_report_reports_a_missing_bag_state_by_name_not_a_traceback(
+    tmp_path, capsys
+):
+    from axial.cli import main
+
+    map_dir = tmp_path / "map"
+    outdir = map_dir / "pin-1"
+    _grouping_write_map_json(outdir)  # no bag_state.json written
+
+    exit_code = main(
+        [
+            "map",
+            "grouping-report",
+            "--pin",
+            "pin-1",
+            "--map-dir",
+            str(map_dir),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "bag_state.json" in captured.err
+    assert "pin-1" in captured.err
