@@ -448,7 +448,9 @@ coherence as a band-by-band floor; **D4** passages reaching no position,
 counted as distinct chunk ids and not allowed to rise above 6.9%; **D5** a
 blind paired hand-sample, 12 positions per build, judged before the labels are
 revealed, as a veto. A forced replicate of the variant supplies the error bar,
-and every margin is quoted against it.
+and every margin is quoted against it; D2 additionally clears an
+assignment-instability floor, measured by recomputing D2's baseline over a
+second model's draw of the `position` column before the variant is built.
 
 Position count, position size, single-passage share and the raw cross-book
 rate are **context lines, never the verdict**: the first three move in the

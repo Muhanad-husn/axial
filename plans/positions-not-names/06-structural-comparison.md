@@ -36,15 +36,15 @@ feature's hard gate: slices 07–09 do not start until the founder says go.
 | id | metric | direction | default build |
 |---|---|---|---|
 | **D1** | book-spread ratio, size-matched: mean distinct `source_id` per position ÷ the same under a size-matched permutation of that build's own placed pool | up | 0.59 / 0.37 / 0.24 / 0.14 at sizes 2 / 3–5 / 6–10 / 11–48 |
-| **D2** | held-out `position`-axis purity, size-matched — the axis is built and never grouped on (#838) | up | measured before slice 04; floor 0.349 |
+| **D2** | held-out `position`-axis purity, size-matched — the axis is built and never grouped on (#838) | up | measured before slice 04; floor 0.349, plus an assignment-instability floor from the second model's draw |
 | **D3** | member coherence, MiniLM `all-MiniLM-L6-v2`, band by band | floor only | 0.902 / 0.850 / 0.816 / 0.791; null 0.537 at 11–48 |
 | **D4** | passages reaching no position, **distinct chunk ids in `positions.jsonl`** subtracted from selected | must not rise | 414 of 6,010 = 6.9% |
 | **D5** | blind paired hand-sample, 12 positions per build, size-stratified, shuffled, judged before labels | veto | — |
 
 **The bar:** D1 at least 2× the default in the plurality band, exceeding the
 replicate gap by 2×, falling in no band. D2 above **0.349** and above the
-default build's value by at least 2× the replicate gap; lift at or below 1.00
-fails outright. D3 at or above the midpoint between the default's band value
+default build's value by at least 2× the replicate gap **and by more than D2's
+assignment-instability floor**; lift at or below 1.00 fails outright. D3 at or above the midpoint between the default's band value
 and that band's null (11–48: **0.664**). D4 at or below **6.9%**. D5 at least
 8 of 12 and at or above the default build.
 
@@ -126,11 +126,23 @@ depends-on: 05-category-consolidation
       reported as two figures, not summed.
 - [ ] `units_reused` is read from each manifest and printed; a replicate with
       `units_reused != 0` is flagged and its gap is not usable as an error bar.
+- [ ] D2's verdict clears both floors: the replicate gap and the
+      assignment-instability floor. A gap inside either prints "not resolved at
+      this sample", never "passed".
 - [ ] Comparing builds refuses on a mismatch of corpus pin, answers pin, or
       any vocabulary scheme version, naming which differs.
 
 ## Operational steps inside the slice
 
+0. **Before slice 04 runs** (founder ruling, 2026-08-29, ~$0.075): build the
+   `position` column a second time with the second model over the same 6,010
+   selected passages, recompute D2's baseline on the **default** build over
+   that draw, and take **|D2(draw A) - D2(draw B)| as D2's
+   assignment-instability floor** — the 73.8% agreement rate converted into
+   D2's own units, purity points. Report the second draw's coverage per source
+   too: correction 2's refusal concentration may differ for another model. A
+   floor measured after the variant exists is a floor chosen having seen the
+   result.
 1. Run the comparison over the default build, the variant, and the **forced**
    variant replicate. The replicate runs in its own directory with prior-pin
    seeding off (`force=True` sets `prior_pin_dir = None`); confirm
@@ -142,12 +154,14 @@ depends-on: 05-category-consolidation
    stratified to the same size bands, shuffle the 24, judge "do these members
    make one argument" **before** the labels are revealed. Record the sampled
    ids, the judgments, and the unblinding, in that order.
-3. Quote every margin against the **measured replicate gap**, not an assumed
-   one. If the replicate gap on D1 or D2 exceeds half the variant-versus-
-   default gap, the result is "not resolved at this sample" and the slice says
-   so rather than passing. Quote the `claim` disagreement rate (~23%, #826) and
-   the `position` two-model agreement (73.8% where assigned, n=84) next to the
-   verdict, per approach §6's noise policy.
+3. Quote every margin against the **measured** noise, never an assumed one:
+   the replicate gap for D1 and D2, and for D2 additionally its
+   assignment-instability floor. If the replicate gap on D1 or D2 exceeds half
+   the variant-versus-default gap, or the D2 gap does not exceed that floor,
+   the result is "not resolved at this sample" and the slice says so rather
+   than passing. Quote the `claim` disagreement rate (~23%, #826) and the
+   `position` two-model agreement (73.8% where assigned, n=84) next to the
+   verdict as reporting, per approach §6's noise policy.
 4. **Founder go/no-go on slices 07–09.** Recorded in the summary and in the
    feature README, against the numbered failure conditions in #831.
 
@@ -179,3 +193,6 @@ depends-on: 05-category-consolidation
 - 2026-08-28 planned.
 - 2026-08-29 bar rewritten to the approved ruling in #831; the three #838
   corrections and the `placed` fix folded in; the `map purity` re-run dropped.
+- 2026-08-29 founder ruled D2's readability floor: recompute D2 over the second
+  model's draw (~$0.075), before slice 04, and bind D2 to that floor as well as
+  to the replicate gap.

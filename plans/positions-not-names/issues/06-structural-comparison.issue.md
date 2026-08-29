@@ -152,6 +152,8 @@ extraction reads and units asked/reused; cost and wall clock; consolidation
 folds; the `claim`-assignment disagreement rate (~23% at n=100, #826) and the
 `position`-assignment two-model agreement (**73.8%** where assigned, n=84;
 70.0% overall), both quoted next to the verdict per approach §6's noise policy.
+The agreement rate is reporting only — what binds D2 is the purity-point floor
+derived from it below.
 
 **Fewer positions, larger positions and a lower single-passage share are not
 results.** They follow from 113–207 extraction calls replacing 679.
@@ -199,22 +201,36 @@ Any one of these is a no-go on slices 07–09:
    797 get an explicit home.
 5. **D5 scores under 8 of 12, or under the default build on the same blind
    pass.** A veto, independent of every number above.
-6. **The replicate gap swallows the result.** If the replicate gap on D1 or D2
-   is larger than half the variant-versus-default gap, the answer is "not
-   resolved at this sample", not "passed". That is the #809 lesson.
+6. **A noise floor swallows the result.** If the replicate gap on D1 or D2 is
+   larger than half the variant-versus-default gap, or the D2 gap does not
+   exceed D2's assignment-instability floor, the answer is "not resolved at
+   this sample", not "passed". That is the #809 lesson.
 
-## Open question for the founder, carried into this slice
+## D2's readability floor — ruled 2026-08-29
 
-Correction 3 (#838) gives the `position` assignment a two-model agreement of
-73.8% where assigned — "a D2 difference smaller than it is not readable". That
-is an agreement **rate**; D2 is measured in **purity points**. The two are not
-in the same units, so the sentence cannot be turned into a threshold without a
-ruling. Until one exists, the agreement figure is **quoted beside the D2
-verdict** and no arithmetic is derived from it. Options: (i) leave as
-reporting-only, as written here; (ii) require the D2 gap to exceed the
-replicate gap by more than 2× on the strength of it; (iii) measure the
-assignment's effect on D2 directly by recomputing D2 over the second model's
-draw, ~$0.075.
+The founder ruled option (iii): **recompute D2 over the second model's draw**
+(~$0.075).
+
+Correction 3 gave the `position` assignment a two-model agreement of 73.8%
+where assigned (n=84). That is a **rate**, and D2 is measured in **purity
+points**, so it could not become a threshold as it stood. Recomputing settles
+it in D2's own units:
+
+1. Build the `position` column a second time with the second model, over the
+   same 6,010 selected passages.
+2. Recompute D2's baseline **on the default build** over that second draw.
+3. **|D2(draw A) - D2(draw B)| is D2's assignment-instability floor**, in
+   purity points.
+
+It then binds exactly as the replicate gap does: a variant-versus-default D2
+gap that does not exceed the floor is reported as **not resolved at this
+sample**, never as passed. Where the two floors differ, D2 must clear the
+larger of them.
+
+**Runs before slice 04**, for the reason the first baseline does: a floor
+measured after the variant exists is a floor chosen having seen the result.
+The second draw is also reported per source, since the refusal concentration
+in correction 2 may not be the same for a different model.
 
 ## Files
 
