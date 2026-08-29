@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -553,10 +554,19 @@ def test_a_scheme_version_change_refuses_a_resumed_variant_build(category_corpus
 
     # `--force` is the deliberate act the refusal asks for: it sets the prior
     # ledger aside and re-asks every group under the scheme now on disk.
-    forced = _run_map_build(
-        category_corpus, client=_OneArgumentClient(), grouping="category", force=True
-    )
+    #
+    # The v2 column keeps the same category ids, so every group label is
+    # unchanged and a ledger left in place would match on `members_key` and
+    # be reused in silence -- producing exactly the half-and-half map the
+    # refusal exists to prevent. Recording the new scheme version in the
+    # manifest passes either way, so the ledger itself is what is asserted:
+    # nothing reused, and one model call per group.
+    forced_client = _OneArgumentClient()
+    forced = _run_map_build(category_corpus, client=forced_client, grouping="category", force=True)
     assert forced["grouping"]["scheme_versions"]["claim"] == "2026-09-01-claim-v2"
+    assert forced["counts"]["units_total"] == 2
+    assert forced["counts"]["units_reused"] == 0
+    assert forced_client.call_count == forced["counts"]["units_total"]
 
 
 def test_distinct_placed_passages_are_counted_below_the_slot_sum(category_corpus: dict) -> None:
@@ -595,11 +605,18 @@ def test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin(
 ) -> None:
     """`_prior_pin_dir` picks the newest sibling by `map.json` mtime, and
     would otherwise offer a category variant's own reads to a default
-    rebuild at a new pin."""
+    rebuild at a new pin.
+
+    The variant's `map.json` is aged strictly NEWER than the default's, so
+    the exclusion is the only thing that can produce this answer. Left to a
+    timestamp tie -- coarse mtime granularity, or `max()` keeping the first
+    of two equals -- the assertion would hold with the filter deleted."""
     map_dir = tmp_path / "map"
     for name in ("oldpin", "oldpin-category"):
         (map_dir / name).mkdir(parents=True)
         (map_dir / name / "map.json").write_text("{}", encoding="utf-8")
+    default_mtime = (map_dir / "oldpin" / "map.json").stat().st_mtime
+    os.utime(map_dir / "oldpin-category" / "map.json", (default_mtime + 60, default_mtime + 60))
 
     assert _prior_pin_dir(map_dir, "newpin") == map_dir / "oldpin"
 

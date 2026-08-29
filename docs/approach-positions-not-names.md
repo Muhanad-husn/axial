@@ -214,6 +214,11 @@ the same judgment, one level up, replacing the embedding merge as the primary
 reunifier inside a category. Step 4's embedding merge survives only for its
 original job: folding near-duplicate namings across categories.
 
+That restriction arrives with the consolidation pass, not before it. §13's
+slice 4 ships the unchanged global merge, which does fold within a category as
+well; the case for relaxing it there, and where it is reinstated, is stated
+under that slice.
+
 This is a re-forming of the map, not a patch on it. Patching would leave nodes
 made on the wrong principle and merely merge some of them back together.
 
@@ -445,12 +450,22 @@ tables beside the choice.
 
 **Slice 4 — the map is re-formed once.** `map build --grouping category`:
 category grouping (outer axis + chosen inner split), per-group extraction
-unchanged, embedding merge retained. Run against the same corpus pin as the
-current build. Done when: a complete `positions.jsonl` exists under a variant
-directory, with the current build untouched beside it. The second
-consolidation pass per category, and relations over the variant, are their
-own slices after this one ([#829](https://github.com/Muhanad-husn/axial/issues/829)
-scopes both out).
+unchanged, embedding merge retained and unrestricted in this slice. Run
+against the same corpus pin as the current build. Done when: a complete
+`positions.jsonl` exists under a variant directory, with the current build
+untouched beside it. The second consolidation pass per category, and relations
+over the variant, are their own slices after this one
+([#829](https://github.com/Muhanad-husn/axial/issues/829) scopes both out).
+
+§6's across-categories-only restriction on the merge is relaxed here. It
+arrives with the consolidation pass
+([#830](https://github.com/Muhanad-husn/axial/issues/830)), which is what
+replaces the merge as the within-category reunifier (decided 2026-08-29, while
+building #829). Imposing it now would leave nothing at all reuniting a
+category's per-slice namings — the largest real group is 248 passages over
+five extraction slices — so the variant would fragment for a reason #830
+exists to fix rather than for anything D1–D5 measures. The merge's
+within-category reach is quoted with those numbers, not hidden in them.
 
 **Slice 5 — the structural comparison decides.** No judged gate, structure
 only, both maps side by side. Five metrics decide, and the bar for each is

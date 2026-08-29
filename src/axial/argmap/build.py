@@ -601,6 +601,14 @@ def _write_category_group_state(
     the labels themselves kept alongside in `group_labels`, indexed by the
     same numbering.
 
+    Its `assignments` hold only the passages that reached a GROUP, so on the
+    real corpus its key count is 5,993 against 6,010 selected -- the 17
+    ungrouped ones are absent. That is what a file recording group
+    membership should say, but it means neither reader above can be used to
+    count selected passages: `map grouping-report` prints 5,993 for this
+    pin, and anything measuring coverage against that number understates
+    the loss. `passages_selected` in `map.json` is the honest denominator.
+
     It can never be mistaken for a bag fit to reuse: `_bag_state_reusable`
     requires `config.encoder`/`bag_distance_threshold`/`sklearn_version`,
     and this config carries none of them, because none of them decided

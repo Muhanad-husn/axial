@@ -65,8 +65,15 @@ side of a variant build.
   variant's would hand it an advantage the comparison did not grant the other
   side.
 - **Passages reaching no position: 513 of 6,010 = 8.54%**, against #831's D4
-  bar of 6.9%. Composition: 457 declined by the extraction model, 17 never
-  grouped, ~39 lost to the two failed reads. The fallback did its job — only
+  bar of 6.9%. Composition: **457 declined by the extraction model + 17 never
+  grouped + 31 shown in the two failed reads + 8 unaccounted** = 513. Those 8
+  were shown to the model, appear in no position, and were not counted
+  `unassigned`. The default build has the same residue: 414 missing (6,010
+  selected − 5,596 placed) against 373 declined and ~9 passages in its 3
+  failed reads (estimated at its median 3 shown per read), so roughly 32
+  unaccounted there. The leak is pre-existing and is not this slice's to
+  close; #831 should read both columns knowing it exists on both sides.
+  The fallback did its job — only
   0.28% went ungrouped against the 13.3% that a no-fallback build would have
   lost — so the gap is not a coverage artifact of the grouping. It is the
   extraction model declining more passages when it is shown 20 at a time
@@ -84,3 +91,10 @@ side of a variant build.
    `data/map/9b796b3a6312b329/` and decides D1-D5. Note that a bare
    `axial map purity` / `map grouping-report` still resolves the **default**
    build; reading the variant needs `--pin 9b796b3a6312b329-category`.
+4. **Slice 06: take `passages_selected` from `map.json`, never from
+   `bag_state.json`.** The variant's bag state records what was *assigned to a
+   group*, so its `assignments` key count is 5,993 — the 17 ungrouped passages
+   never entered it — and `map grouping-report --pin
+   9b796b3a6312b329-category` prints `passages (selected, this pin): 5993` for
+   the same reason. D4 is counted against the honest 6,010 in `map.json`;
+   deriving "selected" from the bag state understates the loss.

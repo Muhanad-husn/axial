@@ -24,3 +24,31 @@ src/axial/argmap/test_positions_on.py
 src/axial/test_cli.py
   test_build_parser_map_build_grouping_defaults_to_bag_and_accepts_category
   test_main_map_build_forwards_grouping_and_prints_a_manifest_carrying_no_relations
+
+### review response, 2026-08-29: two tests re-armed, each mutation-checked
+
+Both assertions below were added because the test passed with the code under
+test removed. The mutation was applied, the failure observed, then reverted.
+
+test_a_scheme_version_change_refuses_a_resumed_variant_build
+  now asserts the forced leg really set the prior ledger aside:
+  units_total == 2, units_reused == 0, client.call_count == units_total.
+  MUTATION: disabled run_map_build's `if force and reads_path.exists():`
+  set-aside ->
+    assert forced["counts"]["units_reused"] == 0
+    E   assert 2 == 0
+  (the old assertion, on the manifest's scheme version, passed under it)
+
+test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin
+  now os.utime()s the variant's map.json 60s NEWER than the default's, so
+  only the suffix filter can produce the expected answer.
+  MUTATION: deleted `and not child.name.endswith(CATEGORY_VARIANT_SUFFIX)`
+  from _prior_pin_dir ->
+    assert _prior_pin_dir(map_dir, "newpin") == map_dir / "oldpin"
+    E   AssertionError: assert .../map/oldpin-category == .../map/oldpin
+
+### uv run pytest  (after both edits)
+2584 passed, 1 skipped in 27.06s
+
+### uv run ruff check / ruff format --check
+All checks passed!
