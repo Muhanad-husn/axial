@@ -33,6 +33,22 @@ wording, and a category holding a dozen genuinely different arguments is an
 ordinary outcome rather than a failure. Pressing for merges here would
 manufacture the fusion §6 asks this pass to prevent.
 
+**Two rules ARE this pass's own, and a blind audit is why.** Twenty-five of
+the built variant's most heavily folded positions were read cold against
+their own members: 7 wrong, 9 mixed, 9 sound, three or four of them fusing
+opposed accounts into one position. Heavily-folded positions are 14.4% of the
+map and carry 64.2% of its passages, so that is the part of the map that
+matters. Both faults were in `PROMPT`. It merged on rhetorical form -- 32
+arguments from 23 books sharing only the shape "some existing account is
+inadequate", which at this altitude, where the inputs are already abstract
+argument sentences, is what everything looks like -- so sameness is now
+asserting the same thing ABOUT THE SAME THING, with the move-versus-claim
+distinction named and the writable sentence as its test. And nothing
+constrained the sentence standing for a group, which let one position settle a
+live dispute between its own members and another assert as fact what its
+source attributed to Ibn Khaldun; that sentence must now state only what every
+member asserts, and being unable to write one is the signal to split.
+
 **It runs to a fixed point, per category.** A slice's input is capped at
 `EXTRACT_SLICE`, the same cap extraction reads a group under: both listings
 are one sentence per line under a bare handle, so how many lines one call can
@@ -380,8 +396,9 @@ How to group:
 
 - MERGE aggressively on substance. Two entries arguing that states extract resources through coercion are the same argument whether one says it about France in 1600 and the other about Iraq in 1980, and whether one calls it extraction and the other calls it predation. Different evidence for the same claim is one argument. Different wording for the same claim is one argument. Different century, same claim, one argument.
 - SPLIT only where the arguments genuinely conflict or concern different things. Two accounts that locate a cause differently are two arguments -- never fuse contending positions into one sentence saying both matter. If these arguments disagree with each other, that disagreement must survive as separate entries.
-- These were grouped because they concern the same KIND of claim, not because they resemble each other in wording. A category holding many genuinely different arguments is an ordinary outcome. Do not merge two arguments because they are about the same thing; merge them only when they assert the same thing.
-- Each argument must be CONTESTABLE: something a serious scholar could disagree with. "Violence is shaped by social and political processes" is not an argument, it is a topic wearing an argument's clothes. Do not reach for a wider sentence that covers two arguments at once -- that is the same fusion the second rule forbids.
+- Two arguments are the same argument only when they assert THE SAME THING ABOUT THE SAME THING. These were grouped because they share a KIND of claim, not a wording, so a category holding many genuinely different arguments is an ordinary outcome. Being about the same thing is not enough. Neither is sharing a rhetorical move: criticising an existing account, rejecting mono-causality, describing something as proceeding in stages, calling something complex or context-specific are moves, not claims, and two arguments making the same move about different objects -- irrigation and despotism, oil rents, national identity, a revolution -- stay apart. The test: if the sentence you would write does not name what the argument is about, you are merging a move rather than a claim. Do not merge.
+- THE SENTENCE YOU WRITE for a group states only what every argument in the group asserts. It never takes a side no member takes, never settles a disagreement between members, never widens into a generality that would also cover arguments outside the group, and never drops an attribution -- an argument reporting what a named thinker holds is a different argument from one asserting the same thing as fact. If you cannot write one sentence every member of a group would accept, that group is not one argument: split it.
+- Each argument must be CONTESTABLE: something a serious scholar could disagree with. "Violence is shaped by social and political processes" is not an argument, it is a topic wearing an argument's clothes.
 - Every handle listed must appear in exactly one entry. An argument nothing else here restates gets an entry of its own, keeping its original sentence."""
 
 

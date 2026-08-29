@@ -481,6 +481,147 @@ def test_the_listing_is_blind_and_the_prompt_forbids_fusing_opposed_accounts(
     assert "must survive as separate entries" in PROMPT
 
 
+# ---------------------------------------------------------------------------
+# What the prompt says about SAMENESS, and about the sentence that stands for
+# a group. A blind audit of the built variant's 25 most heavily folded
+# positions read 7 wrong, 9 mixed, 9 sound (issue #830), and heavily-folded
+# positions carry 64.2% of all passages: the pass was merging on rhetorical
+# form, and the sentence standing for a group was adjudicating between its
+# own members.
+# ---------------------------------------------------------------------------
+
+
+def test_the_prompt_makes_sameness_about_the_object_not_the_rhetorical_move() -> None:
+    """The audit's worst fold put 32 arguments from 23 books together on the
+    shape "some existing account is inadequate" -- irrigation despotism,
+    rentier theory, national identity, the Great Depression. The inputs here
+    are already abstract argument sentences, and at that altitude everything
+    resembles everything, so the prompt names the failure: a shared move is
+    not a shared claim, and the sentence you could write is the test."""
+    assert "THE SAME THING ABOUT THE SAME THING" in PROMPT
+    assert "moves, not claims" in PROMPT
+    assert "does not name what the argument is about" in PROMPT
+    # Sharpened, not replaced: every grouping rule the pass already had.
+    assert "MERGE aggressively on substance" in PROMPT
+    assert "SPLIT only where the arguments genuinely conflict" in PROMPT
+    assert "never fuse contending positions into one sentence" in PROMPT
+    assert "must survive as separate entries" in PROMPT
+    assert "many genuinely different arguments is an ordinary outcome" in PROMPT
+    assert "Each argument must be CONTESTABLE" in PROMPT
+    assert "Every handle listed must appear in exactly one entry" in PROMPT
+
+
+def test_the_prompt_binds_the_group_sentence_to_what_every_member_asserts() -> None:
+    """The other half of the audit: one position stood for "repression
+    radicalises opposition" and "indiscriminate violence succeeds when the
+    target is unprotected" as "repressive violence is counterproductive",
+    settling a live dispute in the corpus; another turned "Ibn Khaldun's
+    sociology holds that tribal solidarity is the only true cohesion" into
+    an assertion of fact. The no-fusing rule governs which arguments meet;
+    these govern the sentence written once they have."""
+    assert "states only what every argument in the group asserts" in PROMPT
+    assert "never takes a side" in PROMPT
+    assert "never settles a disagreement" in PROMPT
+    assert "never drops an attribution" in PROMPT
+    assert "widens into a generality" in PROMPT
+    # And the loop back to the split rule: an unwritable sentence is the
+    # signal that the group is not one argument.
+    assert "cannot write one sentence every member" in PROMPT
+
+
+class _KeepsEverythingApartClient(StubLLMClient):
+    """What the move-versus-claim rule asks for on a slice whose arguments
+    share only a rhetorical move: every handle in its own entry."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {
+                "arguments": [
+                    {"argument": f"Kept apart ({handle}).", "handles": [handle]}
+                    for handle in handles
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_arguments_the_model_keeps_apart_stay_one_position_each(tmp_path: Path) -> None:
+    """The parser's contract under the sharpened rules: a call that folds
+    nothing pools no chunk ids, sums no counts, and loses no naming. Its
+    entries are the model's own sentences, one position each."""
+    result = run_consolidation(
+        _two_group_reads(),
+        client=_KeepsEverythingApartClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert sorted(p["argument"] for p in result.positions) == [
+        "Kept apart (a1).",
+        "Kept apart (a2).",
+    ]
+    assert {p["consolidated_from"] for p in result.positions} == {1}
+    assert sorted(tuple(p["chunk_ids"]) for p in result.positions) == [
+        (_chunk_id(ALPHA, 1),),
+        (_chunk_id(BETA, 1),),
+    ]
+    assert sorted(tuple(p["sources"]) for p in result.positions) == [(ALPHA,), (BETA,)]
+
+
+class _FoldsTheFirstTwoOnlyClient(StubLLMClient):
+    """One group whose members assert the same thing about the same thing,
+    and one argument left alone because no single sentence would cover it."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {
+                "arguments": [
+                    {"argument": "Coercion built the fiscal state.", "handles": handles[:2]},
+                    {"argument": f"A different object ({handles[2]}).", "handles": [handles[2]]},
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_partial_fold_pools_only_its_own_members(tmp_path: Path) -> None:
+    """The other side of the same contract: a group that IS one argument
+    gets one entry carrying every member's chunk ids, sources and authors
+    and their summed `consolidated_from`, while the argument held apart from
+    it keeps its own."""
+    reads = [
+        _extraction_read(f"{CAT_A}::{MECH_1}", [_raw("The first naming.", [_chunk_id(ALPHA, 1)])]),
+        _extraction_read(f"{CAT_A}::{MECH_2}", [_raw("The second naming.", [_chunk_id(BETA, 1)])]),
+        _extraction_read(f"{CAT_A}::{MECH_3}", [_raw("A third naming.", [_chunk_id(ALPHA, 2)])]),
+    ]
+
+    result = run_consolidation(
+        reads,
+        client=_FoldsTheFirstTwoOnlyClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    folded = next(
+        p for p in result.positions if p["argument"] == "Coercion built the fiscal state."
+    )
+    assert folded["consolidated_from"] == 2
+    assert folded["chunk_ids"] == sorted([_chunk_id(ALPHA, 1), _chunk_id(BETA, 1)])
+    assert folded["sources"] == [ALPHA, BETA]
+    assert folded["authors"] == ["alpha", "beta"]
+    standing = [p for p in result.positions if p is not folded]
+    assert [p["consolidated_from"] for p in standing] == [1]
+    assert standing[0]["chunk_ids"] == [_chunk_id(ALPHA, 2)]
+
+
 def test_the_ledger_is_keyed_by_category_and_content_so_a_changed_argument_is_re_asked(
     tmp_path: Path,
 ) -> None:

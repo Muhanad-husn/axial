@@ -312,6 +312,50 @@ tokens and buys both reasoning economy and folding, so the pass keeps it.** A
 future attempt should not re-propose removing it without re-measuring on this
 category.
 
+**The second negative result: the folding itself was audited, and it is wrong
+too often.** Twenty-five of the built variant's most heavily folded positions
+were read blind against their own member arguments: **7 wrong, 9 mixed, 9
+sound**, with three or four fusing opposed accounts into one position. That is
+not a tail. Heavily-folded positions are **14.4% of the map and carry 64.2% of
+all passages**, so it is the part of the map that matters. Two causes, both in
+the consolidation prompt.
+
+*It merged on rhetorical form, not on substance.* The worst position folded 32
+arguments from 23 books whose only shared property is the shape "some existing
+account is inadequate": irrigation despotism, rentier theory, national
+identity, Roman historiography, the Arab Spring, the Chinese revolution, the
+Great Depression. Its 108 passages resolve to a sentence that fits any
+critical paper in social science, and two other positions state that same
+non-claim, so the pass over-merges and under-merges one thesis at once. This
+is worse at consolidation than at extraction because the inputs are already
+abstract argument sentences, and at that altitude everything resembles
+everything.
+
+*The sentence standing for a group adjudicated.* One position held
+"indiscriminate violence succeeds only when the target population is
+unprotected" alongside "repression tends to radicalize opposition" and stood
+for both as "repressive violence is counterproductive and tends to backfire",
+settling a live dispute in the corpus. Another asserted as fact what its
+source attributed to Ibn Khaldun, while a different position listed Ibn
+Khaldun's theory among the misguided ones. A third absorbed half a sentence
+and deleted the normative claim in the other half. The prompt forbade fusing
+contending positions; it said nothing about the sentence that stands for a
+group.
+
+The prompt now defines sameness as asserting **the same thing about the same
+thing**, names the moves that are not claims (criticising an existing account,
+rejecting mono-causality, proceeding in stages, being complex and
+context-specific), and gives the test: if the sentence you would write does
+not name what the argument is about, you are merging a move rather than a
+claim. And the sentence written for a group must state only what every member
+asserts, taking no side no member takes, settling no disagreement between
+members, widening into no generality that would cover arguments outside the
+group, and dropping no attribution, since an argument reporting what a named
+thinker holds is not the argument asserting it. Being unable to write that
+sentence is itself the signal to split. Both are rewrites of rules already in
+the prompt rather than new paragraphs, and neither is measured yet: the next
+paid pass over these categories is what tests them.
+
 **A resume announces its bill, and abandons a read that cannot pass.** An
 error record is re-asked, which is right — but the retry comes back different
 from the error record's pass-through, so that category's later rounds are
