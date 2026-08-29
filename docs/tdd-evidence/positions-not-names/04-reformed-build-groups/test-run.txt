@@ -1,0 +1,80 @@
+### uv run pytest  (pyproject narrows testpaths to src/)
+........................................................................ [ 94%]
+........................................................................ [ 97%]
+................................................................         [100%]
+2584 passed, 1 skipped in 29.37s
+
+### uv run ruff check
+All checks passed!
+
+### the slice's own tests, named
+
+### the slice's new tests, by name
+
+src/axial/argmap/test_positions_on.py
+  test_grouping_category_writes_a_variant_set_and_leaves_the_default_build_byte_identical
+  test_category_groups_are_the_extraction_unit_and_a_claim_only_passage_still_lands
+  test_the_variant_build_never_seeds_from_a_prior_pins_ledger
+  test_a_scheme_version_change_refuses_a_resumed_variant_build
+  test_distinct_placed_passages_are_counted_below_the_slot_sum
+  test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin
+  test_the_claim_only_fallback_places_a_mechanism_less_passage_and_leaves_the_rest_ungrouped
+  test_the_fallback_does_not_change_group_by_intersections_own_behaviour
+
+src/axial/test_cli.py
+  test_build_parser_map_build_grouping_defaults_to_bag_and_accepts_category
+  test_main_map_build_forwards_grouping_and_prints_a_manifest_carrying_no_relations
+
+### review response, 2026-08-29: two tests re-armed, each mutation-checked
+
+Both assertions below were added because the test passed with the code under
+test removed. The mutation was applied, the failure observed, then reverted.
+
+test_a_scheme_version_change_refuses_a_resumed_variant_build
+  now asserts the forced leg really set the prior ledger aside:
+  units_total == 2, units_reused == 0, client.call_count == units_total.
+  MUTATION: disabled run_map_build's `if force and reads_path.exists():`
+  set-aside ->
+    assert forced["counts"]["units_reused"] == 0
+    E   assert 2 == 0
+  (the old assertion, on the manifest's scheme version, passed under it)
+
+test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin
+  now os.utime()s the variant's map.json 60s NEWER than the default's, so
+  only the suffix filter can produce the expected answer.
+  MUTATION: deleted `and not child.name.endswith(CATEGORY_VARIANT_SUFFIX)`
+  from _prior_pin_dir ->
+    assert _prior_pin_dir(map_dir, "newpin") == map_dir / "oldpin"
+    E   AssertionError: assert .../map/oldpin-category == .../map/oldpin
+
+### uv run pytest  (after both edits)
+2584 passed, 1 skipped in 27.06s
+
+### uv run ruff check / ruff format --check
+All checks passed!
+
+### review response, batch 2 (six verifier findings): five new tests
+
+src/axial/argmap/test_positions_on.py
+  test_the_grouping_unit_is_named_by_mode_in_the_manifest_and_the_log
+    F2 manifest key (`groups` under category, `bags` under default, neither
+    in the other's manifest) + F6 progress word + F7 reads-line wording and
+    the denominator on the summary line, both modes in one test.
+  test_the_manifests_passage_arithmetic_closes_over_a_failed_read
+    F4: selected - ungrouped - placed_distinct - unassigned -
+    passages_in_failed_reads == 0, over a read the client fails.
+
+src/axial/test_cli.py
+  test_main_map_build_prints_each_modes_own_grouping_unit_key
+    F2's CLI half: stdout printing and _format_map_build_summary over both
+    modes' manifests, neither raising on the key the other carries.
+  test_main_map_build_reports_a_missing_vocabulary_as_an_error_not_a_traceback
+    F8 follow-on: NoVocabularyError was uncaught in _map_build.
+  test_map_build_grouping_help_names_the_vocabulary_prerequisite
+    F8: the help names the earlier pass, its command, and --force's reach.
+
+### uv run pytest
+2589 passed, 1 skipped in 28.47s
+
+### uv run ruff check
+All checks passed!

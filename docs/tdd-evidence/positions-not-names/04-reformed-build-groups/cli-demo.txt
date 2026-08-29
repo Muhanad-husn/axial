@@ -1,0 +1,128 @@
+=== 1. the flag ===
+                       [--grouping {bag,category}]
+
+  --grouping {bag,category}
+                        what step 2 groups passages by (issue #829). 'bag' is
+                        wording similarity, the current build, written to
+                        data/map/<pin>/. 'category' groups by the claim x
+                        mechanism cells of the built vocabulary instead,
+                        writing a whole variant artifact set to
+                        data/map/<pin>-category/ and leaving the default build
+                        untouched beside it; it skips the relations stage and
+                        refuses to resume across a vocabulary scheme change
+                        (default: bag)
+
+=== 1b. the same flag after review, re-captured 2026-08-29 in the worktree ===
+$ uv run axial map build --help    (full output; the flag's help gained the
+  vocabulary prerequisite and the --force note; section 1 above is the
+  earlier capture, left as it was taken)
+usage: axial map build [-h] [--force] [--workers WORKERS]
+                       [--grouping {bag,category}]
+
+options:
+  -h, --help            show this help message and exit
+  --force               re-read everything under the current pin instead of
+                        resuming, for both stages (issue #572 follow-up: the
+                        pin is content-only, so a prompt or model-tier change
+                        alone would otherwise resume under the old prompt's
+                        ledger). Moves each stage's own existing ledger aside
+                        to a timestamped sibling rather than deleting it -- a
+                        paid ledger is never destroyed by this flag
+  --workers WORKERS     bounded concurrent extraction workers (this pass is
+                        I/O-bound) (default: 40)
+  --grouping {bag,category}
+                        what step 2 groups passages by (issue #829). 'bag' is
+                        wording similarity, the current build, written to
+                        data/map/<pin>/. 'category' groups by the claim x
+                        mechanism cells of the built vocabulary instead,
+                        writing a whole variant artifact set to
+                        data/map/<pin>-category/ and leaving the default build
+                        untouched beside it; it skips the relations stage and
+                        refuses to resume across a vocabulary scheme change.
+                        PREREQUISITE: 'category' reads
+                        data/vocabulary/{claim,mechanism}/, which a separate
+                        earlier pass produces -- run `axial vocabulary build`
+                        first, or this exits with 'no derived vocabulary built
+                        for column ...' before spending a single model call.
+                        --force applies per artifact set, so forcing a variant
+                        build sets the variant directory's own ledger aside
+                        and never touches the default build's (default: bag)
+
+NOTE ON THE TRANSCRIPT BELOW: it is the real run, unedited. Two of its
+log lines were reworded by review AFTER it was captured -- the per-read
+progress line now says `group` under --grouping category rather than
+`bag`, and `reads 226 (every passage shown once)` now reads
+`reads 226 over 176 group(s) (no passage appears in more than one read)`.
+The summary line also carries its denominator and the failed reads'
+passage count now. Nothing the run DID changed.
+
+=== 2. the paid variant build, real corpus, main checkout D:/axial ===
+$ PYTHONPATH=D:/axial-wt/04-reformed-build-groups/src uv run axial map build --grouping category
+=== launched 2026-08-29T04:51:53.0548729+02:00 ===
+CODE FROM: D:\axial-wt\04-reformed-build-groups\src\axial\__init__.py
+2026-08-29 04:52:33,287 INFO corpus pin 9b796b3a6312b329 | grouping category -> data\map\9b796b3a6312b329-category
+2026-08-29 04:52:34,457 INFO passages 6010 | authors 28
+2026-08-29 04:52:34,606 INFO groups 176 (claim x mechanism, schemes claim 2026-08-28-claim-v1, mechanism 2026-08-28-mechanism-v1; 17 passage(s) reached no group)
+2026-08-29 04:52:34,619 INFO reads 226 (every passage shown once)
+2026-08-29 04:52:34,619 INFO reads to make this run: 226 of 226
+2026-08-29 04:52:40,966 INFO   read 1/226 (bag bibliographic-source-note-or-formal-description::feedback-loops-and-unintended-consequences slice 0)
+2026-08-29 04:52:41,707 INFO   read 2/226 (bag bibliographic-source-note-or-formal-description::territorial-control-and-conflict-dynamics slice 0)
+   [... 219 reads elided ...]
+2026-08-29 05:20:20,204 INFO   read 222/226 (bag causal-argument-violence-war-or-conflict::state-repression-and-violence slice 1)
+2026-08-29 05:20:58,243 INFO   read 223/226 (bag empirical-finding-without-causal-claim::ideological-persuasion-and-legitimation slice 0)
+2026-08-29 05:23:59,822 INFO   read 224/226 (bag empirical-finding-without-causal-claim::(no mechanism) slice 0)
+2026-08-29 05:24:35,907 INFO   read 225/226 (bag critique-of-existing-theories-or-concepts::international-norms-and-external-intervention slice 0)
+2026-08-29 05:32:46,382 INFO   read 226/226 (bag characterization-of-regime-movement-or-system::territorial-control-and-conflict-dynamics slice 0)
+2026-08-29 05:32:46,437 INFO raw positions 2036 | placed slots 5545 | distinct passages placed 5497 | unassigned 457 | failed reads 2
+2026-08-29 05:33:01,894 INFO merged positions 1668 (from 2036 raw)
+2026-08-29 05:33:01,932 INFO wrote data\map\9b796b3a6312b329-category
+
+=== 3. the default build's directory, after the variant run ===
+$ ls -la data/map/9b796b3a6312b329/   # every mtime still 2026-08-05/06
+drwxr-xr-x 1 mou97 197609       0 2026-08-29 04:52 ..
+-rw-r--r-- 1 mou97 197609 6035789 2026-08-06 03:26 bag_state.json
+-rw-r--r-- 1 mou97 197609    2183 2026-08-06 03:26 map.json
+-rw-r--r-- 1 mou97 197609 1592149 2026-08-06 03:26 positions.jsonl
+-rw-r--r-- 1 mou97 197609 1190261 2026-08-05 22:43 reads.jsonl
+-rw-r--r-- 1 mou97 197609  395204 2026-08-05 23:09 relation_reads.jsonl
+-rw-r--r-- 1 mou97 197609  366204 2026-08-06 03:26 relations.jsonl
+
+=== 4. resume, same command again, on the real 226-read ledger ===
+$ PYTHONPATH=D:/axial-wt/04-reformed-build-groups/src uv run axial map build --grouping category
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 103/103 [00:00<00:00, 5229.17it/s]
+corpus pin 9b796b3a6312b329 | grouping category -> data\map\9b796b3a6312b329-category
+passages 6010 | authors 28
+groups 176 (claim x mechanism, schemes claim 2026-08-28-claim-v1, mechanism 2026-08-28-mechanism-v1; 17 passage(s) reached no group)
+reads 226 (every passage shown once)
+resuming: 226 read(s) already on disk
+reads to make this run: 0 of 226
+raw positions 2036 | placed slots 5545 | distinct passages placed 5497 | unassigned 457 | failed reads 2
+merged positions 1668 (from 2036 raw)
+wrote data\map\9b796b3a6312b329-category
+corpus_pin: 9b796b3a6312b329
+model: deepseek/deepseek-v4-flash
+reasoning: high
+cost_usd: None
+wall_time_sec: 38.59252910000214
+grouping: category
+passages_selected: 6010
+bags: 176
+reads: 226
+units_total: 226
+units_reused: 226
+units_asked: 0
+units_asked_touching_new: 0
+raw_positions: 2036
+merged_positions: 1668
+passages_placed_slots: 5545
+passages_placed_distinct: 5497
+passages_unassigned: 457
+passages_ungrouped: 17
+failed_reads: 2
+EXIT: 0
+
+(positions.jsonl, reads.jsonl and bag_state.json came back byte-identical;
+ map.json was restored from the paid run so it keeps its cost_usd and wall_time.)

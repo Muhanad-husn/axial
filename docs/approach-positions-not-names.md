@@ -214,6 +214,11 @@ the same judgment, one level up, replacing the embedding merge as the primary
 reunifier inside a category. Step 4's embedding merge survives only for its
 original job: folding near-duplicate namings across categories.
 
+That restriction arrives with the consolidation pass, not before it. §13's
+slice 4 ships the unchanged global merge, which does fold within a category as
+well; the case for relaxing it there, and where it is reinstated, is stated
+under that slice.
+
 This is a re-forming of the map, not a patch on it. Patching would leave nodes
 made on the wrong principle and merely merge some of them back together.
 
@@ -232,6 +237,26 @@ partitions. If the measured loss from misassignment turns out to dominate the
 structural gains (§13 slice 5 would show it), a one-shot adjudication pass over
 borderline assignments is the fallback, and it is a new decision, not part of
 this design.
+
+**A refusal on the inner axis does not cost a passage its group.** The chosen
+inner split is `claim` × `mechanism` (measured in
+[#828](https://github.com/Muhanad-husn/axial/issues/828)), and on the real
+corpus 797 of 6,010 selected passages form no cell: 780 hold a `claim`
+category and no `mechanism` one, 9 the reverse, 8 neither. Dropping all 797
+would leave 13.3% of selected passages beyond any position, against the 6.9%
+ceiling §13's D4 allows. So the 780 are grouped by `claim` alone, in a
+distinctly labelled claim-only cell per category, and read like any other
+group; only the 17 with no `claim` category at all stay ungrouped, and they
+are counted in the variant's `map.json`. Founder ruling, 2026-08-29, in
+[#829](https://github.com/Muhanad-husn/axial/issues/829).
+
+The fallback did what it was for and did not clear the ceiling it is argued
+against. The built variant lands at **8.54%** beyond any position (513 of
+6,010), still above D4's 6.9%. Only 0.28% of that is grouping loss; the rest
+is the extraction model declining more passages when it is shown twenty at a
+time instead of three (`unassigned` 457 against the default build's 373).
+Whether that fails the variant or fails D4 as a guard is the comparison's
+verdict, not this section's.
 
 ### What a position carries afterwards
 
@@ -431,12 +456,24 @@ sizes, coverage lost to compounded refusals, and slice counts. No extraction
 calls yet. Done when: one inner split is chosen in writing, with the two
 tables beside the choice.
 
-**Slice 4 — the map is re-formed once.** `map build` variant: category
-grouping (outer axis + chosen inner split), per-group extraction unchanged,
-the new second consolidation pass per category, embedding merge retained
-across categories only. Run against the same corpus pin as the current build.
-Done when: a complete `positions.jsonl` exists under a variant directory,
-with the current build untouched beside it.
+**Slice 4 — the map is re-formed once.** `map build --grouping category`:
+category grouping (outer axis + chosen inner split), per-group extraction
+unchanged, embedding merge retained and unrestricted in this slice. Run
+against the same corpus pin as the current build. Done when: a complete
+`positions.jsonl` exists under a variant directory, with the current build
+untouched beside it. The second consolidation pass per category, and relations
+over the variant, are their own slices after this one
+([#829](https://github.com/Muhanad-husn/axial/issues/829) scopes both out).
+
+§6's across-categories-only restriction on the merge is relaxed here. It
+arrives with the consolidation pass
+([#830](https://github.com/Muhanad-husn/axial/issues/830)), which is what
+replaces the merge as the within-category reunifier (decided 2026-08-29, while
+building #829). Imposing it now would leave nothing at all reuniting a
+category's per-slice namings — the largest real group is 248 passages over
+five extraction slices — so the variant would fragment for a reason #830
+exists to fix rather than for anything D1–D5 measures. The merge's
+within-category reach is quoted with those numbers, not hidden in them.
 
 **Slice 5 — the structural comparison decides.** No judged gate, structure
 only, both maps side by side. Five metrics decide, and the bar for each is

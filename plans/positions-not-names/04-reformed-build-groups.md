@@ -5,7 +5,7 @@
 - **Issue:** [#829](https://github.com/Muhanad-husn/axial/issues/829)
 - **Branch:** feat/positions-not-names/04-reformed-build-groups
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ PR open (#844), awaiting founder approval
 - **Walking skeleton?** no
 
 ## Goal — the minimum testable behaviour
@@ -97,13 +97,17 @@ depends-on: 03-inner-split-chosen
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] Real-corpus variant build complete, log written, default build verified untouched.
-- [ ] Evidence collected and PR opened into main (`safe-pr`).
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI (`tdd-ci`).
+- [x] Real-corpus variant build complete, log written, default build verified untouched.
+- [x] Evidence collected and PR opened into main (`safe-pr`).
 
 ## Status / progress log
 
 - 2026-08-28 planned.
+- 2026-08-29 built, real-corpus variant build run ($0.7052, 41m, 226 reads over
+  176 groups). PR [#844](https://github.com/Muhanad-husn/axial/pull/844), CI
+  green. Reviewer and verifier both DONE_WITH_CONCERNS; all ten findings fixed
+  on the branch. Awaiting founder approval.
