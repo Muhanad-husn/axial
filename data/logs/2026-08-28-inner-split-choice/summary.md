@@ -1,20 +1,14 @@
 # Inner-split choice — #828, slice 03
 
 **Run date:** 2026-08-29 · **Pin:** `9b796b3a6312b329` · **Model calls:** 0 · **Cost:** $0
-**Code:** branch `feat/positions-not-names/03-inner-split-chosen`, merged to `main` as
-`1f1ab37` (PR #843). The tables below were produced at `ca907bf`, the branch's final
-commit; run from the worktree `D:/axial-wt/828-inner-split` against `D:/axial/data`
-via `--map-dir` / `--vocabulary-dir`.
-
-**Copy of** `data/logs/2026-08-28-inner-split-choice/summary.md`, which is gitignored.
-The live run log there stays the source; this copy is committed because the founder's
-choice of inner split is a decision the repo has to carry.
+**Code:** branch `feat/positions-not-names/03-inner-split-chosen` @ `1630958`, run from the
+worktree `D:/axial-wt/828-inner-split` against `D:/axial/data` via `--map-dir` / `--vocabulary-dir`.
 
 ## Commands
 
 ```
 uv run axial map grouping-report --map-dir D:/axial/data/map --vocabulary-dir D:/axial/data/vocabulary
-uv run python docs/tdd-evidence/positions-not-names/03-inner-split-chosen/sweep.py
+uv run python <scratch>/sweep.py   # threshold sweep, subcluster arm only
 ```
 
 Raw output: `console.log`, `threshold-sweep.log`.
