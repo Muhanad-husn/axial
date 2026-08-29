@@ -36,15 +36,15 @@ feature's hard gate: slices 07–09 do not start until the founder says go.
 | id | metric | direction | default build |
 |---|---|---|---|
 | **D1** | book-spread ratio, size-matched: mean distinct `source_id` per position ÷ the same under a size-matched permutation of that build's own placed pool | up | 0.59 / 0.37 / 0.24 / 0.14 at sizes 2 / 3–5 / 6–10 / 11–48 |
-| **D2** | held-out `position`-axis purity, size-matched — the axis is built and never grouped on (#838) | up | measured before slice 04; floor 0.349, plus an assignment-instability floor from the second model's draw |
+| **D2** | held-out `position`-axis purity, size-matched — the axis is built and never grouped on (#838) | up | **0.7597** (lift 1.890); assignment-instability floor **0.0331** |
 | **D3** | member coherence, MiniLM `all-MiniLM-L6-v2`, band by band | floor only | 0.902 / 0.850 / 0.816 / 0.791; null 0.537 at 11–48 |
 | **D4** | passages reaching no position, **distinct chunk ids in `positions.jsonl`** subtracted from selected | must not rise | 414 of 6,010 = 6.9% |
 | **D5** | blind paired hand-sample, 12 positions per build, size-stratified, shuffled, judged before labels | veto | — |
 
 **The bar:** D1 at least 2× the default in the plurality band, exceeding the
-replicate gap by 2×, falling in no band. D2 above **0.349** and above the
-default build's value by at least 2× the replicate gap **and by more than D2's
-assignment-instability floor**; lift at or below 1.00 fails outright. D3 at or above the midpoint between the default's band value
+replicate gap by 2×, falling in no band. D2 above the default build's
+**0.7597**, by more than the **0.0331** assignment-instability floor and by at
+least 2× the replicate gap; lift at or below 1.00 fails outright. D3 at or above the midpoint between the default's band value
 and that band's null (11–48: **0.664**). D4 at or below **6.9%**. D5 at least
 8 of 12 and at or above the default build.
 
@@ -65,7 +65,7 @@ Then  it prints D1 book-spread ratio per size band for each build, observed
       over its own size-matched permutation null
 And   it prints D2 held-out `position` purity per build over the same null,
       naming the categorised base (5,549 of 6,010 selected; 5,257 of 5,596
-      placed on the default build) and the 0.349 conditional-purity floor
+      placed on the default build) and the assignment-instability floor
 And   it prints D3 mean member coherence per size band per build with that
       band's null
 And   it prints D4 passages reaching no position as distinct chunk ids in
@@ -134,15 +134,13 @@ depends-on: 05-category-consolidation
 
 ## Operational steps inside the slice
 
-0. **Before slice 04 runs** (founder ruling, 2026-08-29, ~$0.075): build the
-   `position` column a second time with the second model over the same 6,010
-   selected passages, recompute D2's baseline on the **default** build over
-   that draw, and take **|D2(draw A) - D2(draw B)| as D2's
-   assignment-instability floor** — the 73.8% agreement rate converted into
-   D2's own units, purity points. Report the second draw's coverage per source
-   too: correction 2's refusal concentration may differ for another model. A
-   floor measured after the variant exists is a floor chosen having seen the
-   result.
+0. **DONE 2026-08-29, before slice 04** ($0.1878, 62 calls, gpt-5.6-luna;
+   `data/logs/2026-08-29-position-draw-b/`). The `position` column was drawn a
+   second time under the second model and D2's baseline recomputed on the
+   default build over both draws: **0.7597** (draw A, lift 1.890) against
+   **0.7266** (draw B, lift 1.823), so **D2's assignment-instability floor is
+   0.0331 purity points** — roughly twice the permutation null's own trial
+   spread. Full-column label agreement 73.0%. Does not need re-measuring.
 1. Run the comparison over the default build, the variant, and the **forced**
    variant replicate. The replicate runs in its own directory with prior-pin
    seeding off (`force=True` sets `prior_pin_dir = None`); confirm
@@ -193,6 +191,11 @@ depends-on: 05-category-consolidation
 - 2026-08-28 planned.
 - 2026-08-29 bar rewritten to the approved ruling in #831; the three #838
   corrections and the `placed` fix folded in; the `map purity` re-run dropped.
-- 2026-08-29 founder ruled D2's readability floor: recompute D2 over the second
-  model's draw (~$0.075), before slice 04, and bind D2 to that floor as well as
-  to the replicate gap.
+- 2026-08-29 founder ruled D2's readability floor and it was measured the same
+  day: floor **0.0331** purity points, default build D2 **0.7597**
+  (`data/logs/2026-08-29-position-draw-b/`).
+- 2026-08-29 founder dropped the 0.349 threshold (never binding, and not on D2's
+  scale — the size-matched null carries that guard) and dropped the claim that
+  D2 is blind on `vignal-2021` / `batatu-1999` / `tilly-1978`: the second draw
+  refuses on none of them and concentrates elsewhere. What stands is that
+  roughly 5% of the column is refused and which passages varies by model.

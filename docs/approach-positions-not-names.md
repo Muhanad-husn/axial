@@ -442,15 +442,16 @@ with the current build untouched beside it.
 only, both maps side by side. Five metrics decide, and the bar for each is
 stated in full in [#831](https://github.com/Muhanad-husn/axial/issues/831):
 **D1** book-spread ratio, size-matched against the build's own permutation
-null; **D2** purity on the held-out `position` axis, size-matched, above the
-0.349 floor that grouping on `claim` produces by itself; **D3** member
+null; **D2** purity on the held-out `position` axis, size-matched, above the default
+build's measured 0.7597 by more than its 0.0331 instability floor; **D3** member
 coherence as a band-by-band floor; **D4** passages reaching no position,
 counted as distinct chunk ids and not allowed to rise above 6.9%; **D5** a
 blind paired hand-sample, 12 positions per build, judged before the labels are
 revealed, as a veto. A forced replicate of the variant supplies the error bar,
-and every margin is quoted against it; D2 additionally clears an
-assignment-instability floor, measured by recomputing D2's baseline over a
-second model's draw of the `position` column before the variant is built.
+and every margin is quoted against it; D2 additionally clears its
+assignment-instability floor, **0.0331 purity points**, measured 2026-08-29 by
+recomputing D2's baseline over a second model's draw of the `position` column
+before the variant was built.
 
 Position count, position size, single-passage share and the raw cross-book
 rate are **context lines, never the verdict**: the first three move in the
