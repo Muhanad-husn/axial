@@ -1,0 +1,34 @@
+$ uv run axial map grouping-report --map-dir D:/axial/data/map --vocabulary-dir D:/axial/data/vocabulary
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 2915.74it/s]
+pin: 9b796b3a6312b329 (D:\axial\data\map\9b796b3a6312b329)
+vocabulary: D:\axial\data\vocabulary
+claim level: 1  mechanism level: 1
+passages (selected, this pin): 6010
+
+                                   claim x mechanism   claim + subcluster
+groups                             167                 1181              
+group size min/median/max          1 / 15.00 / 248     1 / 2.00 / 139    
+ungrouped                          797                 17                
+projected extraction slices (55)   207                 1190              
+EXIT=0
+
+$ uv run python sweep.py   # subcluster inner-threshold sweep, local encoder only
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 5333.83it/s]
+pin=9b796b3a6312b329 passages=6010 baseline_threshold=0.55
+threshold=0.55 groups=1181 median=2.00 max=139 ungrouped=17 slices=1190
+threshold=0.5 groups=1734 median=2.00 max=110 ungrouped=17 slices=1737
+threshold=0.6 groups=785 median=3.00 max=225 ungrouped=17 slices=806
+threshold=0.7 groups=250 median=5.00 max=484 ungrouped=17 slices=311
+threshold=0.8 groups=53 median=4.00 max=1577 ungrouped=17 slices=151
+threshold=0.9 groups=11 median=441.00 max=1648 ungrouped=17 slices=115
+
+threshold  groups   min/median/max   ungrouped   slices
+     0.55    1181   1 / 2.00 / 139          17     1190
+      0.5    1734   1 / 2.00 / 110          17     1737
+      0.6     785   1 / 3.00 / 225          17      806
+      0.7     250   1 / 5.00 / 484          17      311
+      0.8      53   1 / 4.00 / 1577          17      151
+      0.9      11   1 / 441.00 / 1648          17      115
+EXIT=0
