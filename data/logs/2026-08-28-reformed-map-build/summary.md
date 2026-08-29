@@ -1,0 +1,86 @@
+# Run: the re-formed map build (slice 04, issue #829)
+
+## Command
+
+```
+PYTHONPATH=D:/axial-wt/04-reformed-build-groups/src
+AXIAL_SECRETS_PATH=secrets/secrets.toml
+uv run axial map build --grouping category
+```
+
+Run in the main checkout `D:/axial` (the worktree has no `data/`), detached via
+`Start-Process`, branch code at `9c1fcc1`. The console log's second line records
+`CODE FROM: D:\axial-wt\04-reformed-build-groups\src\axial\__init__.py`, so the
+run is pinned to the branch, not to `main`.
+
+- Started 2026-08-29 04:51:53 +02:00, finished 05:33:02. Wall time 2,466s (41m).
+- Run-context artifacts: `data/logs/map-build-20260829T025155Z/`.
+- Console transcript copied here as `run-console.log`.
+
+## What was built
+
+`data/map/9b796b3a6312b329-category/` — reads.jsonl, positions.jsonl, map.json,
+bag_state.json. No relations stage (out of scope, slice 07), so no
+relations.jsonl and no `relations` block in the manifest.
+
+## Counts
+
+| | default build | variant (category) |
+|---|---|---|
+| grouping units | 660 wording bags | 176 category groups |
+| reads | 679 | 226 |
+| median passages shown per read | 3 | 20 |
+| passages selected | 6,010 | 6,010 |
+| passages ungrouped | n/a | 17 (0.28%) |
+| raw positions | 2,206 | 2,036 |
+| merged positions | 1,937 | 1,668 |
+| singleton positions | 763 | 631 |
+| median / max position size | 2 / 48 | 2 / 73 |
+| distinct passages placed | 5,596 | 5,497 |
+| declined by the model (`unassigned`) | 373 | 457 |
+| failed reads | 3 | 2 |
+| cost | $0.87 (pin 3c49f2e5) | **$0.7052** |
+
+The 176 groups are 167 `claim x mechanism` cells plus 9 claim-only cells
+holding 780 passages, exactly as the offline dry run projected before the pass
+was paid for. `units_reused: 0` — no prior-pin seeding, confirmed both in the
+manifest and by the console line `reads to make this run: 226 of 226`.
+
+## The default build is untouched
+
+Every file under `data/map/9b796b3a6312b329/` still carries its 2026-08-05 /
+2026-08-06 mtime. Nothing in that directory was written today. Byte-identity
+itself is asserted in the acceptance test, which hashes the directory either
+side of a variant build.
+
+## Outliers
+
+- **Two failed reads, 31 passages, both retriable.** One model response came
+  back as markdown headings instead of JSON
+  (`critique-of-existing-theories-or-concepts::institutional-path-dependence-and-state-capacity`,
+  17 passages shown); one exceeded the 600s wall-clock deadline on attempt 3/3
+  (`characterization-of-regime-movement-or-system::territorial-control-and-conflict-dynamics`,
+  14 passages shown). **Deliberately not retried.** The default build carries
+  3 failed reads of its own into #831's D4 baseline; retrying only the
+  variant's would hand it an advantage the comparison did not grant the other
+  side.
+- **Passages reaching no position: 513 of 6,010 = 8.54%**, against #831's D4
+  bar of 6.9%. Composition: 457 declined by the extraction model, 17 never
+  grouped, ~39 lost to the two failed reads. The fallback did its job — only
+  0.28% went ungrouped against the 13.3% that a no-fallback build would have
+  lost — so the gap is not a coverage artifact of the grouping. It is the
+  extraction model declining more passages when it is shown 20 at a time
+  instead of 3 (`unassigned` 457 vs 373). Whether that fails the variant, or
+  fails D4 as a guard, is slice 06's (#831) verdict, not this slice's.
+- Largest group is 248 passages (`causal-argument-state-formation-or-power::war-and-state-formation`),
+  five extraction slices. Fragmentation across those slices is expected here
+  and is what slice 05's consolidation pass exists to reunite.
+
+## Next steps
+
+1. PR for #829 (`safe-pr`), founder approval, merge.
+2. Slice 05 (#830): the consolidation pass over each category's groups.
+3. Slice 06 (#831): `map compare` reads this directory against
+   `data/map/9b796b3a6312b329/` and decides D1-D5. Note that a bare
+   `axial map purity` / `map grouping-report` still resolves the **default**
+   build; reading the variant needs `--pin 9b796b3a6312b329-category`.
