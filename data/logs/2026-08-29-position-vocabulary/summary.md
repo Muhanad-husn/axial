@@ -36,6 +36,35 @@ two-model agreement 70.0% overall and 73.8% where the first model assigned
 openai/gpt-5.6-luna $0.0029). Answers: 6,176 answered value(s), 6,172
 distinct string(s), 666 excluded (abstention/[]/empty).
 
+## Draw A against the five categorisation conditions
+
+`position` earned its place as a candidate held-out axis on a different,
+earlier draw: 2026-08-27
+(data/logs/2026-08-27-vocabulary-categorise-v2/summary.md), 15 categories,
+89.8% assigned, largest 11.5%, agreement 71.1% at n=90. That draw is not
+the one committed here. Draw A -- 9 categories, 93.0%, largest 16.2%,
+agreement 73.8% at n=84 -- has not before been checked clause by clause
+against the five numeric conditions that summary's plan states
+(plans/derived-vocabulary/01-the-sentence-columns-are-counted.md, "The bar
+for slice 02 to proceed"). Checked here:
+
+| condition | threshold | draw A | pass/fail |
+|---|---|---|---|
+| 1. categories with 5+ members (held-out) | >= 8 | 9 | pass, marginal -- one category above the floor |
+| 2. largest category share of held-out sample | < 25% | 16.2% | pass, comfortable |
+| 3. share of 5+ categories crossing 2+ sources | >= 50% | 100% (9 of 9) | pass, comfortable |
+| 4. assignment rate on held-out sample | >= 50% | 93.0% | pass, comfortable |
+| 5. agreement where first model assigned (n=84) | >= 60% | 73.8% | pass, comfortable (~2.6 SE above the floor) |
+
+Draw A clears all five. Only condition 1 is marginal, and only in the
+count of qualifying categories (9 against a floor of 8) -- not in the
+underlying member counts, which are far above the 5-member cutoff for
+every category (the smallest held-out category, non-substantive or
+bibliographic statements, still holds 12). The sixth, non-numeric
+condition (founder reads the names and glosses, 7 of the 10 largest
+legible as one kind) is addressed separately below, in the note on the
+seven gloss collisions the verifier found.
+
 ## A finding: two paid examine draws raced on one log path
 
 data/logs/2026-08-29-position-vocabulary/console-examine.log lives in the
@@ -138,6 +167,14 @@ task brief.
 Committed to config/vocabulary.yaml as columns.position, version
 2026-08-29-position-v1.
 
+The glosses were reviewed after the verifier named seven category pairs
+whose glosses collide and a coverage gap from the single-country
+exclusions; the coordinator committed the scheme unedited anyway, on a
+calibration against the two columns already in production -- two-model
+agreement 73.8% here against claim's 77.0% and mechanism's 61.4% -- so
+position is no less well-defined than either. The glosses themselves are
+unchanged.
+
 ## The build result
 
 From the command's own stdout (console-build.log), which agrees with
@@ -152,7 +189,12 @@ here because they match:
       model: deepseek/deepseek-v4-flash (63 call(s), cost $0.0626)
 
 93.9% assigned (5,797 of 6,176), against the held-out sample's 93.0%
-estimate -- close, on the same side. 63 calls, $0.0626.
+estimate (372 of 400) -- both on the same base (assigned over the whole
+answered population, refusals included in the denominator either way).
+The gap is 0.9 points; at n=400 and p=0.93 the standard error is ~1.3
+points, so the two are about 0.7 SE apart -- not distinguishable from
+sampling noise, stated as an interval rather than only as "close, on the
+same side." 63 calls, $0.0626.
 
 Slice cost, itemized:
 
@@ -176,10 +218,18 @@ Per-category member and source counts, by member count:
 | descriptions-of-international-and-legal-order | 411 | 23 | 7.1% |
 | non-substantive-or-bibliographic-statements | 185 | 34 | 3.2% |
 
-Largest category by member count is causal-claims-about-war-and-violence at
-19.5% of assigned, against the held-out sample's 16.2% -- inside the
-sampling spread (400 vs 5,797), but both numbers are stated rather than
-only the smaller one.
+Largest category by member count is causal-claims-about-war-and-violence:
+1,128 members. Reported above as 19.5% of the 5,797 assigned -- but the
+held-out sample's 16.2% (65 of 400) is a share of the whole held-out
+sample, refusals included in the denominator, not a share of what was
+assigned (PR #815 review, F3: the code divides by the whole held-out
+sample for exactly this reason). Compared like for like, on the same
+base, the build's figure is 1,128 of 6,176 answered = 18.3%, not 19.5%.
+The gap against the sample's 16.2% is about 2.0 points, not 3.3. At n=400
+and p=0.162 the standard error is ~1.9 points, so the two are about 1.1 SE
+apart -- inside one standard error's neighbourhood, not evidence of a
+shift, stated as an interval rather than asserted as "inside the sampling
+spread" without one.
 
 ## The denominator #831 will be read against
 
@@ -206,6 +256,32 @@ excluded abstentions take it to 92.3%. The held-out purity check #831
 decides over 5,549 (or 5,257, depending on which population it joins
 against) passages, not 6,010. Recorded here as a correction to that
 statement, not as a defect in this build.
+
+## The claim x position cross-tab (the reviewer's highest-severity finding)
+
+The reviewer's point on #838: grouping on an axis correlated with the
+held-out axis drives the held-out axis's purity up by construction too --
+a softer version of the same tautology the hold-out exists to prevent, not
+solved just by choosing a different column to group on. The coordinator
+computed the cross-tab this calls for, zero model calls, over the 5,773
+passages carrying both a claim and a position assignment:
+
+- weighted conditional purity of position given claim: 0.349
+- permutation null, 20 shuffles: 0.196 (max across shuffles: 0.198)
+- lift: 1.78x
+- largest position category share overall: 0.195
+
+position and claim are neither redundant nor orthogonal. The consequence,
+plainly: a variant grouped on claim starts at position purity around
+0.349 before the rebuild contributes anything -- more than 1.5x the
+0.195 largest-category floor a random assignment would already clear by
+grouping-agnostic chance, and nearly double the 0.196 permutation null.
+Any threshold #831 sets on this metric has to clear 0.349, not clear the
+null at 0.196 -- a rebuild that lands at, say, 0.30 would read as a
+regression against the correlation floor even though it beats the null
+by a wide margin, and a rebuild has to clear roughly 0.35-0.40 before it
+is doing more than the claim/position correlation would produce on its
+own.
 
 ## The granularity hazard
 
@@ -249,3 +325,26 @@ from it are tracked):
   surviving file in the main checkout
 - console-build.log -- concatenated from the build's stdout and per-call
   stderr log
+
+**What the reconstruction covers.** Draw A's reconstruction is a full
+transcription of the file as it read on first sight -- every request/
+response line, the full category list with member and source counts, and
+the summary line with cost and agreement -- nothing elided or summarised.
+It is not a byte-for-byte copy of the original file (line endings and
+whitespace were retyped, not captured raw), but every field a reader would
+compute from is reproduced in full.
+
+**Durability.** summary.md is the durable record. All three console logs
+above, and the main checkout's own copies, are box-local, untracked, and
+not guaranteed to survive a worktree cleanup, a disk wipe, or a rerun --
+this file, and run.jsonl beside it, are what a reader three months out can
+actually rely on.
+
+**The reproducible command.** The command actually run above hardcodes
+`D:/axial-wt/838/config/vocabulary.yaml`, a path that dies with this
+branch. Once this merges, the same build reads the committed file from
+`main` directly:
+
+    uv run axial vocabulary build --columns position
+
+against config/vocabulary.yaml on main, no --scheme-path override needed.

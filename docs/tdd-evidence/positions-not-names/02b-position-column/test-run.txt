@@ -38,3 +38,35 @@ bringing up nodes...
 ........................................................................ [ 98%]
 ..................................                                       [100%]
 2554 passed, 1 skipped in 33.26s
+
+---
+
+$ uv run pytest src/axial/test_vocabulary.py -k position -v
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\axial-wt\838
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+created: 8/8 workers
+8 workers [4 items]
+
+....                                                                     [100%]
+============================== 4 passed in 5.24s ==============================
+
+xdist collapses -v to dots above; same selection with xdist off, so the four selected tests are legible by name (three of them this slice's pin tests, one an incidental -k position match, test_read_column_numbers_each_list_element_by_its_raw_position, unrelated to this slice):
+
+$ uv run pytest src/axial/test_vocabulary.py -k position -v -o addopts=
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.1.1, pluggy-1.6.0 -- D:\axial-wt\838\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\axial-wt\838
+configfile: pyproject.toml
+plugins: anyio-4.14.1, Faker-40.28.1, xdist-3.8.0
+collecting ... collected 33 items / 29 deselected / 4 selected
+
+src/axial/test_vocabulary.py::test_read_column_numbers_each_list_element_by_its_raw_position PASSED [ 25%]
+src/axial/test_vocabulary.py::test_the_committed_position_scheme_parses_with_unique_ids_names_glosses_and_own_version PASSED [ 50%]
+src/axial/test_vocabulary.py::test_scheme_columns_returns_position_alongside_claim_and_mechanism PASSED [ 75%]
+src/axial/test_vocabulary.py::test_the_committed_position_scheme_pins_nine_categories_and_their_exact_ids PASSED [100%]
+
+====================== 4 passed, 29 deselected in 0.36s =======================
