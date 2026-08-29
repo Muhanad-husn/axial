@@ -1032,10 +1032,16 @@ def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
     the union of `chunk_ids`, `sources` and `authors`, `size` (distinct
     chunk_ids) and `named_times` (how many raw positions folded in here).
 
-    `consolidated_from` and `categories` are emitted only when the inputs
-    carry them -- they exist on a consolidated position (issue #830) and on
-    nothing the default build produces, so a default map.json and
-    positions.jsonl are unchanged, key for key."""
+    `consolidated_from`, `folded_from` and `categories` are emitted only
+    when the inputs carry them -- they exist on a consolidated position
+    (issue #830) and on nothing the default build produces, so a default
+    map.json and positions.jsonl are unchanged, key for key.
+
+    `folded_from` is the raw arguments underneath a consolidated position,
+    and it is carried through rather than dropped so a reader can see what a
+    fold was made of without reconstructing it from chunk ids. It does not
+    collide with `variants` and does not replace it: `variants` is this
+    merge's own record of the phrasings IT folded, one level up."""
     representative = min(group, key=lambda p: (-p["size"], p["argument"]))
     chunk_ids = sorted({cid for position in group for cid in position["chunk_ids"]})
     record = {
@@ -1050,6 +1056,9 @@ def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
     consolidated = [p["consolidated_from"] for p in group if "consolidated_from" in p]
     if consolidated:
         record["consolidated_from"] = sum(consolidated)
+    folded_from = [member for p in group for member in p.get("folded_from", [])]
+    if folded_from:
+        record["folded_from"] = folded_from
     categories = sorted({p["category"] for p in group if p.get("category")})
     if categories:
         record["categories"] = categories
@@ -1893,6 +1902,22 @@ def run_map_build(
                 "dropped_handles": sum(
                     record.get("dropped_handles", 0) for record in consolidation.records
                 ),
+                # The re-read. A position standing for ten or more raw
+                # arguments is read again against them before the round it
+                # came out of finishes, because at that size the blind
+                # audit found every fold wrong (issue #830). These four say
+                # how often it fired, how often it found a heading rather
+                # than a claim, what it broke the heading into, and how
+                # often the extra call failed and left the position
+                # standing. `positions_re_read` at zero on a sliced
+                # category-grouped build is the shape of the defect the
+                # first trigger had, and worth watching.
+                "positions_re_read": len(consolidation.re_reads),
+                "positions_split": sum(1 for r in consolidation.re_reads if r.get("split")),
+                "split_subgroups": sum(
+                    len(r["positions"]) for r in consolidation.re_reads if r.get("split")
+                ),
+                "failed_re_reads": len([r for r in consolidation.re_reads if "error" in r]),
                 "raw_positions": len(raw_positions),
                 "consolidated_positions": len(positions_to_merge),
                 **consolidation_folds,

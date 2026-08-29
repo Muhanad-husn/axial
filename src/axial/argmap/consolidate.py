@@ -49,6 +49,45 @@ live dispute between its own members and another assert as fact what its
 source attributed to Ibn Khaldun; that sentence must now state only what every
 member asserts, and being unable to write one is the signal to split.
 
+**A big enough fold is read again before it counts.** The same twenty-five
+judgements, cross-tabulated by how many raw arguments each fold holds, put
+every fold of ten or more in the wrong column and none in the sound one,
+while below ten the wrong rate is 18% and the median wrong fold is the same
+size as the median sound one. The failure is not gradual: past some size a
+position stops being a shared claim and becomes a heading. A blunt cap was
+rejected -- it cannot tell a genuine large fold from a heading, and it has
+nowhere honest to put the members it refuses. So size is a trigger, not a
+verdict: a position standing for at least `RE_READ_MEMBERS` raw arguments
+goes to one more blind call (`re_read_entry`) that shows those arguments and
+the sentence written for them, says that a group this large is usually a
+heading, and asks which of them actually assert it. What it does not stand by
+comes back in subgroups, each with its own sentence under `SENTENCE_RULE`; a
+member is never dropped and never rewritten, so `sum(consolidated_from)`
+still closes on the raw positions the category was given. A group it stands
+by whole is left exactly as it was, which is how a legitimate 32-member
+argument survives. A failed, unparseable or empty answer leaves the position
+standing and is counted. It fires once per position per round, in any round,
+and never on its own subgroups: the model has just been told the group is
+probably a heading, so a subgroup it kept together after that is its
+considered answer, and re-asking would spend money arguing with it and
+ratchet toward atomisation. The manifest counts what fires, which is how a
+bigger sample than n=3 gets collected.
+
+**The trigger is ACCUMULATED size, and a probe is why.** Triggered on the
+handles one call named, it fired zero times over
+`causal-argument-nationalism-or-identity` -- 158 raw positions, 3 rounds, 9
+calls -- while leaving an 11-argument and a 15-argument fold in the output.
+Large folds are assembled across rounds out of small entries, so no single
+call ever names ten handles. Round 1 is not where they form.
+
+**Which forces a position to say what it is made of.** `FOLDED_FROM_KEY`
+carries the raw arguments behind a position, accumulated the way
+`consolidated_from` is, and `len(folded_from) == consolidated_from` on
+everything this pass emits. It is what the re-read reads, what a split
+rebuilds its subgroups from, and what makes the map self-auditable: reading
+what a fold was made of used to mean reconstructing it by chunk-id
+containment.
+
 **It runs to a fixed point, per category.** A slice's input is capped at
 `EXTRACT_SLICE`, the same cap extraction reads a group under: both listings
 are one sentence per line under a bare handle, so how many lines one call can
@@ -179,6 +218,31 @@ STOPPED_FINAL_ROUND_FAILED = "final_round_failed"
 # state only -- `_as_position` strips it before anything downstream sees it.
 UNIT_KEY = "unit"
 
+# The RAW positions a position stands for, accumulated across rounds the way
+# `consolidated_from` accumulates -- one record per raw position, each with
+# its own argument sentence, chunk ids, sources and authors.
+# `len(folded_from) == consolidated_from` on everything this pass emits.
+#
+# It exists because the map has to be self-auditable: reading what a fold was
+# made of meant reconstructing it by chunk-id containment, which works and
+# should not be necessary. It is also what makes the re-read possible at all
+# -- the call is shown these sentences, and a split rebuilds its subgroups
+# from these chunk ids. Sentences alone would leave a subgroup with no honest
+# way to claim its own chunks, sources and size.
+#
+# `merge_positions` writes `variants` afterwards for a related but different
+# thing: the CONSOLIDATED sentences one embedding cluster folded. The two do
+# not collide and neither replaces the other.
+FOLDED_FROM_KEY = "folded_from"
+
+# The handles a consolidated entry named, recorded on the entry inside its
+# ledger record. Planning state, like `UNIT_KEY`: no position carries it out
+# of the round it was written in. It survives only to rebuild
+# `FOLDED_FROM_KEY` on a ledger written before that field existed
+# (`_as_round_position`), so an already-paid pass can be resumed and re-read
+# without buying its consolidation calls again.
+HANDLES_KEY = "handles"
+
 
 class CorruptConsolidationLedgerError(MapError):
     """The consolidation-stage sibling of `CorruptReadsLedgerError`, raised
@@ -260,6 +324,7 @@ class ConsolidationResult:
     reads_retried: int = 0
     reads_reasked_after_retry: int = 0
     reads_abandoned: int = 0
+    re_reads: tuple[dict[str, Any], ...] = ()
 
 
 def category_of(group_label: Any) -> str:
@@ -365,8 +430,14 @@ def build_round_jobs(
 def _as_position(member: dict[str, Any]) -> dict[str, Any]:
     """One position as this stage emits it: `merge_positions`' own input
     shape plus `category` (the embedding merge folds across categories only,
-    so it needs to know) and `consolidated_from`. The unit key is dropped --
-    it is planning state, not something a position carries onward."""
+    so it needs to know), `consolidated_from` and `folded_from`. The unit
+    key and the handles are dropped -- planning state, not something a
+    position carries onward.
+
+    `folded_from` is emitted even on a position that was never folded, where
+    it holds that position alone. The redundancy buys one invariant with no
+    exceptions: every position this pass emits says what it is made of, and
+    the list is exactly as long as the count."""
     return {
         "argument": member["argument"],
         "chunk_ids": member["chunk_ids"],
@@ -375,6 +446,64 @@ def _as_position(member: dict[str, Any]) -> dict[str, Any]:
         "size": member["size"],
         "category": member["category"],
         "consolidated_from": member.get("consolidated_from", 1),
+        FOLDED_FROM_KEY: _members_of(member),
+    }
+
+
+# The one constraint on the sentence a group is given, written once and used
+# by BOTH calls in this pass. The blind audit found the consolidation
+# prompt's group sentence adjudicating between its own members, and a
+# re-read that split a heading but wrote its subgroups' sentences under
+# looser rules would put the same fault back at the split. One string, so
+# the two prompts cannot drift.
+SENTENCE_RULE = (
+    "THE SENTENCE YOU WRITE for a group states only what every argument in the group asserts. "
+    "It never takes a side no member takes, never settles a disagreement between members, never "
+    "widens into a generality that would also cover arguments outside the group, and never drops "
+    "an attribution -- an argument reporting what a named thinker holds is a different argument "
+    "from one asserting the same thing as fact. If you cannot write one sentence every member of "
+    "a group would accept, that group is not one argument: split it."
+)
+
+def _members_of(position: dict[str, Any]) -> list[dict[str, Any]]:
+    """The RAW positions `position` stands for. One that was folded carries
+    them; one that was not stands for itself.
+
+    A member is the raw argument sentence plus the provenance a split needs
+    to rebuild a subgroup correctly. This is why the field holds records
+    rather than bare sentences: without the chunk ids there is no honest way
+    to give a subgroup its own chunks, sources, authors and size."""
+    folded = position.get(FOLDED_FROM_KEY)
+    if folded:
+        return list(folded)
+    member = {key: position[key] for key in ("argument", "chunk_ids", "sources", "authors")}
+    raw = int(position.get("consolidated_from", 1))
+    if raw > 1:
+        # A position off a ledger written before this field existed, whose
+        # handles could not be resolved either: the provenance is gone but
+        # the raw count is not, and nothing here may lose it.
+        member["consolidated_from"] = raw
+    return [member]
+
+
+def _pool(text: str, placed: Sequence[dict[str, Any]], category: str) -> dict[str, Any]:
+    """One entry as a call writes it: `text` standing for the `placed`
+    members, pooling the raw positions behind them. Shared by the
+    consolidation call and the re-read so a subgroup is built exactly the
+    way the entry it came out of was."""
+    members = [member for position in placed for member in _members_of(position)]
+    chunk_ids = sorted({cid for member in members for cid in member["chunk_ids"]})
+    return {
+        "argument": text,
+        "chunk_ids": chunk_ids,
+        "sources": sorted({s for member in members for s in member["sources"]}),
+        "authors": sorted({a for member in members for a in member["authors"]}),
+        "size": len(chunk_ids),
+        "category": category,
+        # RAW positions folded in, accumulated across rounds -- a round-2
+        # entry folding five round-1 entries of five reads 25, not 5.
+        "consolidated_from": sum(member.get("consolidated_from", 1) for member in members),
+        FOLDED_FROM_KEY: members,
     }
 
 
@@ -397,9 +526,60 @@ How to group:
 - MERGE aggressively on substance. Two entries arguing that states extract resources through coercion are the same argument whether one says it about France in 1600 and the other about Iraq in 1980, and whether one calls it extraction and the other calls it predation. Different evidence for the same claim is one argument. Different wording for the same claim is one argument. Different century, same claim, one argument.
 - SPLIT only where the arguments genuinely conflict or concern different things. Two accounts that locate a cause differently are two arguments -- never fuse contending positions into one sentence saying both matter. If these arguments disagree with each other, that disagreement must survive as separate entries.
 - Two arguments are the same argument only when they assert THE SAME THING ABOUT THE SAME THING. These were grouped because they share a KIND of claim, not a wording, so a category holding many genuinely different arguments is an ordinary outcome. Being about the same thing is not enough. Neither is sharing a rhetorical move: criticising an existing account, rejecting mono-causality, describing something as proceeding in stages, calling something complex or context-specific are moves, not claims, and two arguments making the same move about different objects -- irrigation and despotism, oil rents, national identity, a revolution -- stay apart. The test: if the sentence you would write does not name what the argument is about, you are merging a move rather than a claim. Do not merge.
-- THE SENTENCE YOU WRITE for a group states only what every argument in the group asserts. It never takes a side no member takes, never settles a disagreement between members, never widens into a generality that would also cover arguments outside the group, and never drops an attribution -- an argument reporting what a named thinker holds is a different argument from one asserting the same thing as fact. If you cannot write one sentence every member of a group would accept, that group is not one argument: split it.
+- """ + SENTENCE_RULE + """
 - Each argument must be CONTESTABLE: something a serious scholar could disagree with. "Violence is shaped by social and political processes" is not an argument, it is a topic wearing an argument's clothes.
 - Every handle listed must appear in exactly one entry. An argument nothing else here restates gets an entry of its own, keeping its original sentence."""
+
+
+# How many handles an entry must name before it is read again. Twenty-five
+# of the built variant's most heavily folded positions were judged blind
+# against their own members, cross-tabulated by how many raw arguments each
+# fold holds:
+#
+#     fold size     wrong  mixed  sound
+#     10 or more        3      0      0
+#     under 10          4      9      9
+#
+# Every fold of ten or more was judged wrong; none survived. Below ten the
+# wrong rate is 18%, and the median wrong fold (5) is the same size as the
+# median sound one (4) -- size does not separate them there, so a re-read
+# would be bought for nothing. The failure is not gradual: past some size an
+# entry stops being a shared claim and becomes a heading. The worst case
+# folded 32 arguments from 23 books into "Existing explanations are flawed
+# because they impose simplistic, narrow, mono-causal, or anachronistic
+# frameworks."
+#
+# n=3 above the line. The signal is clean but small, and 10 is a measured
+# STARTING POINT to be revisited against a bigger sample, not a settled
+# constant. The manifest counts what it triggers, which is how a bigger
+# sample gets collected.
+RE_READ_MEMBERS = 10
+
+# What a re-read's ledger key is prefixed with. A consolidation slice's
+# `arguments_key` is bare hex, so the two key spaces cannot collide and both
+# calls can share one ledger.
+RE_READ_KEY_PREFIX = "reread:"
+
+RE_READ_PROMPT = """One reading of a longer list of arguments put the arguments below into a single group, and wrote this one sentence to stand for all of them:
+
+{sentence}
+
+A group this large is usually not one shared claim. It is a heading: a rhetorical shape several different arguments happen to share -- criticising an existing account, rejecting a single cause, calling something complex or context-specific -- while the arguments under it are about different things. Your job is to find the real claims inside it.
+
+{arguments}
+
+Read each argument against that sentence and ask whether it actually asserts it. Keep together only arguments that assert the same thing about the same thing. An argument that does not assert the group's claim goes into a group of its own, or with whichever others it does share a claim with. If every one of these arguments really does assert that sentence, this is a real group and not a heading -- say so, by returning them all as one group.
+
+Answer as JSON only, no other text:
+
+{{"groups": [
+   {{"argument": "<one sentence stating what this group asserts, in the listed arguments' own terms>",
+    "handles": ["a1", "a4"]}},
+   ...
+ ]}}
+
+- """ + SENTENCE_RULE + """
+- Every handle listed above must appear in exactly one group. Never drop an argument and never rewrite one: an argument nothing else here shares a claim with gets a group of its own, keeping its original sentence."""
 
 
 def render_arguments_blind(
@@ -473,22 +653,14 @@ def consolidate_category_slice(
             if not text or not real:
                 continue
             named_handles.update(real)
-            placed = [handles[handle] for handle in real]
-            chunk_ids = sorted({cid for member in placed for cid in member["chunk_ids"]})
             record["positions"].append(
                 {
-                    "argument": text,
-                    "chunk_ids": chunk_ids,
-                    "sources": sorted({s for member in placed for s in member["sources"]}),
-                    "authors": sorted({a for member in placed for a in member["authors"]}),
-                    "size": len(chunk_ids),
-                    "category": job.category,
-                    # RAW positions folded in, summed across rounds -- a
-                    # round-2 entry folding five round-1 entries of five
-                    # reads 25, not 5.
-                    "consolidated_from": sum(
-                        member.get("consolidated_from", 1) for member in placed
-                    ),
+                    **_pool(text, [handles[handle] for handle in real], job.category),
+                    # Which members this entry stands for. It is what the
+                    # re-read resolves back to argument sentences, and it is
+                    # on the ledger so a resumed run can find the
+                    # over-threshold entries without re-asking anything.
+                    HANDLES_KEY: real,
                 }
             )
         record["positions"].extend(
@@ -503,6 +675,150 @@ def consolidate_category_slice(
         # is what fails.
         record["error"] = str(exc)[:200]
         record["positions"] = [_as_position(member) for member in job.members]
+    record["dropped_handles"] = dropped
+    return record
+
+
+@dataclass(frozen=True)
+class ReReadJob:
+    """One re-read call's worth of work: a consolidated `entry` that named
+    at least `RE_READ_MEMBERS` handles, and the `members` it named.
+
+    `arguments_key` is the entry's own content identity -- a hash over its
+    members' argument sentences in order, under `RE_READ_KEY_PREFIX` so it
+    cannot collide with a consolidation slice's key in the same ledger. It is
+    the entry's content and not the slice's, because a re-read is a question
+    about this entry alone: two slices that fold the same members into the
+    same entry are asking the same question, and a resumed run replays the
+    answer rather than buying it twice."""
+
+    category: str
+    round: int
+    arguments_key: str
+    entry: dict[str, Any]
+    members: tuple[dict[str, Any], ...]
+
+
+def _re_read_key(members: Sequence[dict[str, Any]]) -> str:
+    """The ledger key for a re-read of an entry standing for `members`."""
+    return RE_READ_KEY_PREFIX + _arguments_key(members)
+
+
+def position_re_read_job(
+    category: str, position: dict[str, Any], round_number: int
+) -> ReReadJob | None:
+    """The re-read `position` needs, or `None` when it is under the
+    threshold or has nothing to show.
+
+    The trigger is ACCUMULATED size -- how many raw arguments the position
+    now stands for -- and a probe is why. Triggered instead on the handles
+    one call named, it fired zero times over
+    `causal-argument-nationalism-or-identity` (158 raw positions, 3 rounds,
+    9 calls) while leaving an 11-argument and a 15-argument fold in the
+    output. Large folds are assembled ACROSS rounds out of small entries, so
+    no single call ever names ten handles; round 1 is not where they form.
+    Accumulated size is also the quantity the audit measured and the one
+    that reaches the map.
+
+    A position with no recorded members cannot be re-read -- there is
+    nothing to put in front of the model -- which can only happen on a
+    ledger written before `FOLDED_FROM_KEY` existed and whose handles could
+    not be resolved either. The round loop says so rather than passing over
+    it in silence."""
+    if int(position.get("consolidated_from", 1)) < RE_READ_MEMBERS:
+        return None
+    members = tuple(_members_of(position))
+    if len(members) < 2:
+        return None
+    return ReReadJob(
+        category=category,
+        round=round_number,
+        arguments_key=_re_read_key(members),
+        # The unit is this round's planning state; it must not travel to
+        # disk inside the entry a stood-by re-read hands back.
+        entry={key: value for key, value in position.items() if key != UNIT_KEY},
+        members=members,
+    )
+
+
+def re_read_entry(
+    job: ReReadJob, client: LLMClient, pass_name: str = PASS_NAME
+) -> dict[str, Any]:
+    """One re-read call. Returns a record shaped like a consolidation read's
+    -- `category`, `round`, `arguments_key`, `shown`, `positions`,
+    `dropped_handles`, `error` on failure -- plus `split`, so the manifest
+    does not have to infer it, and `kind`, so the shared ledger says which
+    call wrote a line.
+
+    `positions` is what replaces the entry in the round's output. Three
+    outcomes:
+
+    - The call returns one group naming every member: a legitimate large
+      fold. The ORIGINAL entry stands, sentence and all -- there is nothing
+      to change, and rewriting a sentence a call that saw every member
+      already wrote would buy a difference nobody asked for.
+    - It returns more than one group, or one that leaves members out: the
+      position is split. Each group becomes a position under `_pool`, and
+      every member no group named becomes a position of its own keeping its
+      own sentence, exactly as an unnamed handle does in the consolidation
+      call. Members are redistributed, never invented and never dropped, so
+      `sum(consolidated_from)` over the round is unchanged.
+    - The call fails, is unparseable, or names no usable group at all: the
+      original entry stands unchanged and the failure is counted. A nothing
+      answer must not be allowed to atomise a fold."""
+    listing, handles = render_arguments_blind(job.members)
+    record: dict[str, Any] = {
+        "category": job.category,
+        "round": job.round,
+        "arguments_key": job.arguments_key,
+        "kind": "re_read",
+        "shown": len(job.members),
+        "split": False,
+        "positions": [job.entry],
+    }
+    dropped = 0
+    try:
+        parsed = parse_model_json(
+            client.complete(
+                RE_READ_PROMPT.format(sentence=job.entry["argument"], arguments=listing),
+                pass_name=pass_name,
+            )
+        )
+        named_handles: set[str] = set()
+        groups: list[tuple[str, list[dict[str, Any]]]] = []
+        for group in parsed.get("groups") or []:
+            text = (group.get("argument") or "").strip()
+            offered = group.get("handles") or []
+            real = [
+                handle
+                for index, handle in enumerate(offered)
+                if handle in handles
+                and handle not in named_handles
+                and handle not in offered[:index]
+            ]
+            dropped += len(offered) - len(real)
+            if not text or not real:
+                continue
+            named_handles.update(real)
+            groups.append((text, [handles[handle] for handle in real]))
+        if not groups:
+            record["error"] = "the re-read named no usable group"
+        elif len(groups) == 1 and len(named_handles) == len(job.members):
+            # Stood by: a real group, not a heading. Left exactly as it was.
+            pass
+        else:
+            record["split"] = True
+            record["positions"] = [_pool(text, placed, job.category) for text, placed in groups]
+            record["positions"].extend(
+                _pool(member["argument"], [member], job.category)
+                for handle, member in handles.items()
+                if handle not in named_handles
+            )
+    except (LLMError, httpx.HTTPError, ModelJsonError, AttributeError, TypeError) as exc:
+        # The consolidation call's own fault class and exception set.
+        record["error"] = str(exc)[:200]
+        record["split"] = False
+        record["positions"] = [job.entry]
     record["dropped_handles"] = dropped
     return record
 
@@ -574,8 +890,9 @@ def _announce_resume_spend(
     log(
         f"consolidation resume: {len(retrying)} failed read(s) to re-ask in "
         f"{', '.join(sorted(from_round))}; a retry changes those categories' "
-        f"arguments, so {downstream} later read(s) already on disk will be asked "
-        f"again -- this run will spend up to {len(retrying) + downstream} call(s)"
+        f"arguments, so {downstream} later call(s) already on disk -- reads and "
+        f"re-reads alike -- will be asked again; this run will spend up to "
+        f"{len(retrying) + downstream} call(s)"
     )
 
 
@@ -665,6 +982,84 @@ def _ask_round(
     return done
 
 
+def _ask_re_reads(
+    jobs: Sequence[ReReadJob],
+    *,
+    client: LLMClient,
+    reads_path: Path,
+    pass_name: str,
+    workers: int,
+    log: Callable[[str], None],
+    records: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    """Make this round's re-read calls and add their records to `records`,
+    the same `(category, arguments_key)` map `_ask_round` returns.
+
+    One phase per round, across every category at once, so the pool stays as
+    wide for the re-reads as it was for the reads that raised them. Same
+    resume rule too: a completed re-read on the ledger costs no call, a
+    failed one is asked again until it has failed as many times as the
+    client would attempt a call, and every checkpoint write happens on this
+    thread. The key is content-addressed over the position's members, so a
+    position re-read in one round and left alone in the next is replayed
+    rather than re-asked."""
+    pending: list[ReReadJob] = []
+    seen: set[tuple[str, str]] = set()
+    for job in jobs:
+        key = (job.category, job.arguments_key)
+        if key in seen:
+            # Two entries of identical members are one question.
+            continue
+        prior = records.get(key)
+        if prior is not None and not _is_retryable(prior):
+            continue
+        seen.add(key)
+        pending.append(job)
+    if not jobs:
+        return
+    log(
+        f"  round re-reads: {len(pending)} of {len(jobs)} position(s) "
+        f"standing for {RE_READ_MEMBERS}+ raw arguments"
+    )
+    if not pending:
+        return
+
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+        futures = {pool.submit(re_read_entry, job, client, pass_name): job for job in pending}
+        for future in as_completed(futures):
+            record = future.result()
+            key = (record["category"], record["arguments_key"])
+            if "error" in record:
+                record["attempts"] = _attempts(records[key]) + 1 if key in records else 1
+            append_checkpoint_record(reads_path, record)
+            records[key] = record
+
+
+def _as_round_position(entry: dict[str, Any], job: ConsolidateJob) -> dict[str, Any]:
+    """`entry` as one of this round's output positions: the handles it named
+    stripped, and the raw positions it stands for attached.
+
+    A call records that provenance itself (`_pool`), so the attaching does
+    nothing on a fresh run. It exists for a ledger written before the field
+    did: such a record carries the handles the entry named but not the
+    members behind them, and those are rebuilt here from the job that
+    produced it. The rebuild chains -- round 2's job members are round 1's
+    output positions, which came through here too -- so an already-paid pass
+    resumes with its full provenance and can be re-read without buying its
+    consolidation calls again. A record written before either field has
+    neither, and the position stands for itself."""
+    position = {key: value for key, value in entry.items() if key != HANDLES_KEY}
+    if position.get(FOLDED_FROM_KEY):
+        return position
+    _listing, handles = render_arguments_blind(job.members)
+    placed = [handle for handle in (entry.get(HANDLES_KEY) or []) if handle in handles]
+    if placed:
+        position[FOLDED_FROM_KEY] = [
+            member for handle in placed for member in _members_of(handles[handle])
+        ]
+    return position
+
+
 def run_consolidation(
     reads: Sequence[dict[str, Any]],
     *,
@@ -714,6 +1109,7 @@ def run_consolidation(
     finished: dict[str, list[dict[str, Any]]] = {}
     outcomes: list[CategoryOutcome] = []
     used: dict[tuple[str, str], dict[str, Any]] = {}
+    used_re_reads: dict[tuple[str, str], dict[str, Any]] = {}
     tally = _ResumeTally()
     round_number = 0
 
@@ -739,7 +1135,10 @@ def run_consolidation(
             tally=tally,
         )
 
-        still: dict[str, list[dict[str, Any]]] = {}
+        # This round's output for every category, before the re-read. The
+        # trigger is a position's ACCUMULATED size, so it cannot be applied
+        # until the round's entries are assembled into positions.
+        assembled: dict[str, list[dict[str, Any]]] = {}
         for category, category_jobs in jobs_by_category.items():
             outputs: list[dict[str, Any]] = []
             for index, job in enumerate(category_jobs):
@@ -747,9 +1146,71 @@ def run_consolidation(
                 used[(job.category, job.arguments_key)] = record
                 # The unit a later round spreads by: which slice of THIS
                 # round produced the position.
+                unit = f"r{round_number}s{index}"
                 outputs.extend(
-                    {**position, UNIT_KEY: f"r{round_number}s{index}"}
-                    for position in record["positions"]
+                    {**_as_round_position(entry, job), UNIT_KEY: unit}
+                    for entry in record["positions"]
+                )
+            assembled[category] = outputs
+
+        # The re-read sits HERE: after the round's positions exist and
+        # before the stopping rules read them. It cannot go inside the slice
+        # call -- that runs on a worker thread, and every ledger write in
+        # this pass happens on the collecting thread so a kill can never
+        # race two threads onto one line. One phase over every category at
+        # once is what keeps the pool as wide as the round's own, and it
+        # fires in ANY round, which is the whole point: a fold reaches ten
+        # raw arguments by accumulating over rounds, not inside one call.
+        over_threshold = [
+            (category, position)
+            for category, outputs in assembled.items()
+            for position in outputs
+            if int(position.get("consolidated_from", 1)) >= RE_READ_MEMBERS
+        ]
+        re_read_jobs = [
+            re_read_job
+            for category, position in over_threshold
+            if (re_read_job := position_re_read_job(category, position, round_number)) is not None
+        ]
+        if len(re_read_jobs) < len(over_threshold):
+            log(
+                f"  {len(over_threshold) - len(re_read_jobs)} position(s) at "
+                f"{RE_READ_MEMBERS}+ raw arguments carry no recorded members "
+                f"and cannot be re-read"
+            )
+        _ask_re_reads(
+            re_read_jobs,
+            client=client,
+            reads_path=reads_path,
+            pass_name=pass_name,
+            workers=workers,
+            log=log,
+            records=records,
+        )
+
+        still: dict[str, list[dict[str, Any]]] = {}
+        for category, category_jobs in jobs_by_category.items():
+            outputs = []
+            for position in assembled[category]:
+                # The key is a pure function of the position's own members,
+                # so it is recomputed rather than carried from the jobs
+                # above -- which is also what lets a resumed run find a
+                # completed re-read from the ledger alone, and what stops a
+                # position re-read in round 2 and untouched in round 3 being
+                # asked again.
+                re_read_job = position_re_read_job(category, position, round_number)
+                re_read = (
+                    records.get((category, re_read_job.arguments_key))
+                    if re_read_job is not None
+                    else None
+                )
+                if re_read is None:
+                    outputs.append(position)
+                    continue
+                used_re_reads[(category, re_read["arguments_key"])] = re_read
+                outputs.extend(
+                    {**subgroup, UNIT_KEY: position[UNIT_KEY]}
+                    for subgroup in re_read["positions"]
                 )
             caps.setdefault(category, len(category_jobs))
             round_failed = any(
@@ -759,6 +1220,11 @@ def run_consolidation(
             if len(category_jobs) == 1:
                 stopped = STOPPED_FINAL_ROUND_FAILED if round_failed else STOPPED_CONVERGED
             elif len(outputs) >= len(active[category]):
+                # Counted AFTER the re-read, so a round that folds a little
+                # and splits more reads as no progress and ends the
+                # category. That is the right reading -- the set did not
+                # shrink -- and it is what keeps the loop finite now that a
+                # round can grow one.
                 stopped = STOPPED_NO_PROGRESS
             elif len(outputs) <= EXTRACT_SLICE:
                 # The next round is ONE call over everything left, which is
@@ -802,6 +1268,7 @@ def run_consolidation(
         reads_retried=tally.retried,
         reads_reasked_after_retry=tally.reasked,
         reads_abandoned=tally.abandoned,
+        re_reads=tuple(used_re_reads.values()),
     )
 
 

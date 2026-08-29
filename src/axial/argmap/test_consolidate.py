@@ -35,6 +35,9 @@ from axial.argmap.consolidate import (
     STOPPED_ROUND_CAP,
     PASS_NAME as CONSOLIDATE_PASS_NAME,
     PROMPT,
+    RE_READ_MEMBERS,
+    RE_READ_PROMPT,
+    SENTENCE_RULE,
     build_round_jobs,
     partition_by_category,
     run_consolidation,
@@ -124,6 +127,16 @@ def _extraction_handles(prompt: str) -> list[str]:
 
 def _argument_handles(prompt: str) -> list[str]:
     return [line.split("]")[0][1:] for line in prompt.splitlines() if line.startswith("[a")]
+
+
+def _listed_arguments(prompt: str) -> list[str]:
+    return [line.split("] ", 1)[1] for line in prompt.splitlines() if line.startswith("[a")]
+
+
+def _is_re_read(prompt: str) -> bool:
+    """The re-read call and the consolidation call share a pass name, so a
+    fake client tells them apart by the answer shape each asks for."""
+    return '"groups"' in prompt
 
 
 class _FoldsFirstTwoClient(StubLLMClient):
@@ -762,26 +775,36 @@ def test_a_resumed_build_never_erases_the_paid_runs_cost(
 # ---------------------------------------------------------------------------
 
 
-class _FoldsEveryFiveClient(StubLLMClient):
-    """Folds each run of five handles it is shown into one entry, so a slice
-    of 55 comes back as 11 and a category shrinks round over round."""
+class _FoldsRunsOfClient(StubLLMClient):
+    """Folds each run of `run` handles it is shown into one entry, so a
+    slice of 55 comes back as 11 at run=5 and a category shrinks round over
+    round. On a re-read it stands by the group it is shown, so what it folds
+    is unaffected and the re-reads themselves stay countable: `shown` holds
+    the consolidation calls, `re_read_shown` the re-reads."""
 
-    def __init__(self) -> None:
+    def __init__(self, run: int = 5) -> None:
         super().__init__()
+        self.run = run
         self.shown: list[int] = []
+        self.re_read_shown: list[int] = []
+        self.re_read_prompts: list[str] = []
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
         handles = _argument_handles(prompt)
+        if _is_re_read(prompt):
+            self.re_read_shown.append(len(handles))
+            self.re_read_prompts.append(prompt)
+            return json.dumps({"groups": [{"argument": "Stood by.", "handles": handles}]})
         self.shown.append(len(handles))
         return json.dumps(
             {
                 "arguments": [
                     {
                         "argument": f"Folded {handles[offset]}.",
-                        "handles": handles[offset : offset + 5],
+                        "handles": handles[offset : offset + self.run],
                     }
-                    for offset in range(0, len(handles), 5)
+                    for offset in range(0, len(handles), self.run)
                 ]
             }
         )
@@ -812,7 +835,7 @@ def test_a_category_too_big_for_one_call_is_consolidated_to_a_fixed_point(
     in different slices reunited by nothing at all, which is the failure
     mode moved one level up rather than closed."""
     reads = _two_groups_of(EXTRACT_SLICE)
-    client = _FoldsEveryFiveClient()
+    client = _FoldsRunsOfClient()
 
     result = run_consolidation(
         reads,
@@ -930,7 +953,7 @@ def test_the_rounds_resume_from_the_ledger_without_a_single_call(tmp_path: Path)
     ledger = tmp_path / "consolidation_reads.jsonl"
     reads = _two_groups_of(EXTRACT_SLICE)
     first = run_consolidation(
-        reads, client=_FoldsEveryFiveClient(), reads_path=ledger, log=lambda _m: None
+        reads, client=_FoldsRunsOfClient(), reads_path=ledger, log=lambda _m: None
     )
 
     resumed = run_consolidation(
@@ -960,6 +983,13 @@ def test_the_manifest_reports_the_rounds_and_how_each_category_stopped(
     assert counts["reads_abandoned"] == 0
     # One round, so nothing needed slicing.
     assert counts["categories_sliced"] == 0
+    # The re-read's own four numbers reach the manifest. Nothing here folds
+    # ten arguments into one entry, so all four are zero and the keys are
+    # what this asserts (the split itself is held by the unit tests below).
+    assert counts["positions_re_read"] == 0
+    assert counts["positions_split"] == 0
+    assert counts["split_subgroups"] == 0
+    assert counts["failed_re_reads"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1237,17 +1267,24 @@ def test_no_prior_manifest_leaves_an_unpriced_run_null_rather_than_zero() -> Non
 
 
 class _FailsChosenCallsThenFoldsClient(StubLLMClient):
-    """Fails the calls whose 1-based ordinal is in `fail_calls` and folds
+    """Fails the READS whose 1-based ordinal is in `fail_calls` and folds
     every run of five handles otherwise. Run with `workers=1` so the
-    ordinals are the job order."""
+    ordinals are the job order. A re-read stands by and does not consume an
+    ordinal, so adding one never renumbers the reads."""
 
     def __init__(self, fail_calls: set[int]) -> None:
         super().__init__()
         self.fail_calls = fail_calls
+        self.reads = 0
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
-        if self.call_count in self.fail_calls:
+        if _is_re_read(prompt):
+            return json.dumps(
+                {"groups": [{"argument": "Stood by.", "handles": _argument_handles(prompt)}]}
+            )
+        self.reads += 1
+        if self.reads in self.fail_calls:
             raise LLMError("the model call failed")
         handles = _argument_handles(prompt)
         return json.dumps(
@@ -1289,7 +1326,7 @@ def test_a_resume_says_what_a_retry_will_cost_downstream_before_it_spends(
     lines: list[str] = []
     resumed = run_consolidation(
         reads,
-        client=_FoldsEveryFiveClient(),
+        client=_FoldsRunsOfClient(),
         reads_path=ledger,
         workers=1,
         log=lines.append,
@@ -1299,10 +1336,11 @@ def test_a_resume_says_what_a_retry_will_cost_downstream_before_it_spends(
     # call is made.
     warning = next(line for line in lines if "will spend" in line)
     assert CAT_A in warning
-    # One failed read to re-ask, and three later reads whose input it
-    # changes -- an upper bound, since the retry's own answer is not known
-    # until it is made.
-    assert "up to 4" in warning
+    # One failed read to re-ask, and ten later calls whose input it changes
+    # -- three reads and seven re-reads, all already on disk and all now
+    # answering a question nobody will ask again. An upper bound, since the
+    # retry's own answer is not known until it is made.
+    assert "up to 11" in warning
     assert lines.index(warning) < min(
         index for index, line in enumerate(lines) if "consolidated 1/" in line
     )
@@ -1429,3 +1467,401 @@ def test_an_empty_answer_passes_every_position_through_and_loses_none(
         "Third naming.",
     ]
     assert sum(p["consolidated_from"] for p in result.positions) == 3
+
+
+# ---------------------------------------------------------------------------
+# The re-read (issue #830). Twenty-five heavily folded positions from the
+# built variant were judged blind against their own members, and
+# cross-tabulated by how many raw arguments each fold holds: at 10 or more,
+# 3 wrong / 0 mixed / 0 sound; under 10, 4 / 9 / 9. A large fold is not a
+# worse version of a small one, it is a heading. So a position standing for
+# ten or more RAW arguments gets one more call over them before the round it
+# came out of is finished.
+#
+# The trigger is the position's accumulated `consolidated_from`, and a probe
+# is why. Triggered on the handles one call named, it fired ZERO times on
+# `causal-argument-nationalism-or-identity` (158 raw positions, 3 rounds, 9
+# calls) while leaving a 15-argument and an 11-argument fold in the output:
+# large folds are assembled ACROSS rounds out of small entries, so no single
+# call ever names ten handles. Round 1 is not where large folds form.
+# Accumulated size is also the quantity the audit measured and the quantity
+# that reaches the map.
+#
+# n=3 above the line -- the threshold is a measured starting point, and these
+# tests hold the CONTRACT (no member lost, a genuine fold survives whole, a
+# failure changes nothing) rather than the number.
+# ---------------------------------------------------------------------------
+
+
+def _one_category_of(count: int) -> list[dict]:
+    """`count` raw positions in one category, dealt over two extraction
+    groups so the category is consolidated rather than passed through."""
+    half = count // 2
+    return [
+        _extraction_read(
+            f"{CAT_A}::{mechanism}",
+            [
+                _raw(f"{mechanism} argument {i}.", [f"{ALPHA}_{group}{i:02d}_body_001"])
+                for i in range(size)
+            ],
+        )
+        for group, (mechanism, size) in enumerate(zip((MECH_1, MECH_2), (half, count - half)))
+    ]
+
+
+class _FoldsEverythingClient(StubLLMClient):
+    """Folds every argument it is shown into ONE entry -- the heading the
+    audit found -- and, when that entry comes back for a re-read, splits it
+    into `parts` subgroups. `parts=1` is the re-read standing by the fold."""
+
+    def __init__(self, parts: int = 3) -> None:
+        super().__init__()
+        self.parts = parts
+        self.re_read_prompts: list[str] = []
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        if _is_re_read(prompt):
+            self.re_read_prompts.append(prompt)
+            size = len(handles) // self.parts
+            cuts = [handles[i * size : (i + 1) * size] for i in range(self.parts - 1)]
+            cuts.append(handles[(self.parts - 1) * size :])
+            return json.dumps(
+                {
+                    "groups": [
+                        {"argument": f"Subgroup {i + 1}.", "handles": cut}
+                        for i, cut in enumerate(cuts)
+                    ]
+                }
+            )
+        return json.dumps({"arguments": [{"argument": "One folded argument.", "handles": handles}]})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_fold_over_the_threshold_is_re_read_and_split_without_losing_a_member(
+    tmp_path: Path,
+) -> None:
+    """The split redistributes members across subgroups; it never invents or
+    drops one. `sum(consolidated_from)` over the category's output still
+    equals the raw positions it was given -- the invariant the manifest's
+    headline number rests on."""
+    client = _FoldsEverythingClient(parts=3)
+
+    result = run_consolidation(
+        _one_category_of(12),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    # One consolidation call, one re-read.
+    assert client.call_count == 2
+    assert sorted(p["argument"] for p in result.positions) == [
+        "Subgroup 1.",
+        "Subgroup 2.",
+        "Subgroup 3.",
+    ]
+    assert [p["consolidated_from"] for p in result.positions] == [4, 4, 4]
+    assert sum(p["consolidated_from"] for p in result.positions) == 12
+    # Every raw position's chunk reaches exactly one subgroup.
+    placed = [cid for p in result.positions for cid in p["chunk_ids"]]
+    assert len(placed) == len(set(placed)) == 12
+    # The re-read is blind, like every other call in this pass.
+    assert ALPHA not in client.re_read_prompts[0]
+    assert "alpha" not in client.re_read_prompts[0]
+    # It is shown the members and the sentence written for them.
+    assert "One folded argument." in client.re_read_prompts[0]
+    assert len(_argument_handles(client.re_read_prompts[0])) == 12
+
+    record = result.re_reads[0]
+    assert record["split"] is True
+    assert record["shown"] == 12
+    assert len(record["positions"]) == 3
+    # Every position says what it was folded from, and the list is exactly
+    # as long as the count -- one entry per raw position, carrying the raw
+    # sentence and the chunks behind it.
+    folded = [m for position in result.positions for m in position["folded_from"]]
+    assert [len(p["folded_from"]) for p in result.positions] == [4, 4, 4]
+    assert sorted(m["argument"] for m in folded) == sorted(
+        f"{mechanism} argument {i}." for mechanism in (MECH_1, MECH_2) for i in range(6)
+    )
+    assert sorted(cid for m in folded for cid in m["chunk_ids"]) == sorted(placed)
+
+
+def test_a_re_read_that_stands_by_the_fold_leaves_it_one_position(
+    tmp_path: Path,
+) -> None:
+    """A genuine large fold must survive. The pass is not allowed to break a
+    32-member argument just because it is big: a re-read returning every
+    member in one subgroup leaves the entry exactly as the consolidation
+    call wrote it, sentence included, and is not counted as a split."""
+    client = _FoldsEverythingClient(parts=1)
+
+    result = run_consolidation(
+        _one_category_of(12),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert client.call_count == 2
+    assert [p["argument"] for p in result.positions] == ["One folded argument."]
+    assert result.positions[0]["consolidated_from"] == 12
+    assert result.re_reads[0]["split"] is False
+    assert len(result.re_reads[0]["positions"]) == 1
+
+
+def test_a_fold_under_the_threshold_is_never_re_read(tmp_path: Path) -> None:
+    """Nine raw arguments is the band where the audit found the wrong folds
+    indistinguishable from the sound ones by size, so no call is bought for
+    them."""
+    client = _FoldsEverythingClient(parts=3)
+
+    result = run_consolidation(
+        _one_category_of(RE_READ_MEMBERS - 1),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert client.call_count == 1
+    assert client.re_read_prompts == []
+    assert result.re_reads == ()
+    assert [p["argument"] for p in result.positions] == ["One folded argument."]
+    assert result.positions[0]["consolidated_from"] == RE_READ_MEMBERS - 1
+
+
+class _FailsTheReReadClient(_FoldsEverythingClient):
+    """Consolidates, then fails the re-read -- the fault-isolation case."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        if _is_re_read(prompt):
+            self.call_count += 1
+            raise LLMError("the re-read call failed")
+        return super().complete(prompt, pass_name)
+
+
+def test_a_failed_re_read_leaves_the_entry_intact_and_counts_the_failure(
+    tmp_path: Path,
+) -> None:
+    """Same contract as every other call here: the failure is recorded, never
+    raised, and no member is lost -- the entry stands exactly as the
+    consolidation call wrote it."""
+    result = run_consolidation(
+        _one_category_of(12),
+        client=_FailsTheReReadClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert [p["argument"] for p in result.positions] == ["One folded argument."]
+    assert result.positions[0]["consolidated_from"] == 12
+    assert [("error" in record) for record in result.re_reads] == [True]
+    assert result.re_reads[0]["split"] is False
+    # The consolidation read itself did not fail.
+    assert [("error" in record) for record in result.records] == [False]
+
+
+def test_the_re_read_prompt_carries_the_same_sentence_rules_as_the_consolidation_prompt() -> None:
+    """The rule is one string used by both prompts, so the two cannot drift.
+    A subgroup's sentence is written under exactly the constraints the
+    consolidation prompt now enforces -- the audit found the sentence
+    standing for a group adjudicating between its own members, and a re-read
+    that wrote a looser sentence would reintroduce that at the split."""
+    assert SENTENCE_RULE in PROMPT
+    assert SENTENCE_RULE in RE_READ_PROMPT
+    assert "states only what every argument in the group asserts" in SENTENCE_RULE
+    assert "never takes a side" in SENTENCE_RULE
+    assert "never settles a disagreement" in SENTENCE_RULE
+    assert "widens into a generality" in SENTENCE_RULE
+    assert "never drops an attribution" in SENTENCE_RULE
+    assert "cannot write one sentence every member" in SENTENCE_RULE
+    # It says plainly what the call is for, and never asks for a count.
+    assert "heading" in RE_READ_PROMPT
+    assert "Every handle listed above must appear in exactly one group" in RE_READ_PROMPT
+
+
+def test_a_resume_does_not_re_ask_a_completed_re_read(tmp_path: Path) -> None:
+    """The re-read has its own ledger key, over the entry's own member
+    arguments, so a killed run replays it off disk. Without one the whole
+    entry would be re-read at full price every restart."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _one_category_of(12)
+    first = run_consolidation(
+        reads, client=_FoldsEverythingClient(parts=3), reads_path=ledger, log=lambda _m: None
+    )
+
+    resumed = run_consolidation(
+        reads, client=_RefusingClient(), reads_path=ledger, log=lambda _m: None
+    )
+
+    assert [p["argument"] for p in resumed.positions] == [p["argument"] for p in first.positions]
+    assert [p["consolidated_from"] for p in resumed.positions] == [4, 4, 4]
+    assert resumed.re_reads[0]["split"] is True
+
+
+def test_a_fold_that_only_reaches_the_threshold_across_rounds_is_re_read(
+    tmp_path: Path,
+) -> None:
+    """The case the first build missed, and the probe caught. Triggered on
+    the handles ONE call names, this fires zero times: no call here ever
+    names ten, because round 1 folds fives and round 2 folds five of those.
+    Yet the positions that reach the map stand for 25 and 10 raw arguments,
+    which is the size the audit judged. The trigger is accumulated
+    `consolidated_from`, so round 1 buys nothing and round 2 re-reads every
+    position it produced."""
+    client = _FoldsRunsOfClient(run=5)
+
+    result = run_consolidation(
+        _two_groups_of(EXTRACT_SLICE),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    # Round 1 reads two slices of 55 and returns 22 entries of five; nothing
+    # there is over the threshold. Round 2 folds those into 25s and a 10.
+    assert client.shown == [EXTRACT_SLICE, EXTRACT_SLICE, 22]
+    assert sorted(client.re_read_shown) == [10, 25, 25, 25, 25]
+    assert sorted(p["consolidated_from"] for p in result.positions) == [10, 25, 25, 25, 25]
+    assert sum(p["consolidated_from"] for p in result.positions) == 2 * EXTRACT_SLICE
+
+    # The re-read is shown the RAW arguments the position stands for, not
+    # the sentences the earlier rounds wrote for them. Without that it
+    # cannot judge whether every member asserts the claim.
+    listed = _listed_arguments(client.re_read_prompts[0])
+    assert len(listed) == len(_argument_handles(client.re_read_prompts[0]))
+    assert all(" argument " in argument for argument in listed)
+    assert not any(argument.startswith("Folded ") for argument in listed)
+
+
+def test_a_fold_that_never_reaches_the_threshold_across_rounds_is_never_re_read(
+    tmp_path: Path,
+) -> None:
+    """The other half of the trigger. Two rounds, a category that shrinks
+    110 raw positions to 13, and the largest fold reaches nine -- one under
+    the line the audit drew. Not a call is bought."""
+    client = _FoldsRunsOfClient(run=3)
+
+    result = run_consolidation(
+        _two_groups_of(EXTRACT_SLICE),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert result.outcomes[0].rounds == 2
+    assert client.re_read_shown == []
+    assert result.re_reads == ()
+    assert max(p["consolidated_from"] for p in result.positions) == RE_READ_MEMBERS - 1
+    assert sum(p["consolidated_from"] for p in result.positions) == 2 * EXTRACT_SLICE
+
+
+def test_a_position_carries_the_raw_arguments_it_was_folded_from_across_rounds(
+    tmp_path: Path,
+) -> None:
+    """A folded position must say what it is made of without anything
+    having to be reconstructed from chunk-id containment. `folded_from`
+    accumulates the way `consolidated_from` does -- a round-2 position
+    folding five round-1 entries of five carries 25 raw arguments, not five
+    round-1 sentences -- and it is what the re-read reads."""
+    result = run_consolidation(
+        _two_groups_of(EXTRACT_SLICE),
+        client=_FoldsRunsOfClient(run=5),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    for position in result.positions:
+        assert len(position["folded_from"]) == position["consolidated_from"]
+        assert all(" argument " in member["argument"] for member in position["folded_from"])
+        # The chunks of the members are exactly the position's own.
+        assert sorted({cid for m in position["folded_from"] for cid in m["chunk_ids"]}) == sorted(
+            position["chunk_ids"]
+        )
+    # Every raw position is accounted for exactly once across the map.
+    folded = [m["argument"] for p in result.positions for m in p["folded_from"]]
+    assert len(folded) == len(set(folded)) == 2 * EXTRACT_SLICE
+
+
+def test_the_raw_arguments_a_position_was_folded_from_reach_positions_jsonl(
+    spanning_corpus: dict,
+) -> None:
+    """The field survives the embedding merge and lands on the written
+    position. `variants` is the merge's own field and holds the CONSOLIDATED
+    sentences it folded; `folded_from` is the consolidation pass's and holds
+    the raw arguments underneath them. They do not collide and neither
+    replaces the other."""
+    root = spanning_corpus["root"]
+    _run(spanning_corpus, client=_FoldsFirstTwoClient())
+
+    positions = _read_jsonl(root / "map" / "testpin-category" / "positions.jsonl")
+    folded = [p for p in positions if p.get("consolidated_from", 1) > 1]
+    assert folded
+    for position in folded:
+        assert len(position["folded_from"]) == position["consolidated_from"]
+        assert "variants" in position
+
+
+class _ReReadOnlyClient(StubLLMClient):
+    """Stands by every re-read and refuses to answer a consolidation call at
+    all -- the assertion that a resumed run buys nothing it already paid
+    for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.re_read_shown: list[int] = []
+        self.re_read_prompts: list[str] = []
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        if not _is_re_read(prompt):
+            raise AssertionError("a resumed build re-asked a completed consolidation read")
+        self.re_read_shown.append(len(_argument_handles(prompt)))
+        self.re_read_prompts.append(prompt)
+        return json.dumps(
+            {"groups": [{"argument": "Stood by.", "handles": _argument_handles(prompt)}]}
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_ledger_written_before_provenance_existed_is_still_re_read(tmp_path: Path) -> None:
+    """The ledger the first trigger was probed on holds completed
+    consolidation calls and no record of what each entry was folded from.
+    Re-asking those calls to obtain it would cost the whole pass again, so
+    the members are rebuilt from the handles the entries did record --
+    round by round, since round 2's inputs are round 1's rebuilt outputs --
+    and the re-read fires on the resumed positions with the raw arguments in
+    front of it."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _two_groups_of(EXTRACT_SLICE)
+    run_consolidation(
+        reads, client=_FoldsRunsOfClient(), reads_path=ledger, log=lambda _m: None
+    )
+
+    # Roll the ledger back to the shape the paid run left: completed reads
+    # carrying the handles each entry named, and nothing else.
+    records = [record for record in _read_jsonl(ledger) if record.get("kind") != "re_read"]
+    for record in records:
+        for position in record["positions"]:
+            position.pop("folded_from", None)
+    with ledger.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+
+    client = _ReReadOnlyClient()
+    result = run_consolidation(reads, client=client, reads_path=ledger, log=lambda _m: None)
+
+    assert sorted(client.re_read_shown) == [10, 25, 25, 25, 25]
+    listed = _listed_arguments(client.re_read_prompts[0])
+    assert all(" argument " in argument for argument in listed)
+    assert not any(argument.startswith("Folded ") for argument in listed)
+    assert sum(p["consolidated_from"] for p in result.positions) == 2 * EXTRACT_SLICE
+    assert all(
+        len(p["folded_from"]) == p["consolidated_from"] for p in result.positions
+    )

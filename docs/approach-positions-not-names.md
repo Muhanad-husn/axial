@@ -356,6 +356,66 @@ sentence is itself the signal to split. Both are rewrites of rules already in
 the prompt rather than new paragraphs, and neither is measured yet: the next
 paid pass over these categories is what tests them.
 
+**A fold of ten or more is read again.** The same twenty-five judgements,
+cross-tabulated against how many raw arguments each fold contains:
+
+| fold size | wrong | mixed | sound |
+|---|---|---|---|
+| 10 or more | 3 | 0 | 0 |
+| under 10 | 4 | 9 | 9 |
+
+Every fold of ten or more was judged wrong and none survived. Below ten the
+wrong rate is 18% and the median wrong fold holds five arguments against the
+median sound one's four, so size does not separate them there. The failure is
+not gradual: past some size an entry stops being a shared claim and becomes a
+heading, which is exactly what the 32-argument case is. **Three folds is a
+thin sample** — ten is a measured starting point to be revisited against a
+bigger one, not a settled constant, and `map.json` now counts what it fires
+on so the bigger sample accumulates for free. A blunt size cap was rejected.
+It cannot tell a genuine large fold from a heading, since both look alike from
+outside, and it has nowhere honest to put the members it refuses: dropping
+them discards paid extraction work, and passing them through as singletons
+destroys a real fold to punish a fake one. So the size is a trigger, not a
+verdict. A position standing for ten or more raw arguments goes to one more
+blind call that shows those arguments and the sentence written for them, says
+plainly that a group this large is usually a heading rather than a shared
+claim, and asks which of them actually assert it. What the call does not stand
+by comes back in subgroups, each carrying its own sentence under the same
+rules the consolidation prompt enforces; a member is never dropped and never
+rewritten, so `consolidated_from` still sums to the raw positions the category
+was given. A group the call stands by whole is left exactly as the
+consolidation call wrote it, sentence included, which is how a legitimate
+32-member argument survives the step. A failed or empty answer leaves the
+position standing and is counted. The step fires once per position per round
+and never recurses into its own subgroups: the model has just been told the
+group is probably a heading, so a subgroup it kept together after that is its
+considered answer, and asking again would spend money arguing with it. Like
+the prompt rewrites above, none of this is measured yet — the next paid pass
+is what tests it.
+
+**The trigger is accumulated size, and the first attempt proved why.** Built
+first on the handles a single consolidation call names, the step fired **zero
+times** on `causal-argument-nationalism-or-identity` — 158 raw positions, 3
+rounds, 9 calls — and left an 11-argument and a 15-argument fold standing in
+the output. Large folds are not written by one call. They are assembled across
+rounds out of small entries, so no single call ever names ten handles, and
+round 1 is not where they form. Accumulated `consolidated_from` is both the
+quantity the audit measured and the quantity that reaches the map, so that is
+what the step reads, in every round rather than only the first.
+
+**Which forces a position to say what it is made of.** A consolidated position
+now carries `folded_from`: one record per raw argument underneath it — the
+sentence, its chunk ids, its sources and its authors — accumulated across
+rounds exactly as `consolidated_from` is, so `len(folded_from)` equals it on
+every position the pass emits. The re-read reads that list, and a split
+rebuilds each subgroup's chunks and sources from it; sentences alone would
+leave a subgroup with no honest way to claim its own size. It also closes a
+gap that predates the re-read: reading what a fold was made of used to require
+reconstructing it by chunk-id containment, which works and should never have
+been necessary. The field survives the embedding merge onto the written
+position. It does not collide with the merge's own `variants`, which records
+the consolidated phrasings *that* stage folded, one level up.
+
 **A resume announces its bill, and abandons a read that cannot pass.** An
 error record is re-asked, which is right — but the retry comes back different
 from the error record's pass-through, so that category's later rounds are
