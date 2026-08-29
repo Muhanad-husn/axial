@@ -1,0 +1,228 @@
+{"event": "start", "build_module": "D:\\axial-wt\\830-consolidation\\src\\axial\\argmap\\build.py", "config": "D:\\axial-wt\\830-consolidation\\config\\pipeline.yaml", "cwd": "D:\\axial", "t": "2026-08-29T15:44:14Z"}
+{"event": "log", "line": "corpus pin 9b796b3a6312b329 | grouping category -> data\\map\\9b796b3a6312b329-category", "t": "2026-08-29T15:44:47Z"}
+{"event": "log", "line": "passages 6010 | authors 28", "t": "2026-08-29T15:44:48Z"}
+{"event": "log", "line": "groups 176 (claim x mechanism, schemes claim 2026-08-28-claim-v1, mechanism 2026-08-28-mechanism-v1; 17 passage(s) reached no group)", "t": "2026-08-29T15:44:48Z"}
+{"event": "log", "line": "reads 226 over 176 group(s) (no passage appears in more than one read)", "t": "2026-08-29T15:44:48Z"}
+{"event": "log", "line": "resuming: 226 read(s) already on disk", "t": "2026-08-29T15:44:48Z"}
+{"event": "log", "line": "reads to make this run: 0 of 226", "t": "2026-08-29T15:44:48Z"}
+{"event": "log", "line": "raw positions 2036 | placed slots 5545 | distinct passages placed 5497 of 6010 selected | unassigned 457 | failed reads 2 (31 passage(s))", "t": "2026-08-29T15:44:49Z"}
+{"event": "log", "line": "consolidation: 9 categor(ies), 0 spanning one group (no call), 9 to consolidate", "t": "2026-08-29T15:44:49Z"}
+{"event": "log", "line": "consolidation round 1: 41 read(s) over 9", "t": "2026-08-29T15:44:49Z"}
+{"event": "log", "line": "  round reads: 41 of 41 (0 retrying an earlier failure)", "t": "2026-08-29T15:44:49Z"}
+{"event": "log", "line": "  consolidated 1/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:45:24Z"}
+{"event": "log", "line": "  consolidated 2/41 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T15:45:40Z"}
+{"event": "log", "line": "  consolidated 3/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:45:52Z"}
+{"event": "log", "line": "  consolidated 4/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:46:08Z"}
+{"event": "log", "line": "  consolidated 5/41 (category comparative-or-typological-classification)", "t": "2026-08-29T15:46:14Z"}
+{"event": "log", "line": "  consolidated 6/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:46:19Z"}
+{"event": "log", "line": "  consolidated 7/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:46:25Z"}
+{"event": "log", "line": "  consolidated 8/41 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T15:46:29Z"}
+{"event": "log", "line": "  consolidated 9/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:46:33Z"}
+{"event": "log", "line": "  consolidated 10/41 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T15:46:34Z"}
+{"event": "log", "line": "  consolidated 11/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:46:35Z"}
+{"event": "log", "line": "  consolidated 12/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:46:36Z"}
+{"event": "log", "line": "  consolidated 13/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:46:46Z"}
+{"event": "log", "line": "  consolidated 14/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:46:49Z"}
+{"event": "log", "line": "  consolidated 15/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:46:50Z"}
+{"event": "log", "line": "  consolidated 16/41 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T15:46:51Z"}
+{"event": "log", "line": "  consolidated 17/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:46:56Z"}
+{"event": "log", "line": "  consolidated 18/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:46:58Z"}
+{"event": "log", "line": "  consolidated 19/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:46:59Z"}
+{"event": "log", "line": "  consolidated 20/41 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T15:47:07Z"}
+{"event": "log", "line": "  consolidated 21/41 (category methodological-preconditions)", "t": "2026-08-29T15:47:28Z"}
+{"event": "log", "line": "  consolidated 22/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:47:36Z"}
+{"event": "log", "line": "  consolidated 23/41 (category bibliographic-source-note-or-formal-description)", "t": "2026-08-29T15:47:49Z"}
+{"event": "log", "line": "  consolidated 24/41 (category comparative-or-typological-classification)", "t": "2026-08-29T15:47:54Z"}
+{"event": "log", "line": "  consolidated 25/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:47:54Z"}
+{"event": "log", "line": "  consolidated 26/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:48:21Z"}
+{"event": "log", "line": "  consolidated 27/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:48:31Z"}
+{"event": "log", "line": "  consolidated 28/41 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T15:48:48Z"}
+{"event": "log", "line": "  consolidated 29/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:48:55Z"}
+{"event": "log", "line": "  consolidated 30/41 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T15:49:16Z"}
+{"event": "log", "line": "  consolidated 31/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:49:32Z"}
+{"event": "log", "line": "  consolidated 32/41 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T15:49:44Z"}
+{"event": "log", "line": "  consolidated 33/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:49:47Z"}
+{"event": "log", "line": "  consolidated 34/41 (category methodological-preconditions)", "t": "2026-08-29T15:50:00Z"}
+{"event": "log", "line": "  consolidated 35/41 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T15:50:26Z"}
+{"event": "log", "line": "  consolidated 36/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:50:59Z"}
+{"event": "log", "line": "  consolidated 37/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:51:24Z"}
+{"event": "log", "line": "  consolidated 38/41 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T15:56:51Z"}
+{"event": "log", "line": "  consolidated 39/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:58:00Z"}
+{"event": "log", "line": "  consolidated 40/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T15:58:04Z"}
+{"event": "log", "line": "  consolidated 41/41 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:06:39Z"}
+{"event": "log", "line": "  bibliographic-source-note-or-formal-description: 28 raw -> 25 over 1 round(s) (converged)", "t": "2026-08-29T16:06:39Z"}
+{"event": "log", "line": "consolidation round 2: 34 read(s) over 8", "t": "2026-08-29T16:06:39Z"}
+{"event": "log", "line": "  round reads: 34 of 34 (0 retrying an earlier failure)", "t": "2026-08-29T16:06:39Z"}
+{"event": "log", "line": "  consolidated 1/34 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T16:06:54Z"}
+{"event": "log", "line": "  consolidated 2/34 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:07:38Z"}
+{"event": "log", "line": "  consolidated 3/34 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:07:42Z"}
+{"event": "log", "line": "  consolidated 4/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:07:44Z"}
+{"event": "log", "line": "  consolidated 5/34 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:07:49Z"}
+{"event": "log", "line": "  consolidated 6/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:07:50Z"}
+{"event": "log", "line": "  consolidated 7/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:07:57Z"}
+{"event": "log", "line": "  consolidated 8/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:08:04Z"}
+{"event": "log", "line": "  consolidated 9/34 (category comparative-or-typological-classification)", "t": "2026-08-29T16:08:05Z"}
+{"event": "log", "line": "  consolidated 10/34 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:08:05Z"}
+{"event": "log", "line": "  consolidated 11/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:08:08Z"}
+{"event": "log", "line": "  consolidated 12/34 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:08:16Z"}
+{"event": "log", "line": "  consolidated 13/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:08:17Z"}
+{"event": "log", "line": "  consolidated 14/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:08:20Z"}
+{"event": "log", "line": "  consolidated 15/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:08:29Z"}
+{"event": "log", "line": "  consolidated 16/34 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T16:08:29Z"}
+{"event": "log", "line": "  consolidated 17/34 (category methodological-preconditions)", "t": "2026-08-29T16:08:35Z"}
+{"event": "log", "line": "  consolidated 18/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:08:36Z"}
+{"event": "log", "line": "  consolidated 19/34 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:08:38Z"}
+{"event": "log", "line": "  consolidated 20/34 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:08:47Z"}
+{"event": "log", "line": "  consolidated 21/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:09:06Z"}
+{"event": "log", "line": "  consolidated 22/34 (category methodological-preconditions)", "t": "2026-08-29T16:09:42Z"}
+{"event": "log", "line": "  consolidated 23/34 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:09:48Z"}
+{"event": "log", "line": "  consolidated 24/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:10:11Z"}
+{"event": "log", "line": "  consolidated 25/34 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:10:33Z"}
+{"event": "log", "line": "  consolidated 26/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:11:04Z"}
+{"event": "log", "line": "  consolidated 27/34 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:11:58Z"}
+{"event": "log", "line": "  consolidated 28/34 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:12:19Z"}
+{"event": "log", "line": "  consolidated 29/34 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T16:12:34Z"}
+{"event": "log", "line": "  consolidated 30/34 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:13:09Z"}
+{"event": "log", "line": "  consolidated 31/34 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:17:21Z"}
+{"event": "log", "line": "  consolidated 32/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:17:58Z"}
+{"event": "log", "line": "  consolidated 33/34 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:18:03Z"}
+{"event": "log", "line": "  consolidated 34/34 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:18:44Z"}
+{"event": "log", "line": "  comparative-or-typological-classification: 70 raw -> 52 over 2 round(s) (converged)", "t": "2026-08-29T16:18:44Z"}
+{"event": "log", "line": "consolidation round 3: 28 read(s) over 7", "t": "2026-08-29T16:18:44Z"}
+{"event": "log", "line": "  round reads: 28 of 28 (0 retrying an earlier failure)", "t": "2026-08-29T16:18:44Z"}
+{"event": "log", "line": "  consolidated 1/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:19:31Z"}
+{"event": "log", "line": "  consolidated 2/28 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:19:35Z"}
+{"event": "log", "line": "  consolidated 3/28 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:19:36Z"}
+{"event": "log", "line": "  consolidated 4/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:19:44Z"}
+{"event": "log", "line": "  consolidated 5/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:19:59Z"}
+{"event": "log", "line": "  consolidated 6/28 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:20:02Z"}
+{"event": "log", "line": "  consolidated 7/28 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:20:06Z"}
+{"event": "log", "line": "  consolidated 8/28 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:20:12Z"}
+{"event": "log", "line": "  consolidated 9/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:20:16Z"}
+{"event": "log", "line": "  consolidated 10/28 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:20:19Z"}
+{"event": "log", "line": "  consolidated 11/28 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:20:21Z"}
+{"event": "log", "line": "  consolidated 12/28 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:20:23Z"}
+{"event": "log", "line": "  consolidated 13/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:20:27Z"}
+{"event": "log", "line": "  consolidated 14/28 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:20:29Z"}
+{"event": "log", "line": "  consolidated 15/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:20:39Z"}
+{"event": "log", "line": "  consolidated 16/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:20:39Z"}
+{"event": "log", "line": "  consolidated 17/28 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:20:41Z"}
+{"event": "log", "line": "  consolidated 18/28 (category methodological-preconditions)", "t": "2026-08-29T16:20:57Z"}
+{"event": "log", "line": "  consolidated 19/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:21:12Z"}
+{"event": "log", "line": "  consolidated 20/28 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:21:15Z"}
+{"event": "log", "line": "  consolidated 21/28 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T16:21:52Z"}
+{"event": "log", "line": "  consolidated 22/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:22:02Z"}
+{"event": "log", "line": "  consolidated 23/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:22:06Z"}
+{"event": "log", "line": "  consolidated 24/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:22:26Z"}
+{"event": "log", "line": "  consolidated 25/28 (category causal-argument-nationalism-or-identity)", "t": "2026-08-29T16:24:20Z"}
+{"event": "log", "line": "  consolidated 26/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:26:41Z"}
+{"event": "log", "line": "  consolidated 27/28 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:30:03Z"}
+{"event": "log", "line": "  consolidated 28/28 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:31:27Z"}
+{"event": "log", "line": "  causal-argument-nationalism-or-identity: 158 raw -> 91 over 3 round(s) (round_cap)", "t": "2026-08-29T16:31:27Z"}
+{"event": "log", "line": "  methodological-preconditions: 98 raw -> 51 over 3 round(s) (converged)", "t": "2026-08-29T16:31:27Z"}
+{"event": "log", "line": "consolidation round 4: 23 read(s) over 5", "t": "2026-08-29T16:31:27Z"}
+{"event": "log", "line": "  round reads: 23 of 23 (0 retrying an earlier failure)", "t": "2026-08-29T16:31:27Z"}
+{"event": "log", "line": "  consolidated 1/23 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:32:30Z"}
+{"event": "log", "line": "  consolidated 2/23 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:32:36Z"}
+{"event": "log", "line": "  consolidated 3/23 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:32:43Z"}
+{"event": "log", "line": "  consolidated 4/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:32:46Z"}
+{"event": "log", "line": "  consolidated 5/23 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:32:46Z"}
+{"event": "log", "line": "  consolidated 6/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:32:56Z"}
+{"event": "log", "line": "  consolidated 7/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:33:02Z"}
+{"event": "log", "line": "  consolidated 8/23 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:33:15Z"}
+{"event": "log", "line": "  consolidated 9/23 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:33:53Z"}
+{"event": "log", "line": "  consolidated 10/23 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:34:12Z"}
+{"event": "log", "line": "  consolidated 11/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:34:23Z"}
+{"event": "log", "line": "  consolidated 12/23 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:34:28Z"}
+{"event": "log", "line": "  consolidated 13/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:35:03Z"}
+{"event": "log", "line": "  consolidated 14/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:35:10Z"}
+{"event": "log", "line": "  consolidated 15/23 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:35:46Z"}
+{"event": "log", "line": "  consolidated 16/23 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:35:58Z"}
+{"event": "log", "line": "  consolidated 17/23 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:36:04Z"}
+{"event": "log", "line": "  consolidated 18/23 (category critique-of-existing-theories-or-concepts)", "t": "2026-08-29T16:37:03Z"}
+{"event": "log", "line": "  consolidated 19/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:38:18Z"}
+{"event": "log", "line": "  consolidated 20/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:44:31Z"}
+{"event": "log", "line": "  consolidated 21/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:44:33Z"}
+{"event": "log", "line": "  consolidated 22/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:45:15Z"}
+{"event": "log", "line": "  consolidated 23/23 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:53:02Z"}
+{"event": "log", "line": "  critique-of-existing-theories-or-concepts: 197 raw -> 123 over 4 round(s) (round_cap)", "t": "2026-08-29T16:53:02Z"}
+{"event": "log", "line": "consolidation round 5: 19 read(s) over 4", "t": "2026-08-29T16:53:02Z"}
+{"event": "log", "line": "  round reads: 19 of 19 (0 retrying an earlier failure)", "t": "2026-08-29T16:53:02Z"}
+{"event": "log", "line": "  consolidated 1/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:53:16Z"}
+{"event": "log", "line": "  consolidated 2/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:54:05Z"}
+{"event": "log", "line": "  consolidated 3/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:54:05Z"}
+{"event": "log", "line": "  consolidated 4/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:54:15Z"}
+{"event": "log", "line": "  consolidated 5/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:54:23Z"}
+{"event": "log", "line": "  consolidated 6/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:54:34Z"}
+{"event": "log", "line": "  consolidated 7/19 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:54:46Z"}
+{"event": "log", "line": "  consolidated 8/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:54:49Z"}
+{"event": "log", "line": "  consolidated 9/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:54:49Z"}
+{"event": "log", "line": "  consolidated 10/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T16:54:55Z"}
+{"event": "log", "line": "  consolidated 11/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:54:57Z"}
+{"event": "log", "line": "  consolidated 12/19 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:55:09Z"}
+{"event": "log", "line": "  consolidated 13/19 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:55:21Z"}
+{"event": "log", "line": "  consolidated 14/19 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T16:55:32Z"}
+{"event": "log", "line": "  consolidated 15/19 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:55:33Z"}
+{"event": "log", "line": "  consolidated 16/19 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T16:57:28Z"}
+{"event": "log", "line": "  consolidated 17/19 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T16:59:20Z"}
+{"event": "log", "line": "  consolidated 18/19 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:06:40Z"}
+{"event": "log", "line": "  consolidated 19/19 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T17:17:29Z"}
+{"event": "log", "line": "consolidation round 6: 18 read(s) over 4", "t": "2026-08-29T17:17:29Z"}
+{"event": "log", "line": "  round reads: 18 of 18 (0 retrying an earlier failure)", "t": "2026-08-29T17:17:29Z"}
+{"event": "log", "line": "  consolidated 1/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:17:58Z"}
+{"event": "log", "line": "  consolidated 2/18 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T17:18:28Z"}
+{"event": "log", "line": "  consolidated 3/18 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T17:18:39Z"}
+{"event": "log", "line": "  consolidated 4/18 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:18:42Z"}
+{"event": "log", "line": "  consolidated 5/18 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T17:18:44Z"}
+{"event": "log", "line": "  consolidated 6/18 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:18:46Z"}
+{"event": "log", "line": "  consolidated 7/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:18:54Z"}
+{"event": "log", "line": "  consolidated 8/18 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T17:19:16Z"}
+{"event": "log", "line": "  consolidated 9/18 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T17:19:27Z"}
+{"event": "log", "line": "  consolidated 10/18 (category characterization-of-regime-movement-or-system)", "t": "2026-08-29T17:19:30Z"}
+{"event": "log", "line": "  consolidated 11/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:20:07Z"}
+{"event": "log", "line": "  consolidated 12/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:20:40Z"}
+{"event": "log", "line": "  consolidated 13/18 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:21:43Z"}
+{"event": "log", "line": "  consolidated 14/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:29:55Z"}
+{"event": "log", "line": "  consolidated 15/18 (category causal-argument-violence-war-or-conflict)", "t": "2026-08-29T17:30:27Z"}
+{"event": "log", "line": "  consolidated 16/18 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:32:52Z"}
+{"event": "log", "line": "  consolidated 17/18 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:33:42Z"}
+{"event": "log", "line": "  consolidated 18/18 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:47:32Z"}
+{"event": "log", "line": "  causal-argument-violence-war-or-conflict: 287 raw -> 135 over 6 round(s) (round_cap)", "t": "2026-08-29T17:47:32Z"}
+{"event": "log", "line": "  characterization-of-regime-movement-or-system: 281 raw -> 176 over 6 round(s) (round_cap)", "t": "2026-08-29T17:47:32Z"}
+{"event": "log", "line": "consolidation round 7: 11 read(s) over 2", "t": "2026-08-29T17:47:32Z"}
+{"event": "log", "line": "  round reads: 11 of 11 (0 retrying an earlier failure)", "t": "2026-08-29T17:47:32Z"}
+{"event": "log", "line": "  consolidated 1/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:47:44Z"}
+{"event": "log", "line": "  consolidated 2/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:49:00Z"}
+{"event": "log", "line": "  consolidated 3/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:49:00Z"}
+{"event": "log", "line": "  consolidated 4/11 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:49:15Z"}
+{"event": "log", "line": "  consolidated 5/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:49:27Z"}
+{"event": "log", "line": "  consolidated 6/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T17:49:57Z"}
+{"event": "log", "line": "  consolidated 7/11 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:50:53Z"}
+{"event": "log", "line": "  consolidated 8/11 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T17:52:15Z"}
+{"event": "log", "line": "  consolidated 9/11 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:01:33Z"}
+{"event": "log", "line": "  consolidated 10/11 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:01:36Z"}
+{"event": "log", "line": "  consolidated 11/11 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:02:38Z"}
+{"event": "log", "line": "consolidation round 8: 10 read(s) over 2", "t": "2026-08-29T18:02:38Z"}
+{"event": "log", "line": "  round reads: 10 of 10 (0 retrying an earlier failure)", "t": "2026-08-29T18:02:38Z"}
+{"event": "log", "line": "  consolidated 1/10 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:02:49Z"}
+{"event": "log", "line": "  consolidated 2/10 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:04:06Z"}
+{"event": "log", "line": "  consolidated 3/10 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:04:10Z"}
+{"event": "log", "line": "  consolidated 4/10 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:04:35Z"}
+{"event": "log", "line": "  consolidated 5/10 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:04:59Z"}
+{"event": "log", "line": "  consolidated 6/10 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:05:17Z"}
+{"event": "log", "line": "  consolidated 7/10 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:05:18Z"}
+{"event": "log", "line": "  consolidated 8/10 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:06:16Z"}
+{"event": "log", "line": "  consolidated 9/10 (category empirical-finding-without-causal-claim)", "t": "2026-08-29T18:06:55Z"}
+{"event": "log", "line": "  consolidated 10/10 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:07:28Z"}
+{"event": "log", "line": "  empirical-finding-without-causal-claim: 437 raw -> 253 over 8 round(s) (round_cap)", "t": "2026-08-29T18:07:28Z"}
+{"event": "log", "line": "consolidation round 9: 4 read(s) over 1", "t": "2026-08-29T18:07:28Z"}
+{"event": "log", "line": "  round reads: 4 of 4 (0 retrying an earlier failure)", "t": "2026-08-29T18:07:28Z"}
+{"event": "log", "line": "  consolidated 1/4 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:08:51Z"}
+{"event": "log", "line": "  consolidated 2/4 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:09:37Z"}
+{"event": "log", "line": "  consolidated 3/4 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:09:55Z"}
+{"event": "log", "line": "  consolidated 4/4 (category causal-argument-state-formation-or-power)", "t": "2026-08-29T18:13:58Z"}
+{"event": "log", "line": "  causal-argument-state-formation-or-power: 480 raw -> 187 over 9 round(s) (round_cap)", "t": "2026-08-29T18:13:58Z"}
+{"event": "log", "line": "consolidated positions 1093 (from 2036 raw; 943 fold(s) over 282 position(s))", "t": "2026-08-29T18:13:58Z"}
+{"event": "log", "line": "merged positions 1024 (from 1093 raw)", "t": "2026-08-29T18:14:06Z"}
+{"event": "log", "line": "wrote data\\map\\9b796b3a6312b329-category", "t": "2026-08-29T18:14:06Z"}
+{"event": "done", "wall_sec": 8991.79710689999, "counts": {"passages_selected": 6010, "groups": 176, "reads": 226, "units_total": 226, "units_reused": 226, "units_asked": 0, "units_asked_touching_new": 0, "raw_positions": 2036, "consolidated_positions": 1093, "merged_positions": 1024, "passages_placed_slots": 5545, "passages_placed_distinct": 5497, "passages_unassigned": 457, "passages_ungrouped": 17, "failed_reads": 2, "passages_in_failed_reads": 31}, "t": "2026-08-29T18:14:06Z"}
