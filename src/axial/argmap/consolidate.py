@@ -53,10 +53,12 @@ entries the last round folded -- and every round's slice is keyed by its own
 argument content, so a later round gets its own ledger entry for free and a
 resumed run replays the whole chain off disk without a call.
 
-Two ways a category stops short of that, both named and counted. A round
+Three ways a category stops short of that, all named and counted. A round
 returning as many positions as it was given has told us the model will not
 fold this set (`STOPPED_NO_PROGRESS`), and another pass over it is money for
-nothing. And a category gets at most as many rounds as round 1 needed slices
+nothing. A single-slice round whose one call failed
+(`STOPPED_FINAL_ROUND_FAILED`) read nothing, and must not be counted as the
+fixed point it resembles. And a category gets at most as many rounds as round 1 needed slices
 (`STOPPED_ROUND_CAP`): the loop already terminates without a cap, since a
 round that does not shrink the set stops it, so the cap bounds COST against a
 model that folds one pair per round, and it is read off the data rather than
@@ -121,6 +123,12 @@ GROUP_LABEL_SEPARATOR = "::"
 STOPPED_CONVERGED = "converged"
 STOPPED_NO_PROGRESS = "no_progress"
 STOPPED_ROUND_CAP = "round_cap"
+# A single-slice round whose one call failed. It looks exactly like a
+# converged round from the outside -- one job, and its slice comes back as
+# positions -- but the call read nothing and the slice merely passed
+# through. `categories_converged` is the number this manifest offers as the
+# answer, so it must not count this (issue #830, review).
+STOPPED_FINAL_ROUND_FAILED = "final_round_failed"
 
 # Where a position was named, for `unit_spread`'s rotation: the extraction
 # group in round 1, the slice that produced it in every later round. Planning
@@ -167,16 +175,20 @@ class ConsolidateJob:
 @dataclass(frozen=True)
 class CategoryOutcome:
     """How one category's consolidation ended: how many raw positions it
-    started from, how many it finished with, how many rounds that took, and
-    which of `STOPPED_CONVERGED` / `STOPPED_NO_PROGRESS` /
-    `STOPPED_ROUND_CAP` ended it. Only `STOPPED_CONVERGED` means one call
-    read everything the category had left; the other two are a category
-    whose whole set was never reunited, and the manifest counts them
-    separately so that stays visible."""
+    started from, how many it finished with, how many slices round 1 needed,
+    how many rounds it took, and which of the four `STOPPED_*` reasons ended
+    it. Only `STOPPED_CONVERGED` means one call read everything the category
+    had left; the other three are a category whose whole set was never
+    reunited, and the manifest counts them separately so that stays visible.
+
+    `round_one_slices` is what "was this category ever too big for one call"
+    is answered from. Rounds cannot answer it: a category cut into four
+    slices that folds nothing stops after ONE round (issue #830, review)."""
 
     category: str
     raw_positions: int
     final_positions: int
+    round_one_slices: int
     rounds: int
     stopped: str
 
@@ -362,10 +374,13 @@ def consolidate_category_slice(
     stage's positions from the ledger alone, never from the job that
     produced it.
 
-    A handle the model invents is dropped, never repaired, and an entry left
-    with no real handles is dropped entirely -- `extract_positions_for_
-    slice`'s own contract, exception set included, so one bad call never
-    aborts the pass. A failed call passes its whole slice through
+    `dropped_handles` covers two classes, both dropped and never repaired: a
+    handle the model invents, and a handle it names in a second entry after
+    an earlier one already claimed it. An entry left with no real handles is
+    dropped entirely -- `extract_positions_for_slice`'s own contract,
+    exception set included, so one bad call never aborts the pass. A failed
+    call is re-asked on the next run rather than standing as a completed
+    one (`_ask_round`). A failed call passes its whole slice through
     unconsolidated: the extraction work behind those positions is already
     paid for."""
     listing, handles = render_arguments_blind(job.members)
@@ -385,7 +400,18 @@ def consolidate_category_slice(
         for entry in parsed.get("arguments") or []:
             text = (entry.get("argument") or "").strip()
             offered = entry.get("handles") or []
-            real = [handle for handle in offered if handle in handles]
+            # A handle belongs to exactly one entry: the prompt says so and
+            # nothing enforced it, so a model naming `a2` twice put it in
+            # two positions, each summing its raw count and each carrying
+            # its chunk ids -- and it compounded round over round, on the
+            # number this pass is judged by. First surviving entry wins.
+            real: list[str] = [
+                handle
+                for index, handle in enumerate(offered)
+                if handle in handles
+                and handle not in named_handles
+                and handle not in offered[:index]
+            ]
             dropped += len(offered) - len(real)
             if not text or not real:
                 continue
@@ -446,8 +472,23 @@ def _ask_round(
         (record["category"], record["arguments_key"]): record
         for record in load_checkpoint_records(reads_path, CorruptConsolidationLedgerError)
     }
-    pending = [job for job in jobs if (job.category, job.arguments_key) not in done]
-    log(f"  round reads: {len(pending)} of {len(jobs)} (rest already on disk)")
+    # An error record is not a completed call, so it is re-asked (issue
+    # #830, review). Left permanent it is worse than a lost call: a failed
+    # slice passes its members through unchanged, which can trip the
+    # no-progress rule and end the category, and every restart would replay
+    # the same error and end it identically -- only `--force`, at full
+    # price, could recover. The resume contract is never re-ask a COMPLETED
+    # call.
+    pending = [
+        job
+        for job in jobs
+        if "error" in done.get((job.category, job.arguments_key), {"error": None})
+    ]
+    retries = sum(1 for job in pending if (job.category, job.arguments_key) in done)
+    log(
+        f"  round reads: {len(pending)} of {len(jobs)} "
+        f"({retries} retrying an earlier failure)"
+    )
 
     if pending:
         with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
@@ -483,9 +524,11 @@ def run_consolidation(
     across all categories at once, so the worker pool stays as wide in round
     n as it was in round 1.
 
-    Two ways a category stops short. A round that comes back with as many
+    Three ways a category stops short. A round that comes back with as many
     positions as it was given (`STOPPED_NO_PROGRESS`) has told us the model
-    will not fold this set, and another pass over it is money for nothing.
+    will not fold this set, and another pass over it is money for nothing. A
+    single-slice round whose one call failed (`STOPPED_FINAL_ROUND_FAILED`)
+    read nothing and is not a fixed point, however much it looks like one.
     And a category gets at most as many multi-slice rounds as round 1 needed
     slices (`STOPPED_ROUND_CAP`): the loop already terminates without a cap,
     since every continuing round strictly shrinks the set, so this bounds
@@ -540,9 +583,12 @@ def run_consolidation(
                     for position in record["positions"]
                 )
             caps.setdefault(category, len(category_jobs))
+            round_failed = any(
+                "error" in records[(job.category, job.arguments_key)] for job in category_jobs
+            )
 
             if len(category_jobs) == 1:
-                stopped = STOPPED_CONVERGED
+                stopped = STOPPED_FINAL_ROUND_FAILED if round_failed else STOPPED_CONVERGED
             elif len(outputs) >= len(active[category]):
                 stopped = STOPPED_NO_PROGRESS
             elif len(outputs) <= EXTRACT_SLICE:
@@ -563,6 +609,7 @@ def run_consolidation(
                     category=category,
                     raw_positions=raw_counts[category],
                     final_positions=len(outputs),
+                    round_one_slices=caps[category],
                     rounds=round_number,
                     stopped=stopped,
                 )

@@ -219,6 +219,46 @@ slice 4 ships the unchanged global merge, which does fold within a category as
 well; the case for relaxing it there, and where it is reinstated, is stated
 under that slice.
 
+
+This is a re-forming of the map, not a patch on it. Patching would leave nodes
+made on the wrong principle and merely merge some of them back together.
+
+### The noise policy
+
+Category assignment carries model disagreement — roughly one claim assignment
+in four is disputed between two models. Under embedding bagging a borderline
+passage lands near its neighbours; under category grouping a misassigned
+passage sits in the wrong bag with no path back, because merge reunites
+namings, never passages. The policy, stated rather than silent: **a passage is
+assigned to exactly one category per axis, the error rate is accepted, and it
+is quoted next to every comparison the re-formed map is judged by.** Dual
+membership is rejected — #822 measured what duplicate membership costs at
+assembly, and an assignment pass that hedges is a scheme that no longer
+partitions. If the measured loss from misassignment turns out to dominate the
+structural gains (§13 slice 5 would show it), a one-shot adjudication pass over
+borderline assignments is the fallback, and it is a new decision, not part of
+this design.
+
+**A refusal on the inner axis does not cost a passage its group.** The chosen
+inner split is `claim` × `mechanism` (measured in
+[#828](https://github.com/Muhanad-husn/axial/issues/828)), and on the real
+corpus 797 of 6,010 selected passages form no cell: 780 hold a `claim`
+category and no `mechanism` one, 9 the reverse, 8 neither. Dropping all 797
+would leave 13.3% of selected passages beyond any position, against the 6.9%
+ceiling §13's D4 allows. So the 780 are grouped by `claim` alone, in a
+distinctly labelled claim-only cell per category, and read like any other
+group; only the 17 with no `claim` category at all stay ungrouped, and they
+are counted in the variant's `map.json`. Founder ruling, 2026-08-29, in
+[#829](https://github.com/Muhanad-husn/axial/issues/829).
+
+The fallback did what it was for and did not clear the ceiling it is argued
+against. The built variant lands at **8.54%** beyond any position (513 of
+6,010), still above D4's 6.9%. Only 0.28% of that is grouping loss; the rest
+is the extraction model declining more passages when it is shown twenty at a
+time instead of three (`unassigned` 457 against the default build's 373).
+Whether that fails the variant or fails D4 as a guard is the comparison's
+verdict, not this section's.
+
 Both landed in slice 5 ([#830](https://github.com/Muhanad-husn/axial/issues/830)).
 Two details the design above did not fix, decided in building it.
 
@@ -234,9 +274,10 @@ a category, two namings landing in different slices would be reunited by
 nothing at all — the same failure mode, one level up. So a category is read
 again: round 1 consolidates its raw positions in slices, round 2 consolidates
 round 1's output, and so on until one call reads everything the category has
-left. `consolidated_from` accumulates across rounds. Two ways a category
-stops short, both counted in `map.json`: a round that folds nothing, and a
-cap of as many multi-slice rounds as round 1 needed slices — the loop
+left. `consolidated_from` accumulates across rounds. Three ways a category
+stops short, all counted in `map.json`: a round that folds nothing, a final
+call that failed, and a cap of as many multi-slice rounds as round 1 needed
+slices — the loop
 terminates without a cap, so that bounds cost, not correctness, and it is
 read off the data rather than picked. A round whose output already fits one
 slice is never denied. Arithmetic on the built variant's own shape, at

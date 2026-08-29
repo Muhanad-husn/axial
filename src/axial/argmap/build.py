@@ -1498,7 +1498,10 @@ def _accumulated_totals(
     because the last run that touched it was.
 
     `cost_usd` stays `None` only when neither the prior manifest nor this
-    run has a figure -- an unpriced model must not read as $0. `runs` says
+    run has a figure -- an unpriced model must not read as $0, and a prior
+    manifest carrying a cost but no `usage` (the hand-patched variant build:
+    the dollars were recorded, the token totals never were) carries that cost
+    forward regardless. `runs` says
     how many runs the totals cover, without which a reader cannot tell one
     paid pass from five. A `--force` rebuild accumulates like any other run:
     the money was spent, and `runs` is what says the total covers work that
@@ -1514,7 +1517,12 @@ def _accumulated_totals(
         if prior_cost is None and cost is None
         else (prior_cost or 0.0) + (cost or 0.0),
         "wall_time_sec": (prior.get("wall_time_sec") or 0.0) + wall_time_sec,
-        "runs": int(prior.get("runs") or 0) + 1,
+        # A prior manifest with no `runs` key was written before this
+        # accumulation existed, and it still stands for a run that happened
+        # -- including the paid variant build whose figures are being
+        # patched back by hand. Counting it as zero would report the pair as
+        # one run.
+        "runs": int(prior.get("runs") or (1 if prior else 0)) + 1,
     }
 
 
@@ -1721,9 +1729,17 @@ def run_map_build(
     }
     prior_source_ids: set[str] = set()
     if prior_pin_dir is not None:
-        prior_manifest = _load_json_or_none(prior_pin_dir / "map.json")
-        if prior_manifest is not None:
-            prior_source_ids = set(prior_manifest.get("source_ids", []))
+        # A DIFFERENT manifest from `prior_manifest` above, and it must
+        # keep a different name (issue #830, review): that one is this
+        # outdir's own, the figures this run accumulates onto, and this one
+        # is the previous pin's, read for `source_ids` and nothing else.
+        # Sharing the name made a default build accumulate a foreign pin's
+        # dollars -- and erase its own to `null` when that file would not
+        # parse, which is part B's own defect on the path part B did not
+        # exercise.
+        prior_pin_manifest = _load_json_or_none(prior_pin_dir / "map.json")
+        if prior_pin_manifest is not None:
+            prior_source_ids = set(prior_pin_manifest.get("source_ids", []))
     units_total = len(jobs)
     units_reused = sum(1 for job in jobs if (job.bag, job.slice_index) in already_on_disk)
     units_asked_touching_new = sum(
@@ -1798,6 +1814,7 @@ def run_map_build(
             PASS_NAME as CONSOLIDATE_PASS_NAME,
             POSITION_CONSOLIDATE_REASONING,
             STOPPED_CONVERGED,
+            STOPPED_FINAL_ROUND_FAILED,
             STOPPED_NO_PROGRESS,
             STOPPED_ROUND_CAP,
             consolidation_reads_path,
@@ -1837,11 +1854,14 @@ def run_map_build(
             "counts": {
                 "categories": consolidation.categories,
                 "categories_passed_through": consolidation.categories_passed_through,
-                # A category too big for one call, so it took more than one
-                # round to reach a single-slice read.
-                "categories_sliced": sum(1 for o in outcomes if o.rounds > 1),
+                # Was this category ever too big for ONE call -- read off
+                # round 1's own slice count, not off the rounds it took. A
+                # category cut into four slices that folds nothing stops
+                # after one round and would otherwise report itself as
+                # never sliced (issue #830, review).
+                "categories_sliced": sum(1 for o in outcomes if o.round_one_slices > 1),
                 # How each category ENDED. Only `converged` means one call
-                # read everything it had left; the other two still hold
+                # read everything it had left; the other three still hold
                 # namings nothing reunited, and are the number to watch.
                 "categories_converged": sum(
                     1 for o in outcomes if o.stopped == STOPPED_CONVERGED
@@ -1851,6 +1871,9 @@ def run_map_build(
                 ),
                 "categories_stopped_at_round_cap": sum(
                     1 for o in outcomes if o.stopped == STOPPED_ROUND_CAP
+                ),
+                "categories_stopped_final_round_failed": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_FINAL_ROUND_FAILED
                 ),
                 "rounds": sum(o.rounds for o in outcomes),
                 "max_rounds_one_category": max((o.rounds for o in outcomes), default=0),
@@ -2075,6 +2098,17 @@ def run_map_build(
         "embedding_merge": fold_stats(len(positions_to_merge), stamped, "named_times"),
         # Accumulated under the pin (issue #830, part B), not overwritten by
         # what this process spent -- see `_accumulated_totals`.
+        #
+        # Read these three as different scopes, deliberately (issue #830,
+        # review). `usage` and `cost_usd` here are the EXTRACTION pass alone
+        # (`position_extract`); the consolidation and relations stages carry
+        # their own under their own blocks, and the run's total money is
+        # this plus those. `wall_time_sec` is the WHOLE build -- every stage,
+        # plus selection, grouping and the merge, which belong to no stage --
+        # so the stages' own wall times are subsets of it and must never be
+        # added to it. Measuring a position-stage span instead would be a
+        # fiction: the stage is not contiguous, since the merge runs after
+        # consolidation.
         **_accumulated_totals(prior_manifest, usage, cost, time.monotonic() - started),
     }
     if consolidation_manifest is not None:

@@ -24,11 +24,13 @@ import pytest
 from axial.argmap.build import (
     EXTRACT_SLICE,
     RELATE_PASS_NAME,
+    _accumulated_totals,
     merge_positions,
     run_map_build,
 )
 from axial.argmap.consolidate import (
     STOPPED_CONVERGED,
+    STOPPED_FINAL_ROUND_FAILED,
     STOPPED_NO_PROGRESS,
     STOPPED_ROUND_CAP,
     PASS_NAME as CONSOLIDATE_PASS_NAME,
@@ -813,3 +815,271 @@ def test_the_manifest_reports_the_rounds_and_how_each_category_stopped(
     assert counts["categories_stopped_at_round_cap"] == 0
     # One round, so nothing needed slicing.
     assert counts["categories_sliced"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Reviewer findings on the staged instrument, before the paid pass
+# (issue #830, 2026-08-29). Each of these is a way the pass would have
+# reported a number that was not true of the run that produced it.
+# ---------------------------------------------------------------------------
+
+
+class _NamesEveryHandleTwiceClient(StubLLMClient):
+    """Puts one handle in two entries -- the shape the prompt forbids and
+    nothing enforced. `a2` is named by both."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {
+                "arguments": [
+                    {"argument": "A.", "handles": handles[:2]},
+                    {"argument": "B.", "handles": handles[1:3]},
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def _three_positions_over_two_groups() -> list[dict]:
+    return [
+        _extraction_read(
+            f"{CAT_A}::{MECH_1}",
+            [
+                _raw("First naming.", [_chunk_id(ALPHA, 1)]),
+                _raw("Second naming.", [_chunk_id(ALPHA, 2)]),
+            ],
+        ),
+        _extraction_read(f"{CAT_A}::{MECH_2}", [_raw("Third naming.", [_chunk_id(BETA, 1)])]),
+    ]
+
+
+def test_a_handle_named_in_two_entries_is_placed_once_and_the_repeat_counted(
+    tmp_path: Path,
+) -> None:
+    """`consolidated_from` is this slice's headline number, so it must not
+    double-count. A handle in two entries would otherwise land in both, each
+    summing its raw count and carrying its chunk ids, and it compounds round
+    over round. First entry wins; the repeat joins the dropped count, the
+    same place an invented handle goes."""
+    result = run_consolidation(
+        _three_positions_over_two_groups(),
+        client=_NamesEveryHandleTwiceClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert sum(p["consolidated_from"] for p in result.positions) == 3
+    all_chunk_ids = [cid for p in result.positions for cid in p["chunk_ids"]]
+    assert len(all_chunk_ids) == len(set(all_chunk_ids)) == 3
+    assert [record["dropped_handles"] for record in result.records] == [1]
+
+
+def test_a_failed_final_call_is_not_reported_as_converged(tmp_path: Path) -> None:
+    """`categories_converged` is the number the manifest offers as the
+    answer -- one call read everything this category had left. A single call
+    that failed read nothing; its slice passed through untouched."""
+    result = run_consolidation(
+        _two_group_reads(),
+        client=_FailingClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert result.outcomes[0].stopped == STOPPED_FINAL_ROUND_FAILED
+
+
+class _FailsOnceThenFoldsClient(StubLLMClient):
+    """Fails every call until `stop_failing` is set -- the transport blip a
+    41-to-260-call pass against a real API will actually see."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stop_failing = False
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        if not self.stop_failing:
+            raise LLMError("the model call failed")
+        handles = _argument_handles(prompt)
+        return json.dumps({"arguments": [{"argument": "Folded.", "handles": handles}]})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_slice_that_failed_on_an_earlier_run_is_re_asked_not_replayed(
+    tmp_path: Path,
+) -> None:
+    """An error record is not a completed call. Left as one it is permanent:
+    a failed slice passes its members through unchanged, which can trip the
+    no-progress rule and end the category, and every restart replays the
+    same error and ends it identically -- only `--force`, at full price,
+    would recover. The resume contract is never re-ask a COMPLETED call."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    client = _FailsOnceThenFoldsClient()
+
+    failed = run_consolidation(
+        _two_group_reads(), client=client, reads_path=ledger, log=lambda _m: None
+    )
+    assert failed.outcomes[0].stopped == STOPPED_FINAL_ROUND_FAILED
+
+    client.stop_failing = True
+    recovered = run_consolidation(
+        _two_group_reads(), client=client, reads_path=ledger, log=lambda _m: None
+    )
+
+    assert recovered.outcomes[0].stopped == STOPPED_CONVERGED
+    assert [p["argument"] for p in recovered.positions] == ["Folded."]
+    # And a successful record is still never re-asked.
+    settled = _RefusingClient()
+    run_consolidation(_two_group_reads(), client=settled, reads_path=ledger, log=lambda _m: None)
+
+
+def test_a_category_cut_into_slices_is_counted_sliced_even_when_it_folds_nothing(
+    tmp_path: Path,
+) -> None:
+    """`categories_sliced` answers "was this category ever too big for one
+    call". A category that folds nothing stops after round 1, so counting
+    rounds instead answers a different question and reports it as never
+    sliced."""
+    result = run_consolidation(
+        _two_groups_of(EXTRACT_SLICE),
+        client=_FoldsNothingClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    outcome = result.outcomes[0]
+    assert outcome.rounds == 1
+    assert outcome.round_one_slices == 2
+
+
+def _any_handles(prompt: str) -> list[str]:
+    return [
+        line.split("]")[0][1:]
+        for line in prompt.splitlines()
+        if line.startswith("[p") or line.startswith("[a")
+    ]
+
+
+class _NamesEachHandleClient(StubLLMClient):
+    """Names one argument per handle, in both passes: extraction produces a
+    position per passage, and consolidation folds none of them."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        return json.dumps(
+            {
+                "arguments": [
+                    {"argument": f"Argument {handle} of {len(prompt)}.", "handles": [handle]}
+                    for handle in _any_handles(prompt)
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+@pytest.fixture
+def sliced_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Sixty passages in ONE claim category over two mechanism cells, so
+    consolidation's round 1 is two slices -- the live shape, where 8 of 9
+    categories are cut into 2-9 slices."""
+    monkeypatch.setattr("axial.argmap.build.load_back_matter_sections", lambda trees_dir: {})
+    monkeypatch.setattr(
+        "axial.argmap.build._agglomerative_cluster",
+        lambda vectors, threshold: list(range(len(vectors))),
+    )
+    chunk_ids = [f"{ALPHA}_{i:03d}_body_001" for i in range(30)]
+    chunk_ids += [f"{BETA}_{i:03d}_body_001" for i in range(30)]
+    _write_answers(tmp_path / "answers", chunk_ids)
+    vocabulary_dir = tmp_path / "vocabulary"
+    _write_column(
+        vocabulary_dir, "claim", CLAIM_SCHEME_VERSION, {c: CAT_A for c in chunk_ids}
+    )
+    _write_column(
+        vocabulary_dir,
+        "mechanism",
+        MECHANISM_SCHEME_VERSION,
+        {c: (MECH_1 if c.startswith(ALPHA) else MECH_2) for c in chunk_ids},
+    )
+    return {"root": tmp_path, "chunk_ids": chunk_ids, "vocabulary_dir": vocabulary_dir}
+
+
+def test_the_manifest_counts_a_sliced_category_that_folded_nothing(sliced_corpus: dict) -> None:
+    """The build-level half of the same finding: 60 raw positions over two
+    groups, one round, nothing folded -- sliced, and not converged."""
+    manifest = _run(sliced_corpus, client=_NamesEachHandleClient())
+
+    counts = manifest["consolidation"]["counts"]
+    assert counts["raw_positions"] == 60
+    assert counts["rounds"] == 1
+    assert counts["categories_sliced"] == 1
+    assert counts["categories_stopped_no_progress"] == 1
+    assert counts["categories_converged"] == 0
+
+
+def test_a_default_build_never_accumulates_a_prior_pins_cost(spanning_corpus: dict) -> None:
+    """Two different manifests, one name. The accumulation must read THIS
+    outdir's own `map.json`; the prior PIN's is read for its `source_ids`
+    and nothing else. Reading the wrong one makes a first build under a new
+    pin report the previous pin's dollars as its own -- and, when that
+    manifest will not parse, erases this pin's real figures to `null`, which
+    is the very defect the accumulation was added to fix."""
+    root = spanning_corpus["root"]
+    prior = root / "map" / "otherpin"
+    prior.mkdir(parents=True)
+    (prior / "map.json").write_text(
+        json.dumps(
+            {
+                "corpus_pin": "otherpin",
+                "source_ids": [ALPHA],
+                "cost_usd": 9.99,
+                "wall_time_sec": 5_000.0,
+                "runs": 3,
+                "usage": {"prompt_tokens": 9, "completion_tokens": 9, "total_tokens": 18},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = _PayingClient()
+    manifest = _run(spanning_corpus, client=client, grouping="bag")
+
+    # Exactly what this run spent, and not one token or cent of the other
+    # pin's.
+    assert manifest["usage"] == client.usage_for_pass("position_extract")
+    assert manifest["cost_usd"] < 1.0
+    assert manifest["wall_time_sec"] < 5_000.0
+    assert manifest["runs"] == 1
+    # The prior pin is still read for what it IS read for: which sources it
+    # covered, so an asked read touching a new book can be told apart.
+    assert manifest["counts"]["units_asked_touching_new"] == 4
+
+
+def test_a_prior_cost_survives_a_prior_manifest_that_recorded_no_usage() -> None:
+    """The paid variant build's figures are being patched back by hand and
+    the token totals were never recorded anywhere -- only the dollars were.
+    A missing `usage` is not a reason to drop a cost that is right there."""
+    totals = _accumulated_totals(
+        {"cost_usd": 0.7052, "wall_time_sec": 2_466.0, "usage": None}, None, None, 34.0
+    )
+
+    assert totals["cost_usd"] == pytest.approx(0.7052)
+    assert totals["wall_time_sec"] == pytest.approx(2_500.0)
+    assert totals["usage"] is None
+    # A manifest written before `runs` existed still stands for a run that
+    # happened, so this is the second, not the first.
+    assert totals["runs"] == 2
+
+
+def test_no_prior_manifest_leaves_an_unpriced_run_null_rather_than_zero() -> None:
+    """`None` and `0.0` are different claims. An unpriced model must not
+    read as a free build."""
+    assert _accumulated_totals(None, None, None, 1.0)["cost_usd"] is None
+    assert _accumulated_totals(None, None, None, 1.0)["runs"] == 1
