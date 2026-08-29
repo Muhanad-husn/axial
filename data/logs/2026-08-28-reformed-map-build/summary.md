@@ -23,12 +23,28 @@ run is pinned to the branch, not to `main`.
 bag_state.json. No relations stage (out of scope, slice 07), so no
 relations.jsonl and no `relations` block in the manifest.
 
-**The manifest on disk predates two review fixes.** It was written by
-`9c1fcc1`, before review renamed the grouping-unit count from `bags` to
-`groups` under category grouping and added `passages_in_failed_reads`. The
-artifact is not being rebuilt for a key rename ($0.71 and 41 minutes), so the
-two values are recorded here instead: `groups` 176, `passages_in_failed_reads`
-31. A later `--force` rebuild would write both.
+**The manifest was regenerated after the review fixes, for $0.** The paid
+pass wrote it under `9c1fcc1`, before review renamed the grouping-unit count
+from `bags` to `groups` under category grouping and added
+`passages_in_failed_reads`. Rather than leave slice 06 reading an artifact
+whose keys no longer match the code that reads them, the same command was run
+again on 2026-08-29 at 05:57: it resumed all 226 reads from the ledger, made
+no model call, took 34s, and rewrote `map.json` under the current code.
+`positions.jsonl`, `reads.jsonl` and `bag_state.json` came back byte-identical
+to the paid run, which is also the strongest evidence available that the merge
+is deterministic given the same ledger.
+
+**The cost of the paid pass lives here, not in the manifest.** A resume records
+`cost_usd: null` and its own 34s wall time, because it spent nothing — so the
+regenerated manifest no longer carries the paid figures. They are $0.7052 and
+2,466s, recorded in this log and in PR #844, and nowhere else. This is a
+general trap, not a quirk of this run: **any** resume of **any** build
+overwrites that build's recorded cost with `null`, including the default
+build's. Worth its own issue.
+
+The regenerated manifest's passage arithmetic closes to the residue this log
+names below: 6,010 selected − 17 ungrouped − 5,497 placed − 457 declined −
+31 in failed reads = 8 unaccounted.
 
 ## Counts
 
