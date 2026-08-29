@@ -33,19 +33,40 @@ wording, and a category holding a dozen genuinely different arguments is an
 ordinary outcome rather than a failure. Pressing for merges here would
 manufacture the fusion §6 asks this pass to prevent.
 
-**Two costs this pass does not pay.** A category whose raw positions all
-came from ONE group has nothing to reunite -- there is no second naming of
-anything -- and is passed through with no model call. And a slice's input
-is capped at `EXTRACT_SLICE`, the same cap extraction reads a group under:
-both listings are one sentence per line under a bare handle, so the number
-of lines a single call can weigh is the same question, and reusing the
-constant is what keeps a second, separately-tuned number out of this
-module. Where a category needs more than one slice, its arguments are
-ordered by GROUP in rotation (`group_spread`, the same shape as
-`author_spread`) so every slice spans as many of the category's groups as
-it can, and the manifest counts those categories (`categories_sliced`) --
-namings that land in different slices of one category meet nothing, and
-that residue is reported rather than assumed away.
+**It runs to a fixed point, per category.** A slice's input is capped at
+`EXTRACT_SLICE`, the same cap extraction reads a group under: both listings
+are one sentence per line under a bare handle, so how many lines one call can
+weigh is the same question, and reusing the constant keeps a second,
+separately-tuned number out of this module. But one round over slices is not
+enough, and the live corpus says so loudly -- on the variant's own extraction
+ledger, 8 of 9 categories are cut into 2-9 slices and hold 98.6% of all 2,036
+raw positions. One round would reunite only inside a 55-argument window, and
+since this pass also stops the embedding merge folding inside a category, two
+namings landing in different slices of one category would be reunited by
+nothing at all: §6's failure mode moved one level up rather than closed.
+
+So a category is read again. Round 1 consolidates its raw positions in
+slices; round 2 consolidates round 1's own output; and so on until one call
+reads everything the category has left. `consolidated_from` accumulates
+across rounds -- it is how many RAW positions ended in this one, not how many
+entries the last round folded -- and every round's slice is keyed by its own
+argument content, so a later round gets its own ledger entry for free and a
+resumed run replays the whole chain off disk without a call.
+
+Two ways a category stops short of that, both named and counted. A round
+returning as many positions as it was given has told us the model will not
+fold this set (`STOPPED_NO_PROGRESS`), and another pass over it is money for
+nothing. And a category gets at most as many rounds as round 1 needed slices
+(`STOPPED_ROUND_CAP`): the loop already terminates without a cap, since a
+round that does not shrink the set stops it, so the cap bounds COST against a
+model that folds one pair per round, and it is read off the data rather than
+picked here. It bounds the multi-slice rounds only -- a round whose output
+already fits one slice is always allowed, because that round is one call and
+it is the whole point.
+
+**One cost this pass does not pay.** A category whose raw positions all came
+from ONE group has nothing to reunite -- there is no second naming of
+anything -- and is passed through with no model call at all.
 
 **What survives a call.** Every raw position a surviving entry did not name
 is passed through unchanged, with `consolidated_from: 1`. The alternative
@@ -92,6 +113,20 @@ CONSOLIDATION_READS_FILENAME = "consolidation_reads.jsonl"
 # consolidates at -- is the part before it.
 GROUP_LABEL_SEPARATOR = "::"
 
+# How a category's consolidation ended. Only `STOPPED_CONVERGED` means the
+# last round was a single call over everything the category had left -- the
+# state this pass claims to reach. The other two are named, counted and
+# logged rather than hidden, because a category that stops short still holds
+# namings nothing reunited.
+STOPPED_CONVERGED = "converged"
+STOPPED_NO_PROGRESS = "no_progress"
+STOPPED_ROUND_CAP = "round_cap"
+
+# Where a position was named, for `unit_spread`'s rotation: the extraction
+# group in round 1, the slice that produced it in every later round. Planning
+# state only -- `_as_position` strips it before anything downstream sees it.
+UNIT_KEY = "unit"
+
 
 class CorruptConsolidationLedgerError(MapError):
     """The consolidation-stage sibling of `CorruptReadsLedgerError`, raised
@@ -107,76 +142,91 @@ class CorruptConsolidationLedgerError(MapError):
 
 @dataclass(frozen=True)
 class ConsolidateJob:
-    """One consolidation call's worth of work: `members` raw positions, all
-    from `category`, already group-spread and cut to at most
-    `EXTRACT_SLICE`.
+    """One consolidation call's worth of work: `members` positions, all from
+    `category`, all from the same `round`, already unit-spread and cut to at
+    most `EXTRACT_SLICE`.
 
     `arguments_key` is this slice's content identity -- a hash over its own
     ordered argument sentences, exactly what the model is shown
-    (`render_arguments_blind` renders nothing else). It is half of the
-    resume key, alongside `category`, because this pass's input is the
-    EXTRACTION pass's output: a re-asked or newly-seeded extraction read
-    changes the arguments a category holds, and a ledger keyed by category
-    and slice number alone would then hand back an answer to a question
-    nobody asked."""
+    (`render_arguments_blind` renders nothing else). It is half of the resume
+    key, alongside `category`, because this pass's input is another pass's
+    output: round 1 reads the EXTRACTION pass's arguments and round n reads
+    round n-1's, so a re-asked extraction read or a differently-folded
+    earlier round changes the question, and a ledger keyed by category and
+    slice number alone would hand back an answer to a question nobody
+    asked. `round` is recorded on the read rather than keyed on, for the
+    same reason: two rounds with byte-identical listings are the same
+    question, and the answer already on disk is the right one."""
 
     category: str
+    round: int
     arguments_key: str
     members: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True)
-class ConsolidationPlan:
-    """What `build_consolidation_jobs` worked out from the extraction
-    ledger: the calls to make, the raw positions that need no call at all
-    (`passed_through`, every one of them from a category that spans a single
-    group), and the counts the manifest reports about the split."""
+class CategoryOutcome:
+    """How one category's consolidation ended: how many raw positions it
+    started from, how many it finished with, how many rounds that took, and
+    which of `STOPPED_CONVERGED` / `STOPPED_NO_PROGRESS` /
+    `STOPPED_ROUND_CAP` ended it. Only `STOPPED_CONVERGED` means one call
+    read everything the category had left; the other two are a category
+    whose whole set was never reunited, and the manifest counts them
+    separately so that stays visible."""
 
-    jobs: tuple[ConsolidateJob, ...]
-    passed_through: tuple[dict[str, Any], ...]
-    categories: int
-    categories_passed_through: int
-    categories_sliced: int
+    category: str
+    raw_positions: int
+    final_positions: int
+    rounds: int
+    stopped: str
 
 
 @dataclass(frozen=True)
 class ConsolidationResult:
     """The stage's output: `positions` in exactly the shape
     `merge_positions` already consumes, plus `consolidated_from` and
-    `category` on each, and the records that produced them."""
+    `category` on each; the ledger records that produced them; and one
+    `CategoryOutcome` per category that took at least one round."""
 
     positions: tuple[dict[str, Any], ...]
     records: tuple[dict[str, Any], ...]
-    plan: ConsolidationPlan
+    outcomes: tuple[CategoryOutcome, ...]
+    categories: int
+    categories_passed_through: int
 
 
 def category_of(group_label: Any) -> str:
     """The category a group label belongs to: everything before
     `axial.argmap.grouping`'s own `::` separator, so `<claim>::<mechanism>`
     and the claim-only `<claim>::(no mechanism)` both consolidate at the
-    claim category they share. A label with no separator is its own
-    category -- this pass never has to decide what a malformed label means,
-    it just consolidates at whatever whole label it was given."""
+    claim category they share. A label with no separator is its own category
+    -- this pass never has to decide what a malformed label means, it just
+    consolidates at whatever whole label it was given."""
     return str(group_label).split(GROUP_LABEL_SEPARATOR, 1)[0]
 
 
-def group_spread(members: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """`members` reordered one GROUP at a time in rotation, so any prefix --
-    and so every slice `build_consolidation_jobs` cuts -- carries namings
-    from as many of the category's groups as it can. `author_spread`'s own
-    shape, applied one level up: there, the point is that a slice sees more
-    than one book; here, that it sees more than one group, which is the only
-    way a repeated naming can be spotted at all."""
-    by_group: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+def unit_spread(members: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`members` reordered one UNIT at a time in rotation, so any prefix --
+    and so every slice `build_round_jobs` cuts -- carries namings from as
+    many units as it can. `author_spread`'s own shape, applied one level up:
+    there, the point is that a slice sees more than one book; here, that it
+    sees more than one place the same argument could have been named from,
+    which is the only way a repeated naming can be spotted at all.
+
+    A unit is the extraction group in round 1 and the slice that produced a
+    position in every later round. Spreading improves the odds that two
+    namings of one argument share a call; it is the rounds, not this, that
+    make them eventually share one."""
+    by_unit: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for member in members:
-        by_group[member["group"]].append(member)
-    keys = sorted(by_group)
+        by_unit[member[UNIT_KEY]].append(member)
+    keys = sorted(by_unit)
     out: list[dict[str, Any]] = []
     index = 0
     while len(out) < len(members):
         for key in keys:
-            if index < len(by_group[key]):
-                out.append(by_group[key][index])
+            if index < len(by_unit[key]):
+                out.append(by_unit[key][index])
         index += 1
     return out
 
@@ -189,60 +239,67 @@ def _arguments_key(members: Sequence[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def build_consolidation_jobs(reads: Sequence[dict[str, Any]]) -> ConsolidationPlan:
-    """Plan the pass from the extraction ledger `reads`.
+def partition_by_category(
+    reads: Sequence[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]], int]:
+    """Split the extraction ledger `reads` into the categories that need
+    consolidating and the positions that need no model call at all.
 
-    Every raw position is tagged with the group it was named in and the
-    category that group belongs to. A category whose positions all came from
-    one group is passed through with no model call -- there is no second
-    naming of anything to reunite. Every other category is group-spread and
-    cut into slices of at most `EXTRACT_SLICE`."""
+    Every raw position is tagged with the category it belongs to and the
+    unit it was named in (its extraction group). A category whose positions
+    all came from one group is passed through -- there is no second naming of
+    anything to reunite. Returns the categories still to consolidate, the
+    passed-through positions, and how many categories were passed through."""
     by_category: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for read in reads:
         category = category_of(read["bag"])
         for position in read["positions"]:
             by_category[category].append(
-                {**position, "category": category, "group": str(read["bag"])}
+                {
+                    **position,
+                    "category": category,
+                    "consolidated_from": position.get("consolidated_from", 1),
+                    UNIT_KEY: str(read["bag"]),
+                }
             )
 
-    jobs: list[ConsolidateJob] = []
+    to_consolidate: dict[str, list[dict[str, Any]]] = {}
     passed_through: list[dict[str, Any]] = []
     categories_passed_through = 0
-    categories_sliced = 0
     for category in sorted(by_category):
         members = by_category[category]
-        if len({member["group"] for member in members}) < 2:
+        if len({member[UNIT_KEY] for member in members}) < 2:
             categories_passed_through += 1
-            passed_through.extend(_as_position(member, consolidated_from=1) for member in members)
-            continue
-        ordered = group_spread(members)
-        slices = [
-            tuple(ordered[offset : offset + EXTRACT_SLICE])
-            for offset in range(0, len(ordered), EXTRACT_SLICE)
-        ]
-        if len(slices) > 1:
-            categories_sliced += 1
-        jobs.extend(
-            ConsolidateJob(
-                category=category, arguments_key=_arguments_key(slice_members), members=slice_members
-            )
-            for slice_members in slices
+            passed_through.extend(_as_position(member) for member in members)
+        else:
+            to_consolidate[category] = members
+    return to_consolidate, passed_through, categories_passed_through
+
+
+def build_round_jobs(
+    category: str, members: Sequence[dict[str, Any]], round_number: int
+) -> list[ConsolidateJob]:
+    """One round's calls for `category`: `members` unit-spread and cut into
+    slices of at most `EXTRACT_SLICE`. A round that yields exactly one job
+    has read everything the category has left -- the state this pass exists
+    to reach."""
+    ordered = unit_spread(members)
+    return [
+        ConsolidateJob(
+            category=category,
+            round=round_number,
+            arguments_key=_arguments_key(ordered[offset : offset + EXTRACT_SLICE]),
+            members=tuple(ordered[offset : offset + EXTRACT_SLICE]),
         )
-
-    return ConsolidationPlan(
-        jobs=tuple(jobs),
-        passed_through=tuple(passed_through),
-        categories=len(by_category),
-        categories_passed_through=categories_passed_through,
-        categories_sliced=categories_sliced,
-    )
+        for offset in range(0, len(ordered), EXTRACT_SLICE)
+    ]
 
 
-def _as_position(member: dict[str, Any], *, consolidated_from: int) -> dict[str, Any]:
-    """One raw position as this stage emits it: `merge_positions`' own input
+def _as_position(member: dict[str, Any]) -> dict[str, Any]:
+    """One position as this stage emits it: `merge_positions`' own input
     shape plus `category` (the embedding merge folds across categories only,
-    so it needs to know) and `consolidated_from`. `group` is dropped -- it is
-    planning state, not something a position carries onward."""
+    so it needs to know) and `consolidated_from`. The unit key is dropped --
+    it is planning state, not something a position carries onward."""
     return {
         "argument": member["argument"],
         "chunk_ids": member["chunk_ids"],
@@ -250,7 +307,7 @@ def _as_position(member: dict[str, Any], *, consolidated_from: int) -> dict[str,
         "authors": member["authors"],
         "size": member["size"],
         "category": member["category"],
-        "consolidated_from": consolidated_from,
+        "consolidated_from": member.get("consolidated_from", 1),
     }
 
 
@@ -295,8 +352,8 @@ def render_arguments_blind(
 def consolidate_category_slice(
     job: ConsolidateJob, client: LLMClient, pass_name: str = PASS_NAME
 ) -> dict[str, Any]:
-    """One model call for `job`. Returns a record: `category`,
-    `arguments_key`, `shown` (raw positions offered), `positions` (this
+    """One model call for `job`. Returns a record: `category`, `round`,
+    `arguments_key`, `shown` (positions offered), `positions` (this
     slice's whole output -- consolidated entries plus every raw position no
     entry named, each carrying `consolidated_from`), `dropped_handles`, and
     -- only on failure -- `error`.
@@ -314,6 +371,7 @@ def consolidate_category_slice(
     listing, handles = render_arguments_blind(job.members)
     record: dict[str, Any] = {
         "category": job.category,
+        "round": job.round,
         "arguments_key": job.arguments_key,
         "shown": len(job.members),
         "positions": [],
@@ -342,11 +400,16 @@ def consolidate_category_slice(
                     "authors": sorted({a for member in placed for a in member["authors"]}),
                     "size": len(chunk_ids),
                     "category": job.category,
-                    "consolidated_from": len(placed),
+                    # RAW positions folded in, summed across rounds -- a
+                    # round-2 entry folding five round-1 entries of five
+                    # reads 25, not 5.
+                    "consolidated_from": sum(
+                        member.get("consolidated_from", 1) for member in placed
+                    ),
                 }
             )
         record["positions"].extend(
-            _as_position(member, consolidated_from=1)
+            _as_position(member)
             for handle, member in handles.items()
             if handle not in named_handles
         )
@@ -356,11 +419,50 @@ def consolidate_category_slice(
         # something other than the expected object, where `.get(...)` itself
         # is what fails.
         record["error"] = str(exc)[:200]
-        record["positions"] = [
-            _as_position(member, consolidated_from=1) for member in job.members
-        ]
+        record["positions"] = [_as_position(member) for member in job.members]
     record["dropped_handles"] = dropped
     return record
+
+
+def _ask_round(
+    jobs: Sequence[ConsolidateJob],
+    *,
+    client: LLMClient,
+    reads_path: Path,
+    pass_name: str,
+    workers: int,
+    log: Callable[[str], None],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Make one round's calls and return every record now on disk, keyed by
+    `(category, arguments_key)`. A slice already on the ledger costs no call:
+    the same resume mechanism `run_extraction` has, and the reason a killed
+    pass never re-asks a completed category.
+
+    The same collecting-thread pattern too -- calls run concurrently
+    (`workers`), every checkpoint write happens on this one thread, so a
+    mid-run kill can never race two threads onto the same line and every
+    result is durable the instant it returns."""
+    done = {
+        (record["category"], record["arguments_key"]): record
+        for record in load_checkpoint_records(reads_path, CorruptConsolidationLedgerError)
+    }
+    pending = [job for job in jobs if (job.category, job.arguments_key) not in done]
+    log(f"  round reads: {len(pending)} of {len(jobs)} (rest already on disk)")
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+            futures = {
+                pool.submit(consolidate_category_slice, job, client, pass_name): job
+                for job in pending
+            }
+            completed = 0
+            for future in as_completed(futures):
+                record = future.result()
+                append_checkpoint_record(reads_path, record)
+                done[(record["category"], record["arguments_key"])] = record
+                completed += 1
+                log(f"  consolidated {completed}/{len(pending)} (category {record['category']})")
+    return done
 
 
 def run_consolidation(
@@ -373,63 +475,114 @@ def run_consolidation(
     log: Callable[[str], None] = print,
 ) -> ConsolidationResult:
     """Consolidate every category the extraction ledger `reads` spans more
-    than one group of, resumable by `(category, arguments_key)` via
-    `reads_path`: a restart skips whatever this ledger already carries, and
-    a completed category costs no model call.
+    than one group of, ITERATING each category to a fixed point.
 
-    The same collecting-thread pattern `run_extraction` uses: calls run
-    concurrently (`workers`), every checkpoint write happens on this one
-    thread, so a mid-run kill can never race two threads onto the same line
-    and every result is durable the instant it returns."""
-    plan = build_consolidation_jobs(reads)
+    A round reads the category in slices of at most `EXTRACT_SLICE`; the next
+    round reads that round's own output, and so on, until one call reads
+    everything the category has left (`STOPPED_CONVERGED`). Rounds are driven
+    across all categories at once, so the worker pool stays as wide in round
+    n as it was in round 1.
+
+    Two ways a category stops short. A round that comes back with as many
+    positions as it was given (`STOPPED_NO_PROGRESS`) has told us the model
+    will not fold this set, and another pass over it is money for nothing.
+    And a category gets at most as many multi-slice rounds as round 1 needed
+    slices (`STOPPED_ROUND_CAP`): the loop already terminates without a cap,
+    since every continuing round strictly shrinks the set, so this bounds
+    COST against a model that folds one pair per round rather than bounding
+    correctness. The bound is read off the data -- a category read in nine
+    slices gets nine rounds -- and is not a number picked here. A round whose
+    output already fits one slice is never denied: that round is one call and
+    it is the whole point."""
+    to_consolidate, passed_through, categories_passed_through = partition_by_category(reads)
+    categories = len(to_consolidate) + categories_passed_through
     log(
-        f"consolidation: {plan.categories} categor(ies), "
-        f"{plan.categories_passed_through} spanning one group (no call), "
-        f"{len(plan.jobs)} read(s) to make"
+        f"consolidation: {categories} categor(ies), "
+        f"{categories_passed_through} spanning one group (no call), "
+        f"{len(to_consolidate)} to consolidate"
     )
-    if plan.categories_sliced:
-        log(
-            f"  {plan.categories_sliced} categor(ies) needed more than one slice at "
-            f"EXTRACT_SLICE={EXTRACT_SLICE}: namings in different slices of one "
-            "category never met"
+
+    raw_counts = {category: len(members) for category, members in to_consolidate.items()}
+    active = dict(to_consolidate)
+    caps: dict[str, int] = {}
+    finished: dict[str, list[dict[str, Any]]] = {}
+    outcomes: list[CategoryOutcome] = []
+    used: dict[tuple[str, str], dict[str, Any]] = {}
+    round_number = 0
+
+    while active:
+        round_number += 1
+        jobs_by_category = {
+            category: build_round_jobs(category, active[category], round_number)
+            for category in sorted(active)
+        }
+        jobs = [job for category_jobs in jobs_by_category.values() for job in category_jobs]
+        log(f"consolidation round {round_number}: {len(jobs)} read(s) over {len(jobs_by_category)}")
+        records = _ask_round(
+            jobs,
+            client=client,
+            reads_path=reads_path,
+            pass_name=pass_name,
+            workers=workers,
+            log=log,
         )
 
-    done = {
-        (record["category"], record["arguments_key"])
-        for record in load_checkpoint_records(reads_path, CorruptConsolidationLedgerError)
-    }
-    if done:
-        log(f"resuming: {len(done)} consolidation read(s) already on disk")
-    pending = [job for job in plan.jobs if (job.category, job.arguments_key) not in done]
-    log(f"consolidation reads this run: {len(pending)} of {len(plan.jobs)}")
+        still: dict[str, list[dict[str, Any]]] = {}
+        for category, category_jobs in jobs_by_category.items():
+            outputs: list[dict[str, Any]] = []
+            for index, job in enumerate(category_jobs):
+                record = records[(job.category, job.arguments_key)]
+                used[(job.category, job.arguments_key)] = record
+                # The unit a later round spreads by: which slice of THIS
+                # round produced the position.
+                outputs.extend(
+                    {**position, UNIT_KEY: f"r{round_number}s{index}"}
+                    for position in record["positions"]
+                )
+            caps.setdefault(category, len(category_jobs))
 
-    if pending:
-        with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
-            futures = {
-                pool.submit(consolidate_category_slice, job, client, pass_name): job
-                for job in pending
-            }
-            completed = 0
-            for future in as_completed(futures):
-                record = future.result()
-                append_checkpoint_record(reads_path, record)
-                completed += 1
-                log(f"  consolidated {completed}/{len(pending)} (category {record['category']})")
+            if len(category_jobs) == 1:
+                stopped = STOPPED_CONVERGED
+            elif len(outputs) >= len(active[category]):
+                stopped = STOPPED_NO_PROGRESS
+            elif len(outputs) <= EXTRACT_SLICE:
+                # The next round is ONE call over everything left, which is
+                # the state this pass exists to reach. The cap bounds the
+                # multi-slice rounds; it never denies the converging one.
+                still[category] = outputs
+                continue
+            elif round_number >= caps[category]:
+                stopped = STOPPED_ROUND_CAP
+            else:
+                still[category] = outputs
+                continue
 
-    # Only the slices this plan actually asked for: a ledger written before
-    # an extraction re-ask can still hold a record whose `arguments_key` no
-    # category now carries, and folding it in would resurrect positions the
-    # current extraction ledger no longer names.
-    wanted = {(job.category, job.arguments_key) for job in plan.jobs}
-    records = [
-        record
-        for record in load_checkpoint_records(reads_path, CorruptConsolidationLedgerError)
-        if (record["category"], record["arguments_key"]) in wanted
+            finished[category] = outputs
+            outcomes.append(
+                CategoryOutcome(
+                    category=category,
+                    raw_positions=raw_counts[category],
+                    final_positions=len(outputs),
+                    rounds=round_number,
+                    stopped=stopped,
+                )
+            )
+            log(
+                f"  {category}: {raw_counts[category]} raw -> {len(outputs)} "
+                f"over {round_number} round(s) ({stopped})"
+            )
+        active = still
+
+    positions = [
+        _as_position(position) for category in sorted(finished) for position in finished[category]
     ]
-    positions = [position for record in records for position in record["positions"]]
-    positions.extend(plan.passed_through)
+    positions.extend(passed_through)
     return ConsolidationResult(
-        positions=tuple(positions), records=tuple(records), plan=plan
+        positions=tuple(positions),
+        records=tuple(used.values()),
+        outcomes=tuple(sorted(outcomes, key=lambda outcome: outcome.category)),
+        categories=categories,
+        categories_passed_through=categories_passed_through,
     )
 
 

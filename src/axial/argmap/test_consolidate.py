@@ -28,9 +28,13 @@ from axial.argmap.build import (
     run_map_build,
 )
 from axial.argmap.consolidate import (
+    STOPPED_CONVERGED,
+    STOPPED_NO_PROGRESS,
+    STOPPED_ROUND_CAP,
     PASS_NAME as CONSOLIDATE_PASS_NAME,
     PROMPT,
-    build_consolidation_jobs,
+    build_round_jobs,
+    partition_by_category,
     run_consolidation,
 )
 from axial.llm import LLMError, StubLLMClient
@@ -318,7 +322,7 @@ def test_a_category_that_spans_one_group_is_passed_through_without_a_model_call(
     buy nothing. The passed-through positions still carry
     `consolidated_from: 1`, so every position in the map is countable the
     same way."""
-    plan = build_consolidation_jobs(
+    to_consolidate, passed_through, passed_count = partition_by_category(
         [
             _extraction_read(
                 f"{CAT_B}::{MECH_1}",
@@ -330,18 +334,17 @@ def test_a_category_that_spans_one_group_is_passed_through_without_a_model_call(
         ]
     )
 
-    assert plan.jobs == ()
-    assert plan.categories_passed_through == 1
-    assert [position["consolidated_from"] for position in plan.passed_through] == [1, 1]
-    assert {position["category"] for position in plan.passed_through} == {CAT_B}
+    assert to_consolidate == {}
+    assert passed_count == 1
+    assert [position["consolidated_from"] for position in passed_through] == [1, 1]
+    assert {position["category"] for position in passed_through} == {CAT_B}
 
 
-def test_a_category_too_big_for_one_call_is_group_spread_into_slices_and_counted() -> None:
-    """The slice cap is `EXTRACT_SLICE`, reused rather than tuned again --
-    both listings are one sentence per line under a bare handle. Ordering
-    rotates the category's groups, so a slice sees as many of them as it
-    can; a category that still needs two slices is counted, because namings
-    in different slices of one category never met."""
+def test_a_round_is_cut_at_the_extraction_slice_and_spread_across_its_units() -> None:
+    """The slice cap reuses `EXTRACT_SLICE` rather than adding a second
+    tuned number -- both listings are one sentence per line under a bare
+    handle. Ordering rotates the units a position could have been named
+    from, so a slice sees as many of them as it can."""
     per_group = EXTRACT_SLICE - 5
     reads = [
         _extraction_read(
@@ -353,14 +356,16 @@ def test_a_category_too_big_for_one_call_is_group_spread_into_slices_and_counted
         )
         for mechanism in (MECH_1, MECH_2)
     ]
+    to_consolidate, _passed_through, _passed_count = partition_by_category(reads)
 
-    plan = build_consolidation_jobs(reads)
+    jobs = build_round_jobs(CAT_A, to_consolidate[CAT_A], 1)
 
-    assert len(plan.jobs) == 2
-    assert plan.categories_sliced == 1
-    assert len(plan.jobs[0].members) == EXTRACT_SLICE
-    first_slice_groups = {member["group"] for member in plan.jobs[0].members}
-    assert first_slice_groups == {f"{CAT_A}::{MECH_1}", f"{CAT_A}::{MECH_2}"}
+    assert [len(job.members) for job in jobs] == [EXTRACT_SLICE, per_group * 2 - EXTRACT_SLICE]
+    assert {job.round for job in jobs} == {1}
+    assert {member["unit"] for member in jobs[0].members} == {
+        f"{CAT_A}::{MECH_1}",
+        f"{CAT_A}::{MECH_2}",
+    }
 
 
 class _InventingClient(StubLLMClient):
@@ -601,3 +606,210 @@ def test_a_resumed_build_never_erases_the_paid_runs_cost(
     assert paid[stage]["cost_usd"] > 0
     assert resumed[stage]["cost_usd"] >= paid[stage]["cost_usd"]
     assert resumed[stage]["runs"] == 2
+
+
+# ---------------------------------------------------------------------------
+# The fixed point (issue #830, coordinator's correction 2026-08-29). Counted
+# on the live variant's own extraction ledger: 8 of 9 categories are cut into
+# 2-9 slices and hold 98.6% of all 2,036 raw positions. One round therefore
+# reunites only inside a 55-argument window -- and since this slice also stops
+# the embedding merge folding inside a category, two namings that land in
+# different slices of one category would be reunited by NOTHING. So
+# consolidation iterates per category until the category fits one call.
+# ---------------------------------------------------------------------------
+
+
+class _FoldsEveryFiveClient(StubLLMClient):
+    """Folds each run of five handles it is shown into one entry, so a slice
+    of 55 comes back as 11 and a category shrinks round over round."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.shown: list[int] = []
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        self.shown.append(len(handles))
+        return json.dumps(
+            {
+                "arguments": [
+                    {
+                        "argument": f"Folded {handles[offset]}.",
+                        "handles": handles[offset : offset + 5],
+                    }
+                    for offset in range(0, len(handles), 5)
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def _two_groups_of(count: int) -> list[dict]:
+    """One category over two groups, `count` raw positions each."""
+    return [
+        _extraction_read(
+            f"{CAT_A}::{mechanism}",
+            [
+                _raw(f"{mechanism} argument {i}.", [f"{ALPHA}_{i:03d}_body_00{group}"])
+                for i in range(count)
+            ],
+        )
+        for group, mechanism in enumerate((MECH_1, MECH_2))
+    ]
+
+
+def test_a_category_too_big_for_one_call_is_consolidated_to_a_fixed_point(
+    tmp_path: Path,
+) -> None:
+    """The whole point of the pass: by the time it stops, one call has read
+    everything the category has left. One round over slices leaves namings
+    in different slices reunited by nothing at all, which is the failure
+    mode moved one level up rather than closed."""
+    reads = _two_groups_of(EXTRACT_SLICE)
+    client = _FoldsEveryFiveClient()
+
+    result = run_consolidation(
+        reads,
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    # Round 1 reads the category in two slices of 55; round 2 reads all 22
+    # of their outputs in ONE call.
+    assert client.shown == [EXTRACT_SLICE, EXTRACT_SLICE, 22]
+    assert sorted(record["round"] for record in result.records) == [1, 1, 2]
+
+    outcome = result.outcomes[0]
+    assert outcome.category == CAT_A
+    assert outcome.rounds == 2
+    assert outcome.stopped == STOPPED_CONVERGED
+    assert outcome.final_positions == len(result.positions) == 5
+
+    # `consolidated_from` counts RAW positions folded in, accumulated across
+    # rounds -- not entries the last round happened to fold.
+    assert sum(p["consolidated_from"] for p in result.positions) == 2 * EXTRACT_SLICE
+    assert max(p["consolidated_from"] for p in result.positions) == 25
+
+
+class _FoldsNothingClient(StubLLMClient):
+    """Returns every handle as its own entry: the model folded nothing, so
+    another round buys nothing."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        return json.dumps(
+            {
+                "arguments": [
+                    {"argument": f"Standing {handle}.", "handles": [handle]}
+                    for handle in _argument_handles(prompt)
+                ]
+            }
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_round_that_folds_nothing_stops_the_category_rather_than_looping(
+    tmp_path: Path,
+) -> None:
+    """A round returning as many positions as it was given has told us the
+    model will not fold this set; paying for another pass over it is money
+    for nothing. The category is still counted, and its stopping reason
+    named, because it never reunited its whole set."""
+    reads = _two_groups_of(EXTRACT_SLICE)
+    client = _FoldsNothingClient()
+
+    result = run_consolidation(
+        reads,
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert client.call_count == 2
+    outcome = result.outcomes[0]
+    assert outcome.rounds == 1
+    assert outcome.stopped == STOPPED_NO_PROGRESS
+    assert len(result.positions) == 2 * EXTRACT_SLICE
+
+
+class _FoldsOnePairClient(StubLLMClient):
+    """Folds exactly the first two handles of every slice and leaves the
+    rest standing -- progress every round, far too slowly to reach a single
+    slice. The pathological case the round cap exists for."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        entries = [{"argument": "Folded pair.", "handles": handles[:2]}]
+        entries += [
+            {"argument": f"Standing {handle}.", "handles": [handle]} for handle in handles[2:]
+        ]
+        return json.dumps({"arguments": entries})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_category_that_never_converges_stops_at_the_round_cap(tmp_path: Path) -> None:
+    """The loop already terminates -- a round that does not shrink the set
+    stops it -- so the cap is a COST guard, not a correctness one, and it is
+    derived rather than picked: a category gets as many rounds as it needed
+    slices to be read once. Round 1's call count is the whole envelope this
+    can double."""
+    reads = _two_groups_of(EXTRACT_SLICE)
+    client = _FoldsOnePairClient()
+
+    result = run_consolidation(
+        reads,
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    outcome = result.outcomes[0]
+    assert outcome.stopped == STOPPED_ROUND_CAP
+    # Round 1 needed two slices, so the category gets two rounds.
+    assert outcome.rounds == 2
+    assert len(result.positions) > EXTRACT_SLICE
+
+
+def test_the_rounds_resume_from_the_ledger_without_a_single_call(tmp_path: Path) -> None:
+    """Every round's slice is keyed by its own argument content, so a re-run
+    replays the whole chain off disk -- a later round's input is the earlier
+    round's recorded output, not something only a live client could
+    produce."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _two_groups_of(EXTRACT_SLICE)
+    first = run_consolidation(
+        reads, client=_FoldsEveryFiveClient(), reads_path=ledger, log=lambda _m: None
+    )
+
+    resumed = run_consolidation(
+        reads, client=_RefusingClient(), reads_path=ledger, log=lambda _m: None
+    )
+
+    assert [p["argument"] for p in resumed.positions] == [p["argument"] for p in first.positions]
+    assert resumed.outcomes[0].rounds == 2
+    assert resumed.outcomes[0].stopped == STOPPED_CONVERGED
+
+
+def test_the_manifest_reports_the_rounds_and_how_each_category_stopped(
+    spanning_corpus: dict,
+) -> None:
+    """A category that never reunites its whole set must stay visible; it
+    just must not be the normal case."""
+    manifest = _run(spanning_corpus, client=_FoldsFirstTwoClient())
+
+    counts = manifest["consolidation"]["counts"]
+    assert counts["rounds"] == 1
+    assert counts["categories_converged"] == 1
+    assert counts["categories_stopped_no_progress"] == 0
+    assert counts["categories_stopped_at_round_cap"] == 0
+    # One round, so nothing needed slicing.
+    assert counts["categories_sliced"] == 0

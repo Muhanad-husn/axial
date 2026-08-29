@@ -35,7 +35,9 @@ A category is read one `claim x mechanism` cell at a time, so an argument
 running through several cells is named once per cell, and without this stage
 the only thing reuniting those namings is step 4's wording-similarity merge
 -- which would make wording MORE load-bearing than it was before the
-re-forming. That stage also restricts step 4 to folding across categories
+re-forming. It iterates per category until one call reads everything that
+category has left, because a single round over slices reunites only inside
+one slice. That stage also restricts step 4 to folding across categories
 only, for the same reason: inside a category, the consolidation pass has
 already judged which arguments are the same one.
 
@@ -1588,10 +1590,10 @@ def run_map_build(
 
     **Issue #830: a category-grouped build consolidates between extraction
     and merge.** `axial.argmap.consolidate.run_consolidation` reads each
-    category's own per-group arguments and says what recurs among them, on
-    its own resume ledger (`consolidation_reads.jsonl`) and under its own
-    pass name; the merge below is then restricted to folding across
-    categories. The manifest reports raw, consolidated and merged positions
+    category's own per-group arguments and says what recurs among them,
+    ITERATING until one call reads everything the category has left, on its
+    own resume ledger (`consolidation_reads.jsonl`) and under its own pass
+    name; the merge below is then restricted to folding across categories. The manifest reports raw, consolidated and merged positions
     as three counts, and the two stages' folds separately (`consolidation`
     and `embedding_merge`). Nothing here runs under `GROUPING_BAG`."""
     started = time.monotonic()
@@ -1795,6 +1797,9 @@ def run_map_build(
         from axial.argmap.consolidate import (
             PASS_NAME as CONSOLIDATE_PASS_NAME,
             POSITION_CONSOLIDATE_REASONING,
+            STOPPED_CONVERGED,
+            STOPPED_NO_PROGRESS,
+            STOPPED_ROUND_CAP,
             consolidation_reads_path,
             run_consolidation,
             write_consolidation_ledger_aside,
@@ -1816,6 +1821,7 @@ def run_map_build(
         consolidation_folds = fold_stats(
             len(raw_positions), positions_to_merge, "consolidated_from"
         )
+        outcomes = consolidation.outcomes
         consolidation_usage = client.usage_for_pass(CONSOLIDATE_PASS_NAME)
         consolidation_model = client.model_for_pass(CONSOLIDATE_PASS_NAME)
         log(
@@ -1829,13 +1835,25 @@ def run_map_build(
         # counts, usage or cost.
         consolidation_manifest = {
             "counts": {
-                "categories": consolidation.plan.categories,
-                "categories_passed_through": consolidation.plan.categories_passed_through,
-                # A category too big for one call: its namings met only
-                # inside their own slice, never across the whole category
-                # (`axial.argmap.consolidate`'s own docstring). Reported
-                # rather than assumed away.
-                "categories_sliced": consolidation.plan.categories_sliced,
+                "categories": consolidation.categories,
+                "categories_passed_through": consolidation.categories_passed_through,
+                # A category too big for one call, so it took more than one
+                # round to reach a single-slice read.
+                "categories_sliced": sum(1 for o in outcomes if o.rounds > 1),
+                # How each category ENDED. Only `converged` means one call
+                # read everything it had left; the other two still hold
+                # namings nothing reunited, and are the number to watch.
+                "categories_converged": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_CONVERGED
+                ),
+                "categories_stopped_no_progress": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_NO_PROGRESS
+                ),
+                "categories_stopped_at_round_cap": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_ROUND_CAP
+                ),
+                "rounds": sum(o.rounds for o in outcomes),
+                "max_rounds_one_category": max((o.rounds for o in outcomes), default=0),
                 "reads": len(consolidation.records),
                 "failed_reads": len([r for r in consolidation.records if "error" in r]),
                 "dropped_handles": sum(
