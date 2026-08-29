@@ -219,6 +219,21 @@ slice 4 ships the unchanged global merge, which does fold within a category as
 well; the case for relaxing it there, and where it is reinstated, is stated
 under that slice.
 
+Both landed in slice 5 ([#830](https://github.com/Muhanad-husn/axial/issues/830)).
+Two details the design above did not fix, decided in building it. A
+consolidation call is capped at the same slice size extraction reads a group
+under — both listings are one sentence per line under a bare handle, so it is
+the same question about how much a single call can weigh, and reusing the
+constant keeps a second tuned number out of the pipeline. Where a category
+holds more arguments than that, its groups are read in rotation so every slice
+spans as many of them as it can, and the manifest counts the categories that
+needed more than one slice: namings that land in different slices of one
+category still meet nothing, and that residue is reported rather than assumed
+away. And the restricted merge is enforced per cluster rather than by refusing
+to cluster: a cluster's members are dealt into buckets that never repeat a
+category, so the cross-category fold the merge is kept for still happens and
+the consolidation pass's judgment inside a category is never overruled.
+
 This is a re-forming of the map, not a patch on it. Patching would leave nodes
 made on the wrong principle and merely merge some of them back together.
 

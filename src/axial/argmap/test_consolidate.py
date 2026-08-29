@@ -1,0 +1,603 @@
+"""The consolidation pass (issue #830, positions-not-names slice 05): a
+second model pass that reads one category's per-group namings and says what
+recurs among them -- the same judgment extraction makes, one level up.
+
+CLI-level, through `run_map_build`'s own injection seams (`client`,
+`encode`, `pin`, the directory overrides), because the acceptance criterion
+is about what `axial map build --grouping category` writes to
+`positions.jsonl` and `map.json`, not about a function's return value.
+
+No encoder is built and no network is touched: `_fake_encode` stands in for
+MiniLM and `_agglomerative_cluster` is patched to put every row in its own
+cluster, so the embedding merge folds nothing unless a test asks it to and
+the consolidation pass's own output reaches `positions.jsonl` unchanged.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from axial.argmap.build import (
+    EXTRACT_SLICE,
+    RELATE_PASS_NAME,
+    merge_positions,
+    run_map_build,
+)
+from axial.argmap.consolidate import (
+    PASS_NAME as CONSOLIDATE_PASS_NAME,
+    PROMPT,
+    build_consolidation_jobs,
+    run_consolidation,
+)
+from axial.llm import LLMError, StubLLMClient
+
+ALPHA = "alpha-2020-book"
+BETA = "beta-2021-book"
+
+CAT_A = "causal-argument-state-formation-or-power"
+CAT_B = "empirical-finding-without-causal-claim"
+# Deliberately in alphabetical order: `group_spread` rotates a category's
+# groups by sorted label, so MECH_1's naming is the first handle the
+# consolidation prompt offers and MECH_3's is the third.
+MECH_1 = "coercion-and-extraction"
+MECH_2 = "elite-competition-and-coalition-formation"
+MECH_3 = "war-and-state-formation"
+
+CLAIM_SCHEME_VERSION = "2026-08-29-claim-v1"
+MECHANISM_SCHEME_VERSION = "2026-08-29-mechanism-v1"
+
+
+def _chunk_id(source_id: str, index: int) -> str:
+    return f"{source_id}_0{index}0_body_001"
+
+
+def _write_answers(answers_dir: Path, chunk_ids: list[str]) -> None:
+    """One argument-bearing `data/answers/` record per chunk, grouped into
+    the per-source files `load_answer_records` walks."""
+    answers_dir.mkdir(parents=True, exist_ok=True)
+    by_source: dict[str, list[dict]] = {}
+    for index, chunk_id in enumerate(chunk_ids):
+        record = {
+            "source_id": chunk_id.rsplit("_", 3)[0],
+            "chunk_id": chunk_id,
+            "answers": {
+                "claim": f"Claim number {index}.",
+                "mechanism": "coercive taxation",
+                "comparison": "not-in-passage",
+                "concedes": "not-in-passage",
+                "assumes": "not-in-passage",
+                "position_of": "not-in-passage",
+                "ranges_over": "not-in-passage",
+            },
+        }
+        by_source.setdefault(record["source_id"], []).append(record)
+    for source_id, records in by_source.items():
+        with (answers_dir / f"{source_id}.jsonl").open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+
+
+def _write_column(
+    vocabulary_dir: Path, column: str, scheme_version: str, category_by_chunk: dict
+) -> None:
+    """A built vocabulary column: the manifest `run_map_build` reads
+    `scheme_version` off, plus one level-1 assignment per chunk."""
+    column_dir = vocabulary_dir / column
+    column_dir.mkdir(parents=True, exist_ok=True)
+    (column_dir / "manifest.json").write_text(
+        json.dumps({"column": column, "scheme_version": scheme_version, "max_level": 1}),
+        encoding="utf-8",
+    )
+    with (column_dir / "assignments.jsonl").open("w", encoding="utf-8") as handle:
+        for chunk_id, category_id in category_by_chunk.items():
+            handle.write(
+                json.dumps(
+                    {
+                        "chunk_id": chunk_id,
+                        "level": 1,
+                        "value": f"a sentence for {chunk_id}",
+                        "category_id": category_id,
+                        "refused": category_id is None,
+                    }
+                )
+                + "\n"
+            )
+
+
+def _fake_encode(texts):
+    return np.zeros((len(texts), 2))
+
+
+def _extraction_handles(prompt: str) -> list[str]:
+    return [line.split("]")[0][1:] for line in prompt.splitlines() if line.startswith("[p")]
+
+
+def _argument_handles(prompt: str) -> list[str]:
+    return [line.split("]")[0][1:] for line in prompt.splitlines() if line.startswith("[a")]
+
+
+class _FoldsFirstTwoClient(StubLLMClient):
+    """Names one argument per extraction group -- the claim it was shown
+    first, so every group's naming is distinguishable -- and, on a
+    consolidation call, folds the first two namings it is offered while
+    leaving every other one standing on its own. The standing ones are the
+    acceptance criterion's genuinely opposed accounts: a category's
+    arguments do not all collapse into one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts_by_pass: dict[str, list[str]] = {}
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        self.prompts_by_pass.setdefault(pass_name or "", []).append(prompt)
+        if pass_name == RELATE_PASS_NAME:
+            return json.dumps({"relations": []})
+        if pass_name == CONSOLIDATE_PASS_NAME:
+            handles = _argument_handles(prompt)
+            entries = [{"argument": "The consolidated argument.", "handles": handles[:2]}]
+            entries += [
+                {"argument": f"A standing argument ({handle}).", "handles": [handle]}
+                for handle in handles[2:]
+            ]
+            return json.dumps({"arguments": entries})
+        shown = _extraction_handles(prompt)
+        first_claim = next(line for line in prompt.splitlines() if line.startswith("[p"))
+        return json.dumps(
+            {"arguments": [{"argument": first_claim.split("] ", 1)[1], "handles": shown}]}
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+class _RefusingClient(StubLLMClient):
+    """Raises on any call at all -- the resume assertion."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        raise AssertionError(f"a resumed build re-asked the model ({pass_name})")
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+@pytest.fixture
+def spanning_corpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Eight passages over two books, forming four groups:
+
+      CAT_A::MECH_1   alpha 1, beta 1
+      CAT_A::MECH_2   alpha 2, beta 2
+      CAT_A::MECH_3   alpha 3, beta 3
+      CAT_B::MECH_1   alpha 4, beta 4
+
+    So `CAT_A`'s reads span three groups -- the acceptance criterion's "a
+    variant build whose reads span multiple groups inside one category" --
+    and `CAT_B`'s span one, the pass-through case.
+
+    `_agglomerative_cluster` is faked to one cluster per row so the
+    embedding merge folds nothing here (and no scikit-learn is needed): what
+    reaches `positions.jsonl` is the consolidation pass's own answer, not
+    the merge's."""
+    monkeypatch.setattr("axial.argmap.build.load_back_matter_sections", lambda trees_dir: {})
+    monkeypatch.setattr(
+        "axial.argmap.build._agglomerative_cluster",
+        lambda vectors, threshold: list(range(len(vectors))),
+    )
+    # The default build's relate stage clusters by COUNT, through a
+    # different function that would reach the real scikit-learn on these
+    # zero vectors. One neighbourhood, no split, one relate call.
+    monkeypatch.setattr(
+        "axial.argmap.build._agglomerative_cluster_by_count",
+        lambda vectors, n_clusters: [0] * len(vectors),
+    )
+    chunk_ids = [_chunk_id(source, index) for source in (ALPHA, BETA) for index in (1, 2, 3, 4)]
+    _write_answers(tmp_path / "answers", chunk_ids)
+    vocabulary_dir = tmp_path / "vocabulary"
+    claims = {chunk_id: CAT_A for chunk_id in chunk_ids}
+    mechanisms = {}
+    for source in (ALPHA, BETA):
+        mechanisms[_chunk_id(source, 1)] = MECH_1
+        mechanisms[_chunk_id(source, 2)] = MECH_2
+        mechanisms[_chunk_id(source, 3)] = MECH_3
+        mechanisms[_chunk_id(source, 4)] = MECH_1
+        claims[_chunk_id(source, 4)] = CAT_B
+    _write_column(vocabulary_dir, "claim", CLAIM_SCHEME_VERSION, claims)
+    _write_column(vocabulary_dir, "mechanism", MECHANISM_SCHEME_VERSION, mechanisms)
+    return {"root": tmp_path, "chunk_ids": chunk_ids, "vocabulary_dir": vocabulary_dir}
+
+
+def _run(corpus: dict, *, client, grouping: str = "category", log=None, **kwargs):
+    root = corpus["root"]
+    return run_map_build(
+        answers_dir=root / "answers",
+        trees_dir=root / "trees",
+        map_dir=root / "map",
+        vocabulary_dir=corpus["vocabulary_dir"],
+        client=client,
+        encode=_fake_encode,
+        pin="testpin",
+        guard=False,
+        grouping=grouping,
+        log=log if log is not None else (lambda _message: None),
+        **kwargs,
+    )
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def test_the_consolidation_stage_reunites_one_categorys_arguments_and_reports_its_own_counts(
+    spanning_corpus: dict,
+) -> None:
+    """The acceptance criterion of issue #830, end to end."""
+    root = spanning_corpus["root"]
+    variant_dir = root / "map" / "testpin-category"
+    client = _FoldsFirstTwoClient()
+
+    manifest = _run(spanning_corpus, client=client)
+
+    positions = _read_jsonl(variant_dir / "positions.jsonl")
+
+    # One position was named from several groups of the same category: the
+    # union of their chunk_ids, and a count of how many namings folded in.
+    folded = [position for position in positions if position["consolidated_from"] > 1]
+    assert len(folded) == 1
+    assert folded[0]["consolidated_from"] == 2
+    assert set(folded[0]["chunk_ids"]) == {
+        _chunk_id(source, index) for source in (ALPHA, BETA) for index in (1, 2)
+    }
+    assert folded[0]["sources"] == [ALPHA, BETA]
+
+    # Genuinely opposed arguments inside one category survive as separate
+    # positions: CAT_A's third naming stood on its own, and so did CAT_B's.
+    assert len(positions) == 3
+
+    # Raw, consolidated and merged are three separate counts.
+    counts = manifest["counts"]
+    assert counts["raw_positions"] == 4
+    assert counts["consolidated_positions"] == 3
+    assert counts["merged_positions"] == 3
+
+    # The consolidation pass's own folds, reported the way the default
+    # build's merge is, and separately from the embedding merge's.
+    consolidation = manifest["consolidation"]["counts"]
+    assert consolidation["folds"] == 1
+    assert consolidation["positions_with_more_than_one_naming"] == 1
+    assert consolidation["folds_per_final_position"] == pytest.approx(1 / 3)
+    assert manifest["embedding_merge"]["folds"] == 0
+
+    # CAT_B came from one group, so it was never asked about at all.
+    assert len(client.prompts_by_pass[CONSOLIDATE_PASS_NAME]) == 1
+    assert consolidation["categories_passed_through"] == 1
+
+    # Its own resume ledger: a kill mid-pass never re-asks a completed
+    # category, and a complete ledger reaches the model for nothing.
+    ledger = _read_jsonl(variant_dir / "consolidation_reads.jsonl")
+    assert [record["category"] for record in ledger] == [CAT_A]
+    resumed = _run(spanning_corpus, client=_RefusingClient())
+    assert resumed["counts"]["consolidated_positions"] == 3
+
+
+# ---------------------------------------------------------------------------
+# The pass's own mechanics, at the seams `run_consolidation` and
+# `build_consolidation_jobs` expose, with no build around them.
+# ---------------------------------------------------------------------------
+
+
+def _raw(argument: str, chunk_ids: list[str]) -> dict:
+    """One raw position as `extract_positions_for_slice` writes it."""
+    sources = sorted({chunk_id.rsplit("_", 3)[0] for chunk_id in chunk_ids})
+    return {
+        "argument": argument,
+        "chunk_ids": chunk_ids,
+        "sources": sources,
+        "authors": sorted({source.split("-")[0] for source in sources}),
+        "size": len(chunk_ids),
+    }
+
+
+def _extraction_read(group_label: str, positions: list[dict]) -> dict:
+    return {
+        "bag": group_label,
+        "slice": 0,
+        "shown": len(positions),
+        "positions": positions,
+        "unassigned": 0,
+    }
+
+
+def test_a_category_that_spans_one_group_is_passed_through_without_a_model_call() -> None:
+    """There is no second naming of anything to reunite, so the call would
+    buy nothing. The passed-through positions still carry
+    `consolidated_from: 1`, so every position in the map is countable the
+    same way."""
+    plan = build_consolidation_jobs(
+        [
+            _extraction_read(
+                f"{CAT_B}::{MECH_1}",
+                [
+                    _raw("One naming.", [_chunk_id(ALPHA, 1)]),
+                    _raw("Another.", [_chunk_id(BETA, 1)]),
+                ],
+            )
+        ]
+    )
+
+    assert plan.jobs == ()
+    assert plan.categories_passed_through == 1
+    assert [position["consolidated_from"] for position in plan.passed_through] == [1, 1]
+    assert {position["category"] for position in plan.passed_through} == {CAT_B}
+
+
+def test_a_category_too_big_for_one_call_is_group_spread_into_slices_and_counted() -> None:
+    """The slice cap is `EXTRACT_SLICE`, reused rather than tuned again --
+    both listings are one sentence per line under a bare handle. Ordering
+    rotates the category's groups, so a slice sees as many of them as it
+    can; a category that still needs two slices is counted, because namings
+    in different slices of one category never met."""
+    per_group = EXTRACT_SLICE - 5
+    reads = [
+        _extraction_read(
+            f"{CAT_A}::{mechanism}",
+            [
+                _raw(f"{mechanism} argument {i}.", [f"{ALPHA}_{i:03d}_body_001"])
+                for i in range(per_group)
+            ],
+        )
+        for mechanism in (MECH_1, MECH_2)
+    ]
+
+    plan = build_consolidation_jobs(reads)
+
+    assert len(plan.jobs) == 2
+    assert plan.categories_sliced == 1
+    assert len(plan.jobs[0].members) == EXTRACT_SLICE
+    first_slice_groups = {member["group"] for member in plan.jobs[0].members}
+    assert first_slice_groups == {f"{CAT_A}::{MECH_1}", f"{CAT_A}::{MECH_2}"}
+
+
+class _InventingClient(StubLLMClient):
+    """Names one real handle and one the prompt never offered."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _argument_handles(prompt)
+        return json.dumps(
+            {"arguments": [{"argument": "A folded argument.", "handles": [handles[0], "a99"]}]}
+        )
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def _two_group_reads() -> list[dict]:
+    return [
+        _extraction_read(f"{CAT_A}::{MECH_1}", [_raw("The first naming.", [_chunk_id(ALPHA, 1)])]),
+        _extraction_read(f"{CAT_A}::{MECH_2}", [_raw("The second naming.", [_chunk_id(BETA, 1)])]),
+    ]
+
+
+def test_an_invented_handle_is_dropped_and_counted_never_repaired(tmp_path: Path) -> None:
+    """Extraction's own contract, mirrored: the model naming something it
+    was not offered loses that handle and nothing else."""
+    result = run_consolidation(
+        _two_group_reads(),
+        client=_InventingClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert [record["dropped_handles"] for record in result.records] == [1]
+    folded = next(p for p in result.positions if p["argument"] == "A folded argument.")
+    assert folded["consolidated_from"] == 1
+    assert folded["chunk_ids"] == [_chunk_id(ALPHA, 1)]
+    # The naming the model never mentioned survives on its own rather than
+    # vanishing -- its extraction call is already paid for.
+    assert sorted(p["argument"] for p in result.positions) == [
+        "A folded argument.",
+        "The second naming.",
+    ]
+
+
+class _FailingClient(StubLLMClient):
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        raise LLMError("the model call failed")
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_a_failed_consolidation_call_is_recorded_and_its_slice_survives(tmp_path: Path) -> None:
+    """The fault-isolation contract: the failure is recorded on the read,
+    never raised, and the slice's raw positions pass through unconsolidated
+    rather than falling out of the map."""
+    result = run_consolidation(
+        _two_group_reads(),
+        client=_FailingClient(),
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    assert [("error" in record) for record in result.records] == [True]
+    assert sorted(p["argument"] for p in result.positions) == [
+        "The first naming.",
+        "The second naming.",
+    ]
+    assert {p["consolidated_from"] for p in result.positions} == {1}
+
+
+class _RecordingClient(StubLLMClient):
+    """Folds nothing and records every prompt it was shown."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        self.prompts.append(prompt)
+        return json.dumps({"arguments": []})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_the_listing_is_blind_and_the_prompt_forbids_fusing_opposed_accounts(
+    tmp_path: Path,
+) -> None:
+    """Blind is the same rule extraction's `render_claims_blind` applies:
+    the arguments carry authors and sources in the record, and none of it
+    reaches the model. The no-fusing rule is the one the whole pass exists
+    to keep -- reuniting namings must not become fusing accounts."""
+    client = _RecordingClient()
+    run_consolidation(
+        _two_group_reads(),
+        client=client,
+        reads_path=tmp_path / "consolidation_reads.jsonl",
+        log=lambda _message: None,
+    )
+
+    listing = client.prompts[0]
+    assert "[a1] The first naming." in listing
+    assert "[a2] The second naming." in listing
+    for leak in (ALPHA, BETA, "alpha", "beta", "2020", "2021"):
+        assert leak not in listing
+    assert "never fuse contending positions into one sentence" in PROMPT
+    assert "must survive as separate entries" in PROMPT
+
+
+def test_the_ledger_is_keyed_by_category_and_content_so_a_changed_argument_is_re_asked(
+    tmp_path: Path,
+) -> None:
+    """A completed category costs no call on restart. But this pass's input
+    is the extraction pass's OUTPUT, so the key covers the arguments
+    themselves: an extraction read that came back different is a different
+    question, and a ledger keyed by category alone would answer it from the
+    old record."""
+    ledger = tmp_path / "consolidation_reads.jsonl"
+    reads = _two_group_reads()
+    first = _RecordingClient()
+    run_consolidation(reads, client=first, reads_path=ledger, log=lambda _m: None)
+    assert first.call_count == 1
+
+    resumed = _RecordingClient()
+    run_consolidation(reads, client=resumed, reads_path=ledger, log=lambda _m: None)
+    assert resumed.call_count == 0
+
+    reads[1]["positions"][0]["argument"] = "The second naming, re-asked."
+    after_change = _RecordingClient()
+    result = run_consolidation(reads, client=after_change, reads_path=ledger, log=lambda _m: None)
+    assert after_change.call_count == 1
+    # And the stale record is not folded in alongside the new one.
+    assert len(result.records) == 1
+
+
+def _categorised(argument: str, category: str) -> dict:
+    return {
+        "argument": argument,
+        "chunk_ids": [f"{ALPHA}_{argument}_body_001"],
+        "sources": [ALPHA],
+        "authors": ["alpha"],
+        "size": 1,
+        "category": category,
+        "consolidated_from": 1,
+    }
+
+
+def _one_cluster(vectors):
+    return [0] * len(vectors)
+
+
+def test_the_embedding_merge_folds_across_categories_and_never_inside_one() -> None:
+    """The restriction that arrives with this pass: consolidation has
+    already judged a category's arguments, and wording similarity is not
+    entitled to overrule it. Across categories the merge keeps its original
+    job."""
+    positions = [
+        _categorised("a1", CAT_A),
+        _categorised("a2", CAT_A),
+        _categorised("b1", CAT_B),
+    ]
+
+    restricted = merge_positions(positions, _fake_encode, _one_cluster, cross_category_only=True)
+
+    assert len(restricted) == 2
+    for record in restricted:
+        assert len(record["categories"]) == len(set(record["categories"]))
+    # The cross-category fold still happened -- the restriction removed the
+    # same-category one only.
+    assert sorted(record["named_times"] for record in restricted) == [1, 2]
+
+    # And the default build, which has no consolidation pass and no
+    # categories, is untouched: one cluster is still one position.
+    unrestricted = merge_positions(positions, _fake_encode, _one_cluster)
+    assert len(unrestricted) == 1
+
+
+# ---------------------------------------------------------------------------
+# Part B (issue #830, folded in 2026-08-29): a resume must not erase the
+# build's recorded cost. Measured live -- `9b796b3a6312b329-category` was
+# rewritten with `cost_usd: null` / `wall_time_sec: 34.37` over a paid run of
+# $0.7052 / 2,466s, thirty minutes later, by a resume that made no call.
+# ---------------------------------------------------------------------------
+
+
+class _PayingClient(_FoldsFirstTwoClient):
+    """`_FoldsFirstTwoClient` that reports token usage under a model the
+    price table knows, so the manifest carries a real `cost_usd` for a later
+    resume to be measured against."""
+
+    MODEL = "z-ai/glm-5.2"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.usage: dict[str, dict[str, int]] = {}
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        answer = super().complete(prompt, pass_name)
+        totals = self.usage.setdefault(
+            pass_name or "", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        )
+        totals["prompt_tokens"] += 1_000
+        totals["completion_tokens"] += 500
+        totals["total_tokens"] += 1_500
+        return answer
+
+    def usage_for_pass(self, pass_name: str | None = None) -> dict[str, int] | None:
+        return self.usage.get(pass_name or "")
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return self.MODEL
+
+
+@pytest.mark.parametrize("grouping", ["bag", "category"])
+def test_a_resumed_build_never_erases_the_paid_runs_cost(
+    spanning_corpus: dict, grouping: str
+) -> None:
+    """`usage_for_pass` reports what THIS process spent, and a resume spends
+    nothing -- so the paid run's figures were overwritten with `null`. They
+    accumulate under the pin instead. Both grouping modes: the defect was
+    found on the variant, but it is the same code path in both."""
+    paid = _run(spanning_corpus, client=_PayingClient(), grouping=grouping)
+    assert paid["cost_usd"] > 0
+    assert paid["runs"] == 1
+
+    resumed = _run(spanning_corpus, client=_RefusingClient(), grouping=grouping)
+
+    assert resumed["cost_usd"] >= paid["cost_usd"]
+    assert resumed["wall_time_sec"] >= paid["wall_time_sec"]
+    assert resumed["usage"]["total_tokens"] == paid["usage"]["total_tokens"]
+    assert resumed["runs"] == 2
+
+    stage = "consolidation" if grouping == "category" else "relations"
+    assert paid[stage]["cost_usd"] > 0
+    assert resumed[stage]["cost_usd"] >= paid[stage]["cost_usd"]
+    assert resumed[stage]["runs"] == 2
