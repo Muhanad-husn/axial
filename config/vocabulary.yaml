@@ -250,3 +250,85 @@ columns:
           Answers that sort cases, actors, or phenomena into categories or
           ideal types, or that contrast cases to highlight differences in
           kind.
+
+  position:
+    # Proposed by the examine pass over a random 400-value sample of the
+    # column, 2026-08-29 (data/logs/2026-08-29-position-vocabulary/
+    # console-examine.log), and built for issue #838: this axis is the one
+    # HELD OUT of the grouping in #831, so purity measured on it -- not on
+    # the axis the grouping was built from -- is what decides whether that
+    # rebuild worked. 9 categories, 93.0% assignment on a disjoint held-out
+    # 400, largest category 16.2% of that sample, all 9 categories reaching
+    # 5+ members and spanning 2+ sources, two-model agreement 70.0% overall
+    # and 73.8% where the first model assigned a category (n=84).
+    #
+    # Granularity is unstable on this column: the same prompt and model
+    # returned 5 categories on one run and 15 on another, 2026-08-27
+    # (data/logs/2026-08-27-vocabulary-categorise-v2/summary.md, line 78),
+    # and 9 on this run. The nine below are one draw from that instability,
+    # not a settled taxonomy -- read counts built against this scheme with
+    # that in mind, and treat a later edit as a version bump that re-asks
+    # the column under `--force`, same as any other scheme change.
+    #
+    # Committed verbatim from the examine pass's proposal, names lowered to
+    # match this file's convention; the gloss wording, including its em
+    # dashes, is the model's.
+    version: "2026-08-29-position-v1"
+    categories:
+      - id: causal-claims-about-war-and-violence
+        name: "causal claims about war and violence"
+        gloss: >-
+          Answers that assert causes, drivers, or explanations for war,
+          rebellion, civil violence, or military conflict—whether through
+          structural factors, leadership, social networks, or information.
+      - id: characterizations-of-nationalism-and-nationhood
+        name: "characterizations of nationalism and nationhood"
+        gloss: >-
+          Answers that describe the nature, origins, or functions of
+          nationalism, national identity, or nation-states as constructed,
+          contingent, or ideological phenomena.
+      - id: descriptions-of-state-formation-and-state-power
+        name: "descriptions of state formation and state power"
+        gloss: >-
+          Answers that account for how states arise, develop, or exercise
+          power—including coercion, bureaucracy, legitimacy, and relations
+          with society—without focusing on a single country.
+      - id: accounts-of-social-and-economic-transformation
+        name: "accounts of social and economic transformation"
+        gloss: >-
+          Answers that explain changes in class structure, economic
+          systems, welfare, or development—such as industrialization,
+          liberalization, or agrarian change—as processes with specific
+          drivers.
+      - id: analyses-of-political-regimes-and-authoritarianism
+        name: "analyses of political regimes and authoritarianism"
+        gloss: >-
+          Answers that characterize regime types, authoritarian strategies,
+          or political control—including co-optation, repression, and the
+          role of parties or militaries—without reducing to single-country
+          narratives.
+      - id: evaluations-of-historiographic-or-theoretical-positions
+        name: "evaluations of historiographic or theoretical positions"
+        gloss: >-
+          Answers that assess, critique, or refine a specific scholar's
+          argument, a theoretical model, or a methodological
+          approach—rather than stating an empirical claim.
+      - id: claims-about-identity-construction-and-ethnicity
+        name: "claims about identity construction and ethnicity"
+        gloss: >-
+          Answers that argue identities (ethnic, sectarian,
+          minority/majority) are politically constructed,
+          context-dependent, or mobilized rather than fixed or primordial.
+      - id: descriptions-of-international-and-legal-order
+        name: "descriptions of international and legal order"
+        gloss: >-
+          Answers that characterize sovereignty, recognition, international
+          norms, intervention, or the structure of the international
+          system—often as historically contingent or contested.
+      - id: non-substantive-or-bibliographic-statements
+        name: "non-substantive or bibliographic statements"
+        gloss: >-
+          Answers that do not assert a position but only provide
+          acknowledgments, references, or notes about sources,
+          methodology, or institutions—often explicitly labeled as not in
+          the passage.
