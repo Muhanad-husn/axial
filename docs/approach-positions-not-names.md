@@ -439,12 +439,27 @@ Done when: a complete `positions.jsonl` exists under a variant directory,
 with the current build untouched beside it.
 
 **Slice 5 — the structural comparison decides.** No judged gate, structure
-only, both maps side by side: median and distribution of position size,
-cross-book position rate, how many positions the consolidation pass reunited,
-share of single-passage positions, and where misassigned passages landed
-(sampled by hand). Done when: a run log states the comparison and a verdict —
-denser and more cross-book, or not. This is the founder's go/no-go on
-everything after it.
+only, both maps side by side. Five metrics decide, and the bar for each is
+stated in full in [#831](https://github.com/Muhanad-husn/axial/issues/831):
+**D1** book-spread ratio, size-matched against the build's own permutation
+null; **D2** purity on the held-out `position` axis, size-matched, above the
+0.349 floor that grouping on `claim` produces by itself; **D3** member
+coherence as a band-by-band floor; **D4** passages reaching no position,
+counted as distinct chunk ids and not allowed to rise above 6.9%; **D5** a
+blind paired hand-sample, 12 positions per build, judged before the labels are
+revealed, as a veto. A forced replicate of the variant supplies the error bar,
+and every margin is quoted against it; D2 additionally clears an
+assignment-instability floor, measured by recomputing D2's baseline over a
+second model's draw of the `position` column before the variant is built.
+
+Position count, position size, single-passage share and the raw cross-book
+rate are **context lines, never the verdict**: the first three move in the
+"good" direction by arithmetic alone when 113–207 extraction calls replace
+679, and the cross-book null is 96% at size two and 100% above it, so a binary
+cross-book rate is saturated before the comparison starts. "Denser and more
+cross-book" is not the test. Done when: a run log states the comparison
+against D1–D5, names which failure conditions were and were not met, and
+carries the founder's go/no-go on everything after it.
 
 **Slice 6 — profiles and profile-ranked relations.** Positions inherit their
 passages' category values; relation neighbourhoods are proposed from profile

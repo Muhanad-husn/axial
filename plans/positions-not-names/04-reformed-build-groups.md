@@ -72,6 +72,12 @@ depends-on: 03-inner-split-chosen
 - [ ] Resume: a seeded ledger line for a (group, slice) key is skipped.
 - [ ] Author-spread slicing and the blind render apply to category groups
       exactly as to bags.
+- [ ] **The `placed` log line** (folded in 2026-08-29). `build.py:1395` sums
+      position sizes over *raw* positions — member slots, 6,070 against 6,010
+      selected on the live build. Log distinct placed chunk ids alongside the
+      slot sum, naming which is which. Over a fixture where one chunk enters
+      two raw positions, the distinct figure is below the slot sum and never
+      exceeds selected.
 
 ## Operational steps inside the slice
 

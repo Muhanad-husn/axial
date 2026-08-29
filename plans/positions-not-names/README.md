@@ -19,12 +19,13 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 
 | # | Slice | Goal (one line) | Status | PR |
 |---|-------|-----------------|--------|----|
-| 01 [#826](https://github.com/Muhanad-husn/axial/issues/826) | [claim-vocabulary-committed](01-claim-vocabulary-committed.md) | The claim column has a founder-committed category scheme and the corpus is filed against it | ☑ PR open | [#834](https://github.com/Muhanad-husn/axial/pull/834) |
-| 02 [#827](https://github.com/Muhanad-husn/axial/issues/827) | [bag-purity-crosstab](02-bag-purity-crosstab.md) | `axial map purity` measures how badly wording bags shred any categorised axis — the go/stop check on the diagnosis | ☑ PR open | [#836](https://github.com/Muhanad-husn/axial/pull/836) |
+| 01 [#826](https://github.com/Muhanad-husn/axial/issues/826) | [claim-vocabulary-committed](01-claim-vocabulary-committed.md) | The claim column has a founder-committed category scheme and the corpus is filed against it | ☑ merged | [#834](https://github.com/Muhanad-husn/axial/pull/834) |
+| 02 [#827](https://github.com/Muhanad-husn/axial/issues/827) | [bag-purity-crosstab](02-bag-purity-crosstab.md) | `axial map purity` measures how badly wording bags shred any categorised axis — the go/stop check on the diagnosis | ☑ merged | [#836](https://github.com/Muhanad-husn/axial/pull/836) |
+| 02b [#838](https://github.com/Muhanad-husn/axial/issues/838) | *(no plan file — filed from #831's bar)* | The held-out `position` column is built, before slice 03, so D2 has a baseline chosen without seeing the result | ☑ merged | [#839](https://github.com/Muhanad-husn/axial/pull/839) |
 | 03 [#828](https://github.com/Muhanad-husn/axial/issues/828) | [inner-split-chosen](03-inner-split-chosen.md) | The two candidate inner splits are computed offline over real data and the founder picks one | ☐ todo | — |
 | 04 [#829](https://github.com/Muhanad-husn/axial/issues/829) | [reformed-build-groups](04-reformed-build-groups.md) | `axial map build --grouping category` runs extraction over category groups into a variant artifact, current build untouched | ☐ todo | — |
 | 05 [#830](https://github.com/Muhanad-husn/axial/issues/830) | [category-consolidation](05-category-consolidation.md) | A second extraction pass per category reunites per-group namings; embedding merge demoted to cross-category folding | ☐ todo | — |
-| 06 [#831](https://github.com/Muhanad-husn/axial/issues/831) | [structural-comparison](06-structural-comparison.md) | `axial map compare` puts the two maps side by side, structurally; the founder's go/no-go on everything after | ☐ todo | — |
+| 06 [#831](https://github.com/Muhanad-husn/axial/issues/831) | [structural-comparison](06-structural-comparison.md) | `axial map compare` decides on D1–D5 — book-spread ratio, held-out `position` purity, coherence floor, unplaced share, blind paired hand-sample — against a forced replicate's error bar; the founder's go/no-go on everything after | ☐ todo | — |
 | 07 | [profiles-and-ranked-relations](07-profiles-and-ranked-relations.md) | Positions carry a category profile and relation neighbourhoods are proposed from profile rank | ☐ todo | — |
 | 08 | [retrieval-address-arm](08-retrieval-address-arm.md) | A question enters through the axis intersection — question → region → positions → relations → passages — as a sweep arm | ☐ todo | — |
 | 09 | [demolition](09-demolition.md) | Name pages, gather, the name-walking loop, the residue pass, the category join (#825, absorbed) and the dead eval code are deleted, each deletion citing the slice that made it safe | ☐ todo | — |
@@ -50,6 +51,19 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
   in `issues/` but deliberately NOT filed until slice 06's go/no-go verdict.
 - **#825 folds into slice 09** (founder ruling, 2026-08-28): the category
   join's deletion rides the demolition slice; the slice-09 PR closes #825.
+- **Slice 06's bar is settled** (founder ruling, 2026-08-29, #831): five
+  deciding metrics D1–D5, a forced variant replicate (~$0.42) supplying the
+  error bar, and the held-out `position` column built first (~$0.075, shipped
+  as slice 02b). The bar is stated in full in #831; the plan file and approach
+  §13 both point at it. Position count, size, single-passage share and the raw
+  cross-book rate are **context lines, never the verdict** — they move by
+  arithmetic when 113–207 extraction calls replace 679, and the cross-book
+  null is 96% at size two. The `position` assignment's two-model agreement
+  (73.8%) is a rate while D2 is in purity points, so it cannot bind as it
+  stands. **Ruled 2026-08-29:** recompute D2 over the second model's draw
+  (~$0.075), before slice 04, and take the gap between the two D2 baselines as
+  D2's assignment-instability floor — the rate converted into purity points.
+  D2 must clear it as well as the replicate gap.
 
 - **Hard gates between slices.** Slice 02 can kill the feature (claim-axis
   purity high → diagnosis wrong). Slice 03 ends in a founder choice. Slice 06
