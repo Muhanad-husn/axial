@@ -28,6 +28,7 @@ from axial.argmap.purity import (
     format_purity_report,
     parse_named_pair,
 )
+from axial.argmap.grouping import compute_grouping_report, format_grouping_report
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
@@ -919,6 +920,40 @@ def build_parser() -> argparse.ArgumentParser:
             "pair from a different column's own scheme -- the default is "
             "`claim`-specific data, not a rule this command enforces"
         ),
+    )
+
+    map_grouping_report_parser = map_subparsers.add_parser(
+        "grouping-report",
+        help=(
+            "issue #828: both candidate inner splits from docs/approach-"
+            "positions-not-names.md §6, computed offline with zero model "
+            "calls -- claim x mechanism intersection, and per-claim-category "
+            "embedding sub-clustering -- printed side by side (group count, "
+            "group-size min/median/max, passages left ungrouped, projected "
+            "extraction slices), so the founder chooses one on numbers "
+            "instead of taste"
+        ),
+    )
+    map_grouping_report_parser.add_argument(
+        "--pin",
+        default=None,
+        help="the map pin to read (default: the newest completed build under --map-dir)",
+    )
+    map_grouping_report_parser.add_argument(
+        "--map-dir",
+        default=None,
+        help="override data/map/ (default: paths.map_dir from config/pipeline.yaml)",
+    )
+    map_grouping_report_parser.add_argument(
+        "--vocabulary-dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path)",
+    )
+    map_grouping_report_parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="the vocabulary level to join on, for both claim and mechanism (default: each column's own max_level)",
     )
 
     eval_parser = subparsers.add_parser(
@@ -3737,6 +3772,31 @@ def _map_purity(
     return 0
 
 
+def _map_grouping_report(
+    pin: str | None,
+    map_dir: str | None,
+    vocabulary_dir: str | None,
+    level: int | None,
+) -> int:
+    """`axial map grouping-report` (issue #828): zero LLM calls and $0, like
+    `_map_purity` -- but not zero network. `compute_grouping_report` builds
+    the local sentence-transformer encoder itself for the sub-cluster
+    candidate when this command does not inject one, which it never does,
+    and on a cold cache that construction reaches the HF hub."""
+    try:
+        report = compute_grouping_report(
+            pin=pin,
+            map_dir=Path(map_dir) if map_dir is not None else None,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            level=level,
+        )
+    except (PurityError, NoVocabularyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_grouping_report(report))
+    return 0
+
+
 def _eval_coherence(sample_path: str, *, reviewers: int, out_path: str | None) -> int:
     """The §10.2 coherence eval track: a committed sample spec in, a per-
     stratum report out. Offline instrument, same as `_panel_run` below:
@@ -4092,6 +4152,14 @@ def main(argv: list[str] | None = None) -> int:
             args.vocabulary_dir,
             args.level,
             args.named_pairs,
+        )
+
+    if args.command == "map" and args.map_command == "grouping-report":
+        return _map_grouping_report(
+            args.pin,
+            args.map_dir,
+            args.vocabulary_dir,
+            args.level,
         )
 
     if args.command == "artifacts":
