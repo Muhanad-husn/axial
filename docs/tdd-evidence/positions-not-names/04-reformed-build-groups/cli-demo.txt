@@ -12,6 +12,50 @@
                         refuses to resume across a vocabulary scheme change
                         (default: bag)
 
+=== 1b. the same flag after review, re-captured 2026-08-29 in the worktree ===
+$ uv run axial map build --help    (full output; the flag's help gained the
+  vocabulary prerequisite and the --force note; section 1 above is the
+  earlier capture, left as it was taken)
+usage: axial map build [-h] [--force] [--workers WORKERS]
+                       [--grouping {bag,category}]
+
+options:
+  -h, --help            show this help message and exit
+  --force               re-read everything under the current pin instead of
+                        resuming, for both stages (issue #572 follow-up: the
+                        pin is content-only, so a prompt or model-tier change
+                        alone would otherwise resume under the old prompt's
+                        ledger). Moves each stage's own existing ledger aside
+                        to a timestamped sibling rather than deleting it -- a
+                        paid ledger is never destroyed by this flag
+  --workers WORKERS     bounded concurrent extraction workers (this pass is
+                        I/O-bound) (default: 40)
+  --grouping {bag,category}
+                        what step 2 groups passages by (issue #829). 'bag' is
+                        wording similarity, the current build, written to
+                        data/map/<pin>/. 'category' groups by the claim x
+                        mechanism cells of the built vocabulary instead,
+                        writing a whole variant artifact set to
+                        data/map/<pin>-category/ and leaving the default build
+                        untouched beside it; it skips the relations stage and
+                        refuses to resume across a vocabulary scheme change.
+                        PREREQUISITE: 'category' reads
+                        data/vocabulary/{claim,mechanism}/, which a separate
+                        earlier pass produces -- run `axial vocabulary build`
+                        first, or this exits with 'no derived vocabulary built
+                        for column ...' before spending a single model call.
+                        --force applies per artifact set, so forcing a variant
+                        build sets the variant directory's own ledger aside
+                        and never touches the default build's (default: bag)
+
+NOTE ON THE TRANSCRIPT BELOW: it is the real run, unedited. Two of its
+log lines were reworded by review AFTER it was captured -- the per-read
+progress line now says `group` under --grouping category rather than
+`bag`, and `reads 226 (every passage shown once)` now reads
+`reads 226 over 176 group(s) (no passage appears in more than one read)`.
+The summary line also carries its denominator and the failed reads'
+passage count now. Nothing the run DID changed.
+
 === 2. the paid variant build, real corpus, main checkout D:/axial ===
 $ PYTHONPATH=D:/axial-wt/04-reformed-build-groups/src uv run axial map build --grouping category
 === launched 2026-08-29T04:51:53.0548729+02:00 ===

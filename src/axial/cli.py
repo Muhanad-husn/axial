@@ -841,7 +841,14 @@ def build_parser() -> argparse.ArgumentParser:
             "vocabulary instead, writing a whole variant artifact set to "
             "data/map/<pin>-category/ and leaving the default build "
             "untouched beside it; it skips the relations stage and refuses "
-            "to resume across a vocabulary scheme change "
+            "to resume across a vocabulary scheme change. PREREQUISITE: "
+            "'category' reads data/vocabulary/{claim,mechanism}/, which a "
+            "separate earlier pass produces -- run `axial vocabulary build` "
+            "first, or this exits with 'no derived vocabulary built for "
+            "column ...' before spending a single model call. --force "
+            "applies per artifact set, so forcing a variant build sets the "
+            "variant directory's own ledger aside and never touches the "
+            "default build's "
             f"(default: {GROUPING_BAG})"
         ),
     )
@@ -3643,7 +3650,18 @@ def _map_build(
             manifest = run_map_build(
                 client=client, log=_tee, workers=workers, force=force, grouping=grouping
             )
-        except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
+        # `NoVocabularyError` (issue #829 review): `--grouping category`
+        # reads a vocabulary a separate earlier pass builds, and the help
+        # says so. Uncaught it left a traceback and no error record, where
+        # `map purity`/`map grouping-report` already exit 1 with the same
+        # message naming `axial vocabulary build`.
+        except (
+            MapError,
+            AlreadyRunningError,
+            LLMError,
+            CorpusPinError,
+            NoVocabularyError,
+        ) as exc:
             run.record(
                 source_id="",
                 pass_name=MAP_BUILD_PASS_NAME,

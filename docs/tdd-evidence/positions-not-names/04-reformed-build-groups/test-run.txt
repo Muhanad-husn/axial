@@ -52,3 +52,29 @@ test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin
 
 ### uv run ruff check / ruff format --check
 All checks passed!
+
+### review response, batch 2 (six verifier findings): five new tests
+
+src/axial/argmap/test_positions_on.py
+  test_the_grouping_unit_is_named_by_mode_in_the_manifest_and_the_log
+    F2 manifest key (`groups` under category, `bags` under default, neither
+    in the other's manifest) + F6 progress word + F7 reads-line wording and
+    the denominator on the summary line, both modes in one test.
+  test_the_manifests_passage_arithmetic_closes_over_a_failed_read
+    F4: selected - ungrouped - placed_distinct - unassigned -
+    passages_in_failed_reads == 0, over a read the client fails.
+
+src/axial/test_cli.py
+  test_main_map_build_prints_each_modes_own_grouping_unit_key
+    F2's CLI half: stdout printing and _format_map_build_summary over both
+    modes' manifests, neither raising on the key the other carries.
+  test_main_map_build_reports_a_missing_vocabulary_as_an_error_not_a_traceback
+    F8 follow-on: NoVocabularyError was uncaught in _map_build.
+  test_map_build_grouping_help_names_the_vocabulary_prerequisite
+    F8: the help names the earlier pass, its command, and --force's reach.
+
+### uv run pytest
+2589 passed, 1 skipped in 28.47s
+
+### uv run ruff check
+All checks passed!

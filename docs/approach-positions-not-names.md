@@ -250,6 +250,14 @@ group; only the 17 with no `claim` category at all stay ungrouped, and they
 are counted in the variant's `map.json`. Founder ruling, 2026-08-29, in
 [#829](https://github.com/Muhanad-husn/axial/issues/829).
 
+The fallback did what it was for and did not clear the ceiling it is argued
+against. The built variant lands at **8.54%** beyond any position (513 of
+6,010), still above D4's 6.9%. Only 0.28% of that is grouping loss; the rest
+is the extraction model declining more passages when it is shown twenty at a
+time instead of three (`unassigned` 457 against the default build's 373).
+Whether that fails the variant or fails D4 as a guard is the comparison's
+verdict, not this section's.
+
 ### What a position carries afterwards
 
 A re-formed position inherits the category values its passages hold, on every

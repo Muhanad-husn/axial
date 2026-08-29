@@ -31,7 +31,7 @@ from axial.argmap.build import (
     run_map_build,
 )
 from axial.argmap.grouping import group_by_intersection, group_by_intersection_with_claim_fallback
-from axial.llm import StubLLMClient
+from axial.llm import LLMError, StubLLMClient
 from axial.query import store as note_store
 
 MANN = "mann-2012-aaaaaaaaaaaa"
@@ -567,6 +567,83 @@ def test_a_scheme_version_change_refuses_a_resumed_variant_build(category_corpus
     assert forced["counts"]["units_total"] == 2
     assert forced["counts"]["units_reused"] == 0
     assert forced_client.call_count == forced["counts"]["units_total"]
+
+
+class _OneFailingReadClient(StubLLMClient):
+    """Fails the single-passage read and answers the rest. A transport
+    failure is recorded as `error` on the read rather than raised
+    (`extract_positions_for_slice`'s fault-isolation contract), so the build
+    completes carrying exactly one failed read."""
+
+    def complete(self, prompt: str, pass_name: str | None = None) -> str:
+        self.call_count += 1
+        handles = _handles(prompt)
+        if len(handles) == 1:
+            raise LLMError("the model call failed")
+        return json.dumps({"arguments": [{"argument": "An argument.", "handles": handles}]})
+
+    def model_for_pass(self, pass_name: str | None = None) -> str:
+        return "fake-model"
+
+
+def test_the_grouping_unit_is_named_by_mode_in_the_manifest_and_the_log(
+    category_corpus: dict,
+) -> None:
+    """Both manifests are written to be read side by side, so the unit count
+    cannot share a key: 660 wording bags and 176 category cells under one
+    `bags` key read as a single quantity changing. Same defect the slice
+    already split `passages_placed` for. The progress log has the mirror
+    problem -- printing "bag" while `--grouping category` runs names the
+    other value of the flag the operator just set."""
+    default_log: list[str] = []
+    variant_log: list[str] = []
+    default = _run_map_build(category_corpus, client=_OneArgumentClient(), log=default_log.append)
+    variant = _run_map_build(
+        category_corpus,
+        client=_OneArgumentClient(),
+        grouping="category",
+        log=variant_log.append,
+    )
+
+    assert default["counts"]["bags"] == 1
+    assert "groups" not in default["counts"]
+    assert variant["counts"]["groups"] == 2
+    assert "bags" not in variant["counts"]
+
+    assert any(line.startswith("  read 1/1 (bag ") for line in default_log)
+    assert any("(group " in line for line in variant_log if line.startswith("  read "))
+
+    # "every passage shown once" read as a coverage guarantee one line under
+    # "17 passage(s) reached no group". It never meant that.
+    assert not any("every passage shown once" in line for line in default_log + variant_log)
+    assert any(line.startswith("reads 1 over 1 bag(s)") for line in default_log)
+    assert any(line.startswith("reads 2 over 2 group(s)") for line in variant_log)
+
+    # And the summary line carries the denominator, so a reader never has to
+    # open the manifest to know what 4 placed passages is out of.
+    assert any("distinct passages placed 4 of 4 selected" in line for line in default_log)
+
+
+def test_the_manifests_passage_arithmetic_closes_over_a_failed_read(
+    category_corpus: dict,
+) -> None:
+    """`failed_reads` counts READS, so selected minus ungrouped minus placed
+    minus unassigned left a remainder a reader could only guess at.
+    `passages_in_failed_reads` names it, in both modes."""
+    variant = _run_map_build(category_corpus, client=_OneFailingReadClient(), grouping="category")
+    counts = variant["counts"]
+    assert counts["failed_reads"] == 1
+    assert counts["passages_in_failed_reads"] == 1
+    assert (
+        counts["passages_selected"]
+        - counts["passages_ungrouped"]
+        - counts["passages_placed_distinct"]
+        - counts["passages_unassigned"]
+        - counts["passages_in_failed_reads"]
+    ) == 0
+
+    default = _run_map_build(category_corpus, client=_OneArgumentClient())
+    assert default["counts"]["passages_in_failed_reads"] == 0
 
 
 def test_distinct_placed_passages_are_counted_below_the_slot_sum(category_corpus: dict) -> None:

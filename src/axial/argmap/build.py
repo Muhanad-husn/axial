@@ -927,11 +927,18 @@ def run_extraction(
     reads_path: Path,
     pass_name: str = PASS_NAME,
     workers: int = WORKERS,
+    unit_word: str = "bag",
     log: Callable[[str], None] = print,
 ) -> list[dict[str, Any]]:
     """Run every job in `jobs` through one model call each, resumable by
     `(bag, slice)` via `reads_path`: a restart skips whatever this ledger
-    already carries. Calls run concurrently (`workers`), but every
+    already carries.
+
+    `unit_word` is what the per-read progress line calls a job's grouping
+    unit (issue #829). It is "bag" by default and "group" under category
+    grouping, because printing "bag" while `--grouping category` runs names
+    the OTHER value of the flag the operator just set, and reads as the flag
+    having been ignored. Calls run concurrently (`workers`), but every
     checkpoint write happens on this one collecting thread -- the same
     pattern `axial.merge_names`/`axial.gather` already use -- so a mid-run
     kill can never race two threads onto the same line, and every result is
@@ -963,7 +970,7 @@ def run_extraction(
                 completed += 1
                 log(
                     f"  read {completed}/{len(pending)} "
-                    f"(bag {record['bag']} slice {record['slice']})"
+                    f"({unit_word} {record['bag']} slice {record['slice']})"
                 )
 
     return load_checkpoint_records(reads_path, CorruptReadsLedgerError)
@@ -1532,8 +1539,15 @@ def run_map_build(
 
         _write_bag_state(_bag_state_path(outdir), bags, centroids)
 
+    unit_word = "group" if category_grouped else "bag"
     jobs = build_jobs(bags)
-    log(f"reads {len(jobs)} (every passage shown once)")
+    # Issue #829: "every passage shown once" read as a coverage guarantee,
+    # printed one line under "17 passage(s) reached no group". It only ever
+    # meant that no passage appears in two reads.
+    log(
+        f"reads {len(jobs)} over {len(bags)} {unit_word}(s) "
+        f"(no passage appears in more than one read)"
+    )
 
     if client is None:
         client = get_client(config_path=config_path)
@@ -1576,10 +1590,23 @@ def run_map_build(
         )
     )
 
-    reads = run_extraction(jobs, client=client, reads_path=reads_path, workers=workers, log=log)
+    reads = run_extraction(
+        jobs,
+        client=client,
+        reads_path=reads_path,
+        workers=workers,
+        unit_word=unit_word,
+        log=log,
+    )
 
     raw_positions = [position for read in reads for position in read["positions"]]
     errors = [read for read in reads if "error" in read]
+    # Issue #829 (review): `failed_reads` counts READS, so the manifest's
+    # passage arithmetic did not close -- selected minus ungrouped minus
+    # placed minus unassigned left a remainder a reader could only guess
+    # was the failed reads' own passages. This is that remainder, named:
+    # every passage shown in a read that came back with an error.
+    passages_in_failed_reads = sum(read.get("shown", 0) for read in errors)
     unassigned = sum(read.get("unassigned", 0) for read in reads)
     # Issue #829: two different numbers, both named. `placed_slots` sums
     # member slots over RAW positions, so a passage named in two raw
@@ -1594,8 +1621,9 @@ def run_map_build(
     )
     log(
         f"raw positions {len(raw_positions)} | placed slots {placed_slots} | "
-        f"distinct passages placed {placed_distinct} | "
-        f"unassigned {unassigned} | failed reads {len(errors)}"
+        f"distinct passages placed {placed_distinct} of {len(passages)} selected | "
+        f"unassigned {unassigned} | "
+        f"failed reads {len(errors)} ({passages_in_failed_reads} passage(s))"
     )
 
     merged = merge_positions(raw_positions, encode)
@@ -1713,7 +1741,13 @@ def run_map_build(
         "source_ids": sorted({passage.source_id for passage in passages}),
         "counts": {
             "passages_selected": len(passages),
-            "bags": len(bags),
+            # Issue #829 (review): under category grouping these units are
+            # vocabulary cells, not wording bags. Same key in both manifests
+            # made `bags 660 -> 176` read as one quantity changing when the
+            # two are read side by side, which is the defect
+            # `passages_placed` was already split to avoid. A mode emits
+            # only its own name.
+            ("groups" if category_grouped else "bags"): len(bags),
             "reads": len(jobs),
             # Issue #677: how much of this run's own reads work was
             # actually new. `units_total` is `reads` again, kept alongside
@@ -1743,6 +1777,12 @@ def run_map_build(
             "passages_unassigned": unassigned,
             "passages_ungrouped": len(ungrouped_chunk_ids),
             "failed_reads": len(errors),
+            # `failed_reads` is a count of READS. This is the passages they
+            # were shown, so `passages_selected - passages_ungrouped -
+            # passages_placed_distinct - passages_unassigned -
+            # passages_in_failed_reads` closes without a reader dividing
+            # anything (issue #829 review).
+            "passages_in_failed_reads": passages_in_failed_reads,
         },
         # Issue #829: what step 2 grouped by, and -- for a category-grouped
         # build -- the vocabulary scheme versions it grouped under.

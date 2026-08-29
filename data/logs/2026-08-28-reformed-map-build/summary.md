@@ -23,6 +23,13 @@ run is pinned to the branch, not to `main`.
 bag_state.json. No relations stage (out of scope, slice 07), so no
 relations.jsonl and no `relations` block in the manifest.
 
+**The manifest on disk predates two review fixes.** It was written by
+`9c1fcc1`, before review renamed the grouping-unit count from `bags` to
+`groups` under category grouping and added `passages_in_failed_reads`. The
+artifact is not being rebuilt for a key rename ($0.71 and 41 minutes), so the
+two values are recorded here instead: `groups` 176, `passages_in_failed_reads`
+31. A later `--force` rebuild would write both.
+
 ## Counts
 
 | | default build | variant (category) |

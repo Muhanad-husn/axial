@@ -2343,7 +2343,18 @@ def test_build_parser_map_build_grouping_defaults_to_bag_and_accepts_category():
 def _stub_map_build_manifest(grouping: str) -> dict:
     """What a category-grouped build returns: no `relations` block at all
     (slice 07's, not this slice's), so `_map_build`'s own printing has to
-    survive its absence."""
+    survive its absence.
+
+    The counts are mode-specific too (issue #829 review): the grouping unit
+    is `groups` under category grouping and `bags` under the default, and
+    neither key exists in the other mode's manifest. Both the stdout
+    printing and `_format_map_build_summary` have to survive whichever one
+    is absent."""
+    counts: dict = {"passages_selected": 4, "passages_in_failed_reads": 0}
+    if grouping == "category":
+        counts |= {"groups": 2, "passages_ungrouped": 1}
+    else:
+        counts |= {"bags": 660}
     return {
         "corpus_pin": "testpin",
         "model": "fake-model",
@@ -2351,8 +2362,79 @@ def _stub_map_build_manifest(grouping: str) -> dict:
         "cost_usd": 0.5,
         "wall_time_sec": 1.0,
         "grouping": {"mode": grouping, "scheme_versions": {"claim": "v1", "mechanism": "v1"}},
-        "counts": {"passages_selected": 4, "passages_ungrouped": 1},
+        "counts": counts,
     }
+
+
+def _run_main_map_build(cli, monkeypatch, tmp_path, grouping: str):
+    monkeypatch.setenv("AXIAL_LOGS_ROOT", str(tmp_path / "logs"))
+    monkeypatch.setattr(cli, "get_client", lambda *a, **k: object())
+    monkeypatch.setattr(
+        cli, "run_map_build", lambda **kwargs: _stub_map_build_manifest(kwargs["grouping"])
+    )
+    argv = ["map", "build"] + (["--grouping", grouping] if grouping != "bag" else [])
+    return cli.main(argv)
+
+
+def test_main_map_build_prints_each_modes_own_grouping_unit_key(tmp_path, monkeypatch, capsys):
+    """Neither the stdout printing nor `_format_map_build_summary` may raise
+    on the unit key the other mode carries (issue #829 review)."""
+    import axial.cli as cli
+
+    assert _run_main_map_build(cli, monkeypatch, tmp_path / "bag", "bag") == 0
+    out = capsys.readouterr().out
+    assert "bags: 660" in out
+    assert "groups:" not in out
+    assert "passages_in_failed_reads: 0" in out
+
+    assert _run_main_map_build(cli, monkeypatch, tmp_path / "cat", "category") == 0
+    out = capsys.readouterr().out
+    assert "groups: 2" in out
+    assert "bags:" not in out
+
+    summary = cli._format_map_build_summary(_stub_map_build_manifest("category"))
+    assert "- groups: 2" in summary and "- bags:" not in summary
+    assert "- bags: 660" in cli._format_map_build_summary(_stub_map_build_manifest("bag"))
+
+
+def test_main_map_build_reports_a_missing_vocabulary_as_an_error_not_a_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    """`--grouping category` reads a vocabulary a separate earlier pass
+    builds, and the flag's help says which command that is. Uncaught, the
+    absence left a traceback and no error record."""
+    import axial.cli as cli
+    from axial.argmap.vocabulary_join import NoVocabularyError
+
+    monkeypatch.setenv("AXIAL_LOGS_ROOT", str(tmp_path / "logs"))
+    monkeypatch.setattr(cli, "get_client", lambda *a, **k: object())
+
+    def _raise(**kwargs):
+        raise NoVocabularyError("claim", tmp_path / "vocabulary" / "claim")
+
+    monkeypatch.setattr(cli, "run_map_build", _raise)
+
+    exit_code = cli.main(["map", "build", "--grouping", "category"])
+    err = capsys.readouterr().err
+
+    assert exit_code == 1
+    assert "no derived vocabulary built for column 'claim'" in err
+    assert "axial vocabulary build" in err
+
+
+def test_map_build_grouping_help_names_the_vocabulary_prerequisite(capsys):
+    """The reader this help exists for is deciding whether to spend money on
+    the pass. It has to name the earlier pass, the command that runs it, and
+    what `--force` touches (issue #829 review)."""
+    from axial.cli import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["map", "build", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+
+    assert "axial vocabulary build" in text
+    assert "data/vocabulary/{claim,mechanism}/" in text
+    assert "forcing a variant build sets the variant directory's own ledger aside" in text
 
 
 def test_main_map_build_forwards_grouping_and_prints_a_manifest_carrying_no_relations(
