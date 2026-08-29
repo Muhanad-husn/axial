@@ -3778,10 +3778,11 @@ def _map_grouping_report(
     vocabulary_dir: str | None,
     level: int | None,
 ) -> int:
-    """`axial map grouping-report` (issue #828): zero LLM calls, like
-    `_map_purity` -- `compute_grouping_report` builds the local sentence-
-    transformer encoder itself (no client, no network) when this command
-    does not inject one, which it never does."""
+    """`axial map grouping-report` (issue #828): zero LLM calls and $0, like
+    `_map_purity` -- but not zero network. `compute_grouping_report` builds
+    the local sentence-transformer encoder itself for the sub-cluster
+    candidate when this command does not inject one, which it never does,
+    and on a cold cache that construction reaches the HF hub."""
     try:
         report = compute_grouping_report(
             pin=pin,

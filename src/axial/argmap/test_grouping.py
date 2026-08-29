@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from axial.argmap.grouping import (
-    NOISE_LABEL,
+    MissingAxisCounts,
     group_by_intersection,
     group_by_subcluster,
     slice_projection,
@@ -68,6 +68,19 @@ def test_group_by_intersection_labels_are_deterministic_regardless_of_input_orde
     assert forward == backward
 
 
+def test_group_by_intersection_reports_the_missing_axis_breakdown_of_its_own_ungrouped_count():
+    # n1: both axes present (grouped). n2: mechanism missing only. n3: claim
+    # missing only. n4: missing both -- never answered on either column.
+    claim = {"n1": "cat-a", "n2": "cat-a"}
+    mechanism = {"n1": "mech-x", "n3": "mech-x"}
+
+    result = group_by_intersection(["n1", "n2", "n3", "n4"], claim, mechanism)
+
+    assert result.missing_axis_counts == MissingAxisCounts(
+        claim_only=1, mechanism_only=1, both=1
+    )
+
+
 # ---------------------------------------------------------------------------
 # group_by_subcluster: claim category outer, injected cluster_fn inner.
 # ---------------------------------------------------------------------------
@@ -103,22 +116,35 @@ def test_group_by_subcluster_every_passage_with_a_claim_category_lands_in_exactl
     assert result.ungrouped_chunk_ids == ("n4",)
 
 
-def test_group_by_subcluster_treats_a_cluster_fn_noise_label_as_ungrouped_encoder_residue():
-    """A passage WITH a claim category can still end up ungrouped: the
-    approach doc's "encoder residue" clause, for a `cluster_fn` that follows
-    the same noise-label convention `axial.names.NOISE_LABEL` already uses
-    (a residue re-fit is exactly the kind of `cluster_fn` slice 04 might
-    inject here)."""
+def test_group_by_subcluster_treats_every_cluster_fn_label_as_its_own_group_no_noise_carve_out():
+    """This module has no noise-label convention of its own: whatever
+    `cluster_fn` returns, including a negative label, becomes a group like
+    any other. A `cluster_fn` that wants to report residue is free to -- it
+    just lands in a group named for that label, not in `ungrouped_chunk_ids`
+    (that field is reserved for "no claim category at all")."""
     claim = {"n1": "cat-a", "n2": "cat-a"}
     values = {"n1": "a", "n2": "bb"}
 
     def cluster_fn(_vectors):
-        return [0, NOISE_LABEL]
+        return [0, -1]
 
     result = group_by_subcluster(["n1", "n2"], claim, values, _fake_encode, cluster_fn)
 
-    assert [group.chunk_ids for group in result.groups] == [("n1",)]
-    assert result.ungrouped_chunk_ids == ("n2",)
+    by_label = {group.label: group.chunk_ids for group in result.groups}
+    assert by_label == {"cat-a::0": ("n1",), "cat-a::-1": ("n2",)}
+    assert result.ungrouped_chunk_ids == ()
+
+
+def test_group_by_subcluster_reports_no_missing_axis_breakdown_it_has_only_one_axis():
+    claim = {"n1": "cat-a", "n2": "cat-a"}  # n3: no claim category
+    values = {"n1": "a", "n2": "bb"}
+
+    def cluster_fn(vectors):
+        return [0] * len(vectors)
+
+    result = group_by_subcluster(["n1", "n2", "n3"], claim, values, _fake_encode, cluster_fn)
+
+    assert result.missing_axis_counts is None
 
 
 def test_group_by_subcluster_labels_are_deterministic_regardless_of_input_order():
@@ -160,3 +186,114 @@ def test_summarize_reports_group_count_size_distribution_ungrouped_and_projected
     assert stats.max_size == 2
     assert stats.ungrouped_count == 2
     assert stats.projected_slices == 1
+    # n3, n4 are both "claim present, mechanism missing" -- mechanism_only.
+    assert stats.missing_axis_counts == MissingAxisCounts(claim_only=0, mechanism_only=2, both=0)
+
+
+def test_summarize_carries_no_missing_axis_breakdown_for_the_subcluster_candidate():
+    claim = {"n1": "cat-a", "n2": "cat-a"}
+    values = {"n1": "a", "n2": "bb"}
+
+    def cluster_fn(vectors):
+        return [0] * len(vectors)
+
+    result = group_by_subcluster(["n1", "n2"], claim, values, _fake_encode, cluster_fn)
+    stats = summarize(result, extract_slice=55)
+
+    assert stats.missing_axis_counts is None
+
+
+# ---------------------------------------------------------------------------
+# format_grouping_report: the report-level render. Built directly from
+# dataclasses here (no file I/O) -- the CLI-level fixture test in
+# test_cli.py covers the join from a pinned map + vocabulary on disk.
+# ---------------------------------------------------------------------------
+
+
+def _make_report(*, extract_slice, intersection_stats=None, subcluster_stats=None):
+    from pathlib import Path
+
+    from axial.argmap.grouping import (
+        CANDIDATE_INTERSECTION,
+        CANDIDATE_SUBCLUSTER,
+        GroupingReport,
+        GroupingResult,
+    )
+
+    empty_intersection = GroupingResult(
+        candidate=CANDIDATE_INTERSECTION,
+        groups=(),
+        ungrouped_chunk_ids=(),
+        missing_axis_counts=MissingAxisCounts(claim_only=0, mechanism_only=0, both=0),
+    )
+    empty_subcluster = GroupingResult(
+        candidate=CANDIDATE_SUBCLUSTER, groups=(), ungrouped_chunk_ids=()
+    )
+    return GroupingReport(
+        pin="pin-1",
+        map_dir=Path("map"),
+        vocabulary_dir=Path("vocab"),
+        claim_level=1,
+        mechanism_level=1,
+        universe_count=0,
+        extract_slice=extract_slice,
+        intersection=empty_intersection,
+        intersection_stats=intersection_stats or summarize(empty_intersection, extract_slice=extract_slice),
+        subcluster=empty_subcluster,
+        subcluster_stats=subcluster_stats or summarize(empty_subcluster, extract_slice=extract_slice),
+    )
+
+
+def test_format_grouping_report_names_the_extraction_slice_number():
+    from axial.argmap.grouping import format_grouping_report
+
+    text = format_grouping_report(_make_report(extract_slice=55))
+
+    assert "projected extraction slices (EXTRACT_SLICE=55)" in text
+
+
+def test_format_grouping_report_computes_label_width_from_actual_labels_not_a_placeholder():
+    """A pre-fix regression: `label_width` was `len("projected extraction
+    slices (000)")`, a hard-coded three-digit placeholder. A wider
+    `extract_slice` value must not misalign the value columns."""
+    import re
+
+    from axial.argmap.grouping import format_grouping_report
+
+    text = format_grouping_report(_make_report(extract_slice=123456))
+
+    def first_value_offset(line: str) -> int:
+        match = re.search(r"  (\S)", line)
+        assert match is not None, line
+        return match.start(1)
+
+    lines = text.splitlines()
+    groups_line = next(line for line in lines if line.strip().startswith("groups"))
+    slices_line = next(
+        line for line in lines if line.strip().startswith("projected extraction slices")
+    )
+    assert first_value_offset(groups_line) == first_value_offset(slices_line)
+
+
+def test_format_grouping_report_prints_the_subcluster_inner_distance_threshold():
+    from axial.argmap.build import BAG_DISTANCE_THRESHOLD
+    from axial.argmap.grouping import format_grouping_report
+
+    text = format_grouping_report(_make_report(extract_slice=55))
+
+    assert f"subcluster inner distance threshold: {BAG_DISTANCE_THRESHOLD}" in text
+
+
+def test_format_grouping_report_prints_the_intersection_missing_axis_breakdown():
+    from axial.argmap.grouping import format_grouping_report
+
+    stats = summarize(
+        _make_report(extract_slice=55).intersection, extract_slice=55
+    )
+    report = _make_report(extract_slice=55, intersection_stats=stats)
+
+    text = format_grouping_report(report)
+
+    assert "claim missing only 0" in text
+    assert "mechanism missing only 0" in text
+    assert "missing both 0" in text

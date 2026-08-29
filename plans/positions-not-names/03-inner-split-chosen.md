@@ -37,8 +37,10 @@ Given data/vocabulary/claim/ and data/vocabulary/mechanism/ exist and the
 When  `uv run axial map grouping-report` runs
 Then  it prints, per candidate: group count, group-size min/median/max,
       passages left ungrouped (refusals compounded, for the intersection;
-      encoder residue, for the sub-clustering), and projected extraction
-      slices at EXTRACT_SLICE
+      no claim category, for the sub-clustering -- this module carries no
+      noise-label convention of its own, so a residue label from an
+      injected cluster_fn becomes a group like any other, not a carve-out),
+      and projected extraction slices at EXTRACT_SLICE
 And   the two candidates print side by side in one table
 ```
 

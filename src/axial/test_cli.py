@@ -2284,6 +2284,18 @@ def test_main_map_grouping_report_prints_both_candidates_side_by_side(
 
     slices_row = row("projected extraction slices")
     assert slices_row.split()[-2:] == ["2", "3"]
+    assert "projected extraction slices (EXTRACT_SLICE=" in slices_row
+
+    from axial.argmap.build import BAG_DISTANCE_THRESHOLD
+
+    assert f"subcluster inner distance threshold: {BAG_DISTANCE_THRESHOLD}" in out
+
+    # n5: claim cat-b, no mechanism record at all -- mechanism missing only.
+    # n6: no claim category, no mechanism record -- missing both.
+    assert (
+        "claim x mechanism ungrouped breakdown: "
+        "claim missing only 0, mechanism missing only 1, missing both 1" in out
+    )
 
 
 def test_main_map_grouping_report_reports_a_missing_bag_state_by_name_not_a_traceback(

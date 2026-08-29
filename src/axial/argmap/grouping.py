@@ -21,12 +21,15 @@ both be measured before either is built:
   injectable `encode`/`cluster_fn` seam `axial.argmap.build.bag_passages`
   already gives a unit test (no local encoder needed to test this module).
 
-Both are zero-model-call, zero-network, pure functions over already-loaded
-`chunk_id -> category_id` (and, for the sub-cluster candidate, `chunk_id ->
-value` text) maps -- the join and the report-level I/O around them
+Both are zero-model-call, pure functions over already-loaded `chunk_id ->
+category_id` (and, for the sub-cluster candidate, `chunk_id -> value` text)
+maps -- the join and the report-level I/O around them
 (`compute_grouping_report`) are a separate, thin layer, the same split
 `axial.argmap.purity` keeps between `compute_purity` and its own pure
-cross-tab.
+cross-tab. No LLM calls and $0 hold end to end; "zero network" does not --
+`compute_grouping_report` always constructs the local sentence-transformer
+encoder for the sub-cluster candidate (the report always runs both
+candidates), and on a cold cache that construction reaches the HF hub.
 
 These functions are not report-internal: slice 04 wires whichever candidate
 the founder chooses straight into `axial map build`, so both are public,
@@ -55,16 +58,6 @@ from axial.argmap.vocabulary_join import NoVocabularyError
 from axial.paths import default_map_dir
 from axial.vocabulary import ASSIGNMENTS_FILENAME, MANIFEST_FILENAME, ROOT_LEVEL, VOCABULARY_DIR
 
-# HDBSCAN's own noise-label convention (`axial.names.NOISE_LABEL`), not
-# imported from there -- that module pulls in HDBSCAN at call time for a
-# reason this module has no use for, and the value itself is the whole of
-# what's shared. Any injected `cluster_fn` that follows the same convention
-# (a residue re-fit, the kind of clustering slice 04 might inject here) has
-# its noise reported as ungrouped encoder residue, never as a group of its
-# own -- the approach doc's own phrase for what the sub-cluster candidate's
-# ungrouped count measures, distinct from "no claim category at all".
-NOISE_LABEL = -1
-
 # Candidate names, printed and used as the `GroupingResult.candidate`/
 # `GroupingStats.candidate` value on both sides of the report -- plain
 # strings rather than an enum, since nothing here dispatches on them beyond
@@ -88,18 +81,40 @@ class Group:
 
 
 @dataclass(frozen=True)
+class MissingAxisCounts:
+    """`group_by_intersection`'s own breakdown of its `ungrouped_chunk_ids`:
+    which of the two constitutive axes a passage was missing. Slice 04's
+    fallback question -- can an ungrouped passage still land in a claim-only
+    cell -- turns on this split, not the bare total: a passage missing
+    `claim` itself (`claim_only`, or `both`) cannot fall back to a
+    claim-only cell; one missing only `mechanism` can.
+
+    Only `group_by_intersection` has two axes to split across, so only its
+    `GroupingResult`/`GroupingStats` carry this (`group_by_subcluster`'s own
+    ungrouped count has one cause, "no claim category," and needs no
+    breakdown)."""
+
+    claim_only: int
+    mechanism_only: int
+    both: int
+
+
+@dataclass(frozen=True)
 class GroupingResult:
     """One candidate's own grouping over a passage universe: every non-empty
     group, in a deterministic order, and every passage the candidate could
     not place -- reported by id, never dropped (the acceptance criterion's
     own "never silently dropped" clause). What "could not place" means
     differs by candidate: refused or unassigned on either axis for
-    `group_by_intersection`, no claim category or cluster_fn-reported noise
-    for `group_by_subcluster`."""
+    `group_by_intersection` (see `missing_axis_counts` for the split), no
+    claim category at all for `group_by_subcluster` -- this module has no
+    noise-label convention of its own, so whatever `cluster_fn` returns
+    becomes a group like any other."""
 
     candidate: str
     groups: tuple[Group, ...]
     ungrouped_chunk_ids: tuple[str, ...]
+    missing_axis_counts: MissingAxisCounts | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +122,8 @@ class GroupingStats:
     """The numbers the acceptance criterion asks for, per candidate: group
     count, group-size min/median/max (`None` when there are no groups),
     passages left ungrouped, and the extraction slices this grouping would
-    project at `extract_slice`."""
+    project at `extract_slice`. `missing_axis_counts` mirrors `GroupingResult`'s
+    own field of the same name -- present only for `group_by_intersection`."""
 
     candidate: str
     group_count: int
@@ -116,6 +132,7 @@ class GroupingStats:
     max_size: int | None
     ungrouped_count: int
     projected_slices: int
+    missing_axis_counts: MissingAxisCounts | None = None
 
 
 def group_by_intersection(
@@ -134,14 +151,28 @@ def group_by_intersection(
     groups and each group's own `chunk_ids` are sorted -- deterministic
     across runs regardless of `chunk_ids`' own input order, which iterating
     a `bag_state.json` dict (unordered by chunk id) would not otherwise
-    guarantee."""
+    guarantee.
+
+    `missing_axis_counts` splits the same ungrouped total by which axis (or
+    both) a passage lacked -- slice 04's fallback question, "can an
+    ungrouped passage still land in a claim-only cell", needs that split,
+    not the bare total."""
     members: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
     ungrouped: list[str] = []
+    missing_claim_only = 0
+    missing_mechanism_only = 0
+    missing_both = 0
     for chunk_id in chunk_ids:
         claim_category = claim_category_by_chunk.get(chunk_id)
         mechanism_category = mechanism_category_by_chunk.get(chunk_id)
         if claim_category is None or mechanism_category is None:
             ungrouped.append(chunk_id)
+            if claim_category is None and mechanism_category is None:
+                missing_both += 1
+            elif claim_category is None:
+                missing_claim_only += 1
+            else:
+                missing_mechanism_only += 1
             continue
         members[(claim_category, mechanism_category)].append(chunk_id)
 
@@ -156,6 +187,11 @@ def group_by_intersection(
         candidate=CANDIDATE_INTERSECTION,
         groups=groups,
         ungrouped_chunk_ids=tuple(sorted(ungrouped)),
+        missing_axis_counts=MissingAxisCounts(
+            claim_only=missing_claim_only,
+            mechanism_only=missing_mechanism_only,
+            both=missing_both,
+        ),
     )
 
 
@@ -170,10 +206,14 @@ def group_by_subcluster(
     each category, `encode`/`cluster_fn` (the same injection seam
     `axial.argmap.build.bag_passages` already gives a unit test) split it
     further. Every passage that HAS a claim category lands in exactly one
-    group -- unless `cluster_fn` reports it as noise (`NOISE_LABEL`, this
-    module's own convention for a residue-reporting `cluster_fn`), which
-    joins `ungrouped_chunk_ids` alongside passages with no claim category at
-    all. A category with a single member skips clustering entirely (mirrors
+    group -- whatever label `cluster_fn` gives it, including a negative one:
+    this module has no noise-label convention of its own, so a residue
+    label becomes a group like any other, not a carve-out into
+    `ungrouped_chunk_ids`. That field holds only passages with no claim
+    category at all, so the sub-cluster candidate's own ungrouped count is
+    exactly that -- never encoder residue -- absent an injected `cluster_fn`
+    that reports it some other way. A category with a single member skips
+    clustering entirely (mirrors
     `axial.argmap.build._agglomerative_cluster`'s own single-vector case):
     it is trivially its own group, and calling `encode` on one text would
     only spend the encoder for a decision that was never in doubt.
@@ -207,9 +247,6 @@ def group_by_subcluster(
 
         sub_members: dict[int, list[str]] = collections.defaultdict(list)
         for chunk_id, label in zip(members, labels):
-            if label == NOISE_LABEL:
-                ungrouped.append(chunk_id)
-                continue
             sub_members[label].append(chunk_id)
 
         for label in sorted(sub_members):
@@ -246,6 +283,7 @@ def summarize(result: GroupingResult, *, extract_slice: int = EXTRACT_SLICE) -> 
         max_size=sizes[-1] if sizes else None,
         ungrouped_count=len(result.ungrouped_chunk_ids),
         projected_slices=slice_projection(sizes, extract_slice=extract_slice),
+        missing_axis_counts=result.missing_axis_counts,
     )
 
 
@@ -418,30 +456,44 @@ def _size_text(stats: GroupingStats) -> str:
 def format_grouping_report(report: GroupingReport) -> str:
     """Render `GroupingReport` with both candidates side by side (the
     acceptance criterion's own "print side by side in one table" clause).
-    Format is left to the implementer, only that every number the
-    acceptance criterion asks for is present, the same latitude `axial.
-    argmap.purity.format_purity_report`'s own docstring keeps."""
+    The extraction-slice row names the number it prints (`EXTRACT_SLICE`,
+    `axial.argmap.build`'s own constant) rather than a bare parenthetical,
+    and `label_width` is computed from the actual row labels -- not a
+    hard-coded placeholder that would misalign the value columns the moment
+    a label prints wider than assumed."""
     stats = (report.intersection_stats, report.subcluster_stats)
     name_width = max(len(s.candidate) for s in stats)
-    label_width = len("projected extraction slices (000)")
+    slices_label = f"projected extraction slices (EXTRACT_SLICE={report.extract_slice})"
 
-    def row(label: str, values: tuple[str, str]) -> str:
+    def row(label: str, values: tuple[str, str], *, label_width: int) -> str:
         cells = "  ".join(_cell(value, name_width) for value in values)
         return f"{label.ljust(label_width)}  {cells}"
+
+    rows = [
+        ("", tuple(s.candidate for s in stats)),
+        ("groups", tuple(str(s.group_count) for s in stats)),
+        ("group size min/median/max", tuple(_size_text(s) for s in stats)),
+        ("ungrouped", tuple(str(s.ungrouped_count) for s in stats)),
+        (slices_label, tuple(str(s.projected_slices) for s in stats)),
+    ]
+    label_width = max(len(label) for label, _ in rows)
 
     lines = [
         f"pin: {report.pin} ({report.map_dir})",
         f"vocabulary: {report.vocabulary_dir}",
-        f"claim level: {report.claim_level}  mechanism level: {report.mechanism_level}",
+        f"claim level: {report.claim_level}  mechanism level: {report.mechanism_level}  "
+        f"subcluster inner distance threshold: {BAG_DISTANCE_THRESHOLD}",
         f"passages (selected, this pin): {report.universe_count}",
         "",
-        row("", tuple(s.candidate for s in stats)),
-        row("groups", tuple(str(s.group_count) for s in stats)),
-        row("group size min/median/max", tuple(_size_text(s) for s in stats)),
-        row("ungrouped", tuple(str(s.ungrouped_count) for s in stats)),
-        row(
-            f"projected extraction slices ({report.extract_slice})",
-            tuple(str(s.projected_slices) for s in stats),
-        ),
     ]
+    lines.extend(row(label, values, label_width=label_width) for label, values in rows)
+
+    missing = report.intersection_stats.missing_axis_counts
+    if missing is not None:
+        lines.append(
+            f"  {CANDIDATE_INTERSECTION} ungrouped breakdown: "
+            f"claim missing only {missing.claim_only}, "
+            f"mechanism missing only {missing.mechanism_only}, "
+            f"missing both {missing.both}"
+        )
     return "\n".join(lines).rstrip("\n")
