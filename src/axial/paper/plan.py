@@ -362,7 +362,7 @@ def validate_plan(plan: Plan, records: dict[str, dict[str, Any]]) -> None:
 
 # Bounded retry (issue #598): a rejected plan is re-asked with the error
 # text appended, never repaired. First attempt plus up to two re-asks -- one
-# number, matching `axial.llm`'s own `_MAX_ATTEMPTS` retry budget for
+# number, matching `axial.llm`'s own `MAX_ATTEMPTS` retry budget for
 # transport failures, which this is not: that budget catches a stalled
 # connection or a 5xx; this one catches a well-formed response that fails
 # Phase C's own rules (measured: #598's seven-draw sample was 5 valid, 2

@@ -219,6 +219,7 @@ slice 4 ships the unchanged global merge, which does fold within a category as
 well; the case for relaxing it there, and where it is reinstated, is stated
 under that slice.
 
+
 This is a re-forming of the map, not a patch on it. Patching would leave nodes
 made on the wrong principle and merely merge some of them back together.
 
@@ -257,6 +258,200 @@ is the extraction model declining more passages when it is shown twenty at a
 time instead of three (`unassigned` 457 against the default build's 373).
 Whether that fails the variant or fails D4 as a guard is the comparison's
 verdict, not this section's.
+
+Both landed in slice 5 ([#830](https://github.com/Muhanad-husn/axial/issues/830)).
+Two details the design above did not fix, decided in building it.
+
+**The second pass iterates.** A consolidation call is capped at the same
+slice size extraction reads a group under — both listings are one sentence
+per line under a bare handle, so it is the same question about how much a
+single call can weigh, and reusing the constant keeps a second tuned number
+out of the pipeline. But one round over slices is not enough, and the built
+variant says so: 8 of its 9 categories are cut into 2–9 slices and hold
+**98.6% of all 2,036 raw positions**. One round would reunite only inside a
+55-argument window, and since this slice also stops the merge folding inside
+a category, two namings landing in different slices would be reunited by
+nothing at all — the same failure mode, one level up. So a category is read
+again: round 1 consolidates its raw positions in slices, round 2 consolidates
+round 1's output, and so on until one call reads everything the category has
+left. `consolidated_from` accumulates across rounds. Three ways a category
+stops short, all counted in `map.json`: a round that folds nothing, a final
+call that failed, and a cap of as many multi-slice rounds as round 1 needed
+slices — the loop
+terminates without a cap, so that bounds cost, not correctness, and it is
+read off the data rather than picked. A round whose output already fits one
+slice is never denied. Arithmetic on the built variant's own shape, at
+per-round retention *r*: **41 calls for round 1, 79 at r=0.5 through 186 at
+r=0.878** (the default build's own merge ratio), all of it under a dollar
+against extraction's $0.705.
+
+**The echo stays, and the alternative was measured.** The prompt requires
+every handle to appear in exactly one entry, so a call folding two of
+fifty-five arguments retypes all fifty-five. The first real-corpus pass priced
+that: **2.4M completion tokens against 400k prompt**, 8,000–13,000 completion
+tokens a call, **29 of 218 attempts (13%) hitting the client's 600s deadline**,
+and two of the three unreadable answers arriving as JSON truncated around entry
+50 of 55. The obvious fix — ask for the merges alone, and pass every unnamed
+handle through unchanged — was built and probed against one real category,
+`methodological-preconditions`, 98 raw positions, same input and same model:
+
+| | prompt with the echo | merges only |
+|---|---|---|
+| trajectory | 98→72→55→51, converged | 98→…→66, stopped at round cap |
+| calls | 5 | 4 |
+| completion tokens per call | 8,000–13,000 | **15,972** |
+| worst single call | — | **42,909 completion tokens, 418s** |
+
+Both predictions failed. Emitted JSON did shrink, but total completion tokens
+rose by about a third: the model spends far more reasoning deciding what to
+merge when it is not walking the whole list. And folding got *worse* — 66
+against 51 on the same 98 positions. The hypothesis that the echo requirement
+biased the model against merging is refuted; the echo appears to be doing real
+work, as a forcing function to weigh every argument. **The echo costs emitted
+tokens and buys both reasoning economy and folding, so the pass keeps it.** A
+future attempt should not re-propose removing it without re-measuring on this
+category.
+
+**The second negative result: the folding itself was audited, and it is wrong
+too often.** Twenty-five of the built variant's most heavily folded positions
+were read blind against their own member arguments: **7 wrong, 9 mixed, 9
+sound**, with three or four fusing opposed accounts into one position. That is
+not a tail. Heavily-folded positions are **14.4% of the map and carry 64.2% of
+all passages**, so it is the part of the map that matters. Two causes, both in
+the consolidation prompt.
+
+*It merged on rhetorical form, not on substance.* The worst position folded 32
+arguments from 23 books whose only shared property is the shape "some existing
+account is inadequate": irrigation despotism, rentier theory, national
+identity, Roman historiography, the Arab Spring, the Chinese revolution, the
+Great Depression. Its 108 passages resolve to a sentence that fits any
+critical paper in social science, and two other positions state that same
+non-claim, so the pass over-merges and under-merges one thesis at once. This
+is worse at consolidation than at extraction because the inputs are already
+abstract argument sentences, and at that altitude everything resembles
+everything.
+
+*The sentence standing for a group adjudicated.* One position held
+"indiscriminate violence succeeds only when the target population is
+unprotected" alongside "repression tends to radicalize opposition" and stood
+for both as "repressive violence is counterproductive and tends to backfire",
+settling a live dispute in the corpus. Another asserted as fact what its
+source attributed to Ibn Khaldun, while a different position listed Ibn
+Khaldun's theory among the misguided ones. A third absorbed half a sentence
+and deleted the normative claim in the other half. The prompt forbade fusing
+contending positions; it said nothing about the sentence that stands for a
+group.
+
+The prompt now defines sameness as asserting **the same thing about the same
+thing**, names the moves that are not claims (criticising an existing account,
+rejecting mono-causality, proceeding in stages, being complex and
+context-specific), and gives the test: if the sentence you would write does
+not name what the argument is about, you are merging a move rather than a
+claim. And the sentence written for a group must state only what every member
+asserts, taking no side no member takes, settling no disagreement between
+members, widening into no generality that would cover arguments outside the
+group, and dropping no attribution, since an argument reporting what a named
+thinker holds is not the argument asserting it. Being unable to write that
+sentence is itself the signal to split. Both are rewrites of rules already in
+the prompt rather than new paragraphs, and neither is measured yet: the next
+paid pass over these categories is what tests them.
+
+**A fold of ten or more is read again.** The same twenty-five judgements,
+cross-tabulated against how many raw arguments each fold contains:
+
+| fold size | wrong | mixed | sound |
+|---|---|---|---|
+| 10 or more | 3 | 0 | 0 |
+| under 10 | 4 | 9 | 9 |
+
+Every fold of ten or more was judged wrong and none survived. Below ten the
+wrong rate is 18% and the median wrong fold holds five arguments against the
+median sound one's four, so size does not separate them there. The failure is
+not gradual: past some size an entry stops being a shared claim and becomes a
+heading, which is exactly what the 32-argument case is. **Three folds is a
+thin sample** — ten is a measured starting point to be revisited against a
+bigger one, not a settled constant, and `map.json` now counts what it fires
+on so the bigger sample accumulates for free. A blunt size cap was rejected.
+It cannot tell a genuine large fold from a heading, since both look alike from
+outside, and it has nowhere honest to put the members it refuses: dropping
+them discards paid extraction work, and passing them through as singletons
+destroys a real fold to punish a fake one. So the size is a trigger, not a
+verdict. A position standing for ten or more raw arguments goes to one more
+blind call that shows those arguments and the sentence written for them, says
+plainly that a group this large is usually a heading rather than a shared
+claim, and asks which of them actually assert it. What the call does not stand
+by comes back in subgroups, each carrying its own sentence under the same
+rules the consolidation prompt enforces; a member is never dropped and never
+rewritten, so `consolidated_from` still sums to the raw positions the category
+was given. A group the call stands by whole is left exactly as the
+consolidation call wrote it, sentence included, which is how a legitimate
+32-member argument survives the step. A failed or empty answer leaves the
+position standing and is counted. The step fires once per position per round
+and never recurses into its own subgroups: the model has just been told the
+group is probably a heading, so a subgroup it kept together after that is its
+considered answer, and asking again would spend money arguing with it. Like
+the prompt rewrites above, none of this is measured yet — the next paid pass
+is what tests it.
+
+**The trigger is accumulated size, and the first attempt proved why.** Built
+first on the handles a single consolidation call names, the step fired **zero
+times** on `causal-argument-nationalism-or-identity` — 158 raw positions, 3
+rounds, 9 calls — and left an 11-argument and a 15-argument fold standing in
+the output. Large folds are not written by one call. They are assembled across
+rounds out of small entries, so no single call ever names ten handles, and
+round 1 is not where they form. Accumulated `consolidated_from` is both the
+quantity the audit measured and the quantity that reaches the map, so that is
+what the step reads, in every round rather than only the first.
+
+**Which forces a position to say what it is made of.** A consolidated position
+now carries `folded_from`: one record per raw argument underneath it — the
+sentence, its chunk ids, its sources and its authors — accumulated across
+rounds exactly as `consolidated_from` is, so `len(folded_from)` equals it on
+every position the pass emits. The re-read reads that list, and a split
+rebuilds each subgroup's chunks and sources from it; sentences alone would
+leave a subgroup with no honest way to claim its own size. It also closes a
+gap that predates the re-read: reading what a fold was made of used to require
+reconstructing it by chunk-id containment, which works and should never have
+been necessary. The field survives the embedding merge onto the written
+position. It does not collide with the merge's own `variants`, which records
+the consolidated phrasings *that* stage folded, one level up.
+
+**A third negative result: re-reading every fold once more does not repair
+what is left.** After the pass shipped, all 341 folded positions of the built
+map were put back in front of the model in a single concurrent wave -- one call
+per fold, at every fold size, with the re-read's question minus the framing
+that presumes a large group is a heading. 341 answered, none failed, members
+redistributed and never lost. Taken wholesale it split 309 of them, shattering
+143 of the 165 two-member folds into singletons and taking the map to 1,841
+positions from 2,036 raw arguments: consolidation undone. Reading ten shattered
+pairs by hand, three are plainly one argument, which is what a call asked to
+verify a merge does to a merge. Taken selectively -- keeping the original
+wherever the call returned every member separately, since a call that declines
+to group has proposed nothing, and accepting the 103 real regroupings -- 36
+folds, 18 from each map, were judged blind against their own members before the
+labels were revealed: **7 sound / 6 mixed / 5 wrong before, 8 / 4 / 6 after**.
+Nothing moves. The residue is a judgment limit of this model at this price, not
+a pass that is missing; $1.80 and 25 minutes bought that, and a fourth attempt
+should propose a different instrument, not the same question again.
+
+**A resume announces its bill, and abandons a read that cannot pass.** An
+error record is re-asked, which is right — but the retry comes back different
+from the error record's pass-through, so that category's later rounds are
+asked a different question and the whole downstream chain is re-asked at full
+price. Observed live: a resume of a completed 188-call pass silently began
+round 2 again. A resumed run now logs, before its first call, how many reads
+it will retry, which categories they touch, and how many later reads that
+costs; `map.json` records the actuals. And a read that has failed as many
+times as the client itself would attempt one call — `axial.llm.MAX_ATTEMPTS`,
+read from there rather than picked again — is abandoned and counted rather
+than retried forever, so the one slice that exceeds the deadline on every
+attempt stops costing thirty minutes per restart. `--force` remains the only
+way to ask it again.
+
+**The restricted merge is enforced per cluster**, not by refusing to cluster:
+a cluster's members are dealt into buckets that never repeat a category, so
+the cross-category fold the merge is kept for still happens and the
+consolidation pass's judgment inside a category is never overruled.
 
 ### What a position carries afterwards
 

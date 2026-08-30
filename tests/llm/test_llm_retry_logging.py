@@ -1,5 +1,5 @@
 """Outer acceptance test for issue #117 (structured retry logging: every
-NON-FINAL retry attempt inside `OpenRouterClient.complete()`'s `_MAX_ATTEMPTS`
+NON-FINAL retry attempt inside `OpenRouterClient.complete()`'s `MAX_ATTEMPTS`
 loop must emit exactly one structured log line, so a gold run's moderation-
 exposure numbers become measurable instead of a lower bound).
 
@@ -18,7 +18,7 @@ owned by the product, not locked artifacts -- CLAUDE.local.md).
 Given  `OpenRouterClient.complete()` retries a transient failure (a 429/5xx,
        a truncated/empty/error `finish_reason`, or a `content_filter`
        moderation refusal rerouted to the fallback model) silently today --
-       only the final failure of the `_MAX_ATTEMPTS` budget ever surfaces to
+       only the final failure of the `MAX_ATTEMPTS` budget ever surfaces to
        a caller; a chunk that failed twice then succeeded leaves no trace
 When   any attempt fails and is NOT the final attempt in the budget (i.e. it
        will be retried, or -- for `content_filter` -- rerouted)
@@ -155,7 +155,7 @@ def test_two_non_final_retries_each_log_exactly_one_line_with_pass_attempt_and_t
     trigger token distinguishing "503" from "error". The final, successful
     attempt must not itself be logged as a retry."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient, _MAX_ATTEMPTS
+    from axial.llm import OpenRouterClient, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     call_count = 0
@@ -181,7 +181,7 @@ def test_two_non_final_retries_each_log_exactly_one_line_with_pass_attempt_and_t
     lines = _retry_lines(stderr)
     assert len(lines) == 2, (
         f"expected exactly 2 non-final-retry log lines (attempts 1 and 2 of "
-        f"{_MAX_ATTEMPTS}), got {len(lines)}: {lines!r}"
+        f"{MAX_ATTEMPTS}), got {len(lines)}: {lines!r}"
     )
 
     line_for_attempt_1, line_for_attempt_2 = lines
@@ -189,14 +189,14 @@ def test_two_non_final_retries_each_log_exactly_one_line_with_pass_attempt_and_t
         line_for_attempt_1,
         pass_name="tag",
         attempt=1,
-        budget=_MAX_ATTEMPTS,
+        budget=MAX_ATTEMPTS,
         trigger_token="503",
     )
     _assert_line_names_attempt(
         line_for_attempt_2,
         pass_name="tag",
         attempt=2,
-        budget=_MAX_ATTEMPTS,
+        budget=MAX_ATTEMPTS,
         trigger_token="error",
     )
 
@@ -234,7 +234,7 @@ def test_final_exhausted_attempt_is_not_logged_only_the_two_non_final_ones_are(m
     attempts (1 and 2 of 3) are retries and must be logged; the final,
     raising attempt (3 of 3) must not add a third log line."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient, OpenRouterError, _MAX_ATTEMPTS
+    from axial.llm import OpenRouterClient, OpenRouterError, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
 
@@ -249,15 +249,15 @@ def test_final_exhausted_attempt_is_not_logged_only_the_two_non_final_ones_are(m
 
     stderr = capsys.readouterr().err
     lines = _retry_lines(stderr)
-    assert len(lines) == _MAX_ATTEMPTS - 1, (
-        f"expected exactly {_MAX_ATTEMPTS - 1} retry log lines (every attempt "
+    assert len(lines) == MAX_ATTEMPTS - 1, (
+        f"expected exactly {MAX_ATTEMPTS - 1} retry log lines (every attempt "
         f"except the final, raising one), got {len(lines)}: {lines!r}"
     )
     _assert_line_names_attempt(
-        lines[0], pass_name="chunk", attempt=1, budget=_MAX_ATTEMPTS, trigger_token="error"
+        lines[0], pass_name="chunk", attempt=1, budget=MAX_ATTEMPTS, trigger_token="error"
     )
     _assert_line_names_attempt(
-        lines[1], pass_name="chunk", attempt=2, budget=_MAX_ATTEMPTS, trigger_token="error"
+        lines[1], pass_name="chunk", attempt=2, budget=MAX_ATTEMPTS, trigger_token="error"
     )
 
 

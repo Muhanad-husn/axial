@@ -11,6 +11,7 @@ join is a table lookup.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -21,6 +22,7 @@ import pytest
 
 from axial.argmap.ask import positions_on, resolve_pinned_map_dir
 from axial.argmap.build import (
+    PASS_NAME,
     Passage,
     SchemeVersionMismatchError,
     _bag_state_path,
@@ -30,6 +32,7 @@ from axial.argmap.build import (
     _write_bag_state,
     run_map_build,
 )
+from axial.argmap.consolidate import PASS_NAME as CONSOLIDATE_PASS_NAME
 from axial.argmap.grouping import group_by_intersection, group_by_intersection_with_claim_fallback
 from axial.llm import LLMError, StubLLMClient
 from axial.query import store as note_store
@@ -315,14 +318,18 @@ def _hash_tree(root: Path) -> dict:
 class _OneArgumentClient(StubLLMClient):
     """Answers every extraction call with a single argument holding every
     handle it was shown, and records the prompts so a test can see which
-    passages were read together."""
+    passages were read together. `calls_by_pass` counts them per pass: a
+    category-grouped build now makes consolidation calls too (issue #830),
+    so a bare `call_count` no longer says how many reads step 3 made."""
 
     def __init__(self) -> None:
         super().__init__()
         self.seen_prompts: list[str] = []
+        self.calls_by_pass: collections.Counter[str] = collections.Counter()
 
     def complete(self, prompt: str, pass_name: str | None = None) -> str:
         self.call_count += 1
+        self.calls_by_pass[pass_name or ""] += 1
         self.seen_prompts.append(prompt)
         return json.dumps(
             {"arguments": [{"argument": "An argument.", "handles": _handles(prompt)}]}
@@ -344,9 +351,14 @@ class _RefusingClient(StubLLMClient):
 
 
 def _handles(prompt: str) -> list[str]:
-    """Every handle `render_claims_blind` put in `prompt`, so a fake client
-    can answer about exactly the passages it was shown."""
-    return [line.split("]")[0][1:] for line in prompt.splitlines() if line.startswith("[p")]
+    """Every handle `render_claims_blind` (`p1`, `p2`, ...) or
+    `render_arguments_blind` (`a1`, `a2`, ..., issue #830) put in `prompt`,
+    so a fake client can answer about exactly what it was shown."""
+    return [
+        line.split("]")[0][1:]
+        for line in prompt.splitlines()
+        if line.startswith("[p") or line.startswith("[a")
+    ]
 
 
 def _fake_encode(texts):
@@ -471,8 +483,11 @@ def test_category_groups_are_the_extraction_unit_and_a_claim_only_passage_still_
         f"{CAT_A}::(no mechanism)",
         f"{CAT_A}::{MECH_1}",
     ]
-    # Two groups, two calls -- the full cell and the claim-only fallback.
-    assert client.call_count == 2
+    # Two groups, two extraction calls -- the full cell and the claim-only
+    # fallback. The consolidation pass (issue #830) reads the same category
+    # once more, under its own pass name.
+    assert client.calls_by_pass[PASS_NAME] == 2
+    assert client.calls_by_pass[CONSOLIDATE_PASS_NAME] == 1
 
 
 def _passage(chunk_id: str, index: int) -> Passage:
@@ -530,7 +545,7 @@ def test_the_variant_build_never_seeds_from_a_prior_pins_ledger(category_corpus:
     manifest = _run_map_build(category_corpus, client=variant_client, grouping="category")
 
     assert manifest["counts"]["units_reused"] == 0
-    assert variant_client.call_count == manifest["counts"]["units_total"]
+    assert variant_client.calls_by_pass[PASS_NAME] == manifest["counts"]["units_total"]
     # And the variant's own state is a category grouping, never a bag fit a
     # later run could reuse.
     state = json.loads((map_dir / "testpin-category" / "bag_state.json").read_text("utf-8"))
@@ -566,7 +581,7 @@ def test_a_scheme_version_change_refuses_a_resumed_variant_build(category_corpus
     assert forced["grouping"]["scheme_versions"]["claim"] == "2026-09-01-claim-v2"
     assert forced["counts"]["units_total"] == 2
     assert forced["counts"]["units_reused"] == 0
-    assert forced_client.call_count == forced["counts"]["units_total"]
+    assert forced_client.calls_by_pass[PASS_NAME] == forced["counts"]["units_total"]
 
 
 class _OneFailingReadClient(StubLLMClient):

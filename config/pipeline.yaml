@@ -127,6 +127,17 @@ llm:
     # "violence is shaped by social, strategic and political processes";
     # with it on, the same bag correctly split into the two accounts.
     position_extract: high
+    # Argument-map consolidation pass (issue #830): ON at an explicit
+    # "high", the same setting and the same reason as `position_extract`
+    # above. It is that call one level up -- reading a category's per-group
+    # arguments instead of a group's passages -- and it asks the same
+    # underdetermined question: which of these are the same argument, and
+    # which are contending accounts that must not be fused into one
+    # sentence. The measurement that set `position_extract` to `high` (a
+    # 200-passage bag holding two opposed accounts of violence came back as
+    # one argument with reasoning off) is a measurement of exactly this
+    # judgment, so this pass inherits it rather than being tuned separately.
+    position_consolidate: high
     # Argument-map relate pass (issue #572, PR 2 of 4): ON, same profile as
     # `position_extract` above -- deciding how two positions actually
     # stand to one another, with no menu of relation types to pick from,

@@ -29,6 +29,25 @@ Four steps, run in one command (`axial map build`):
      (`merge_positions`), and each surviving position is stamped with a
      stable `position_id` (`assign_position_ids`).
 
+A category-grouped build (`--grouping category`) runs one more stage
+between 3 and 4: **consolidation** (`axial.argmap.consolidate`, issue #830).
+A category is read one `claim x mechanism` cell at a time, so an argument
+running through several cells is named once per cell, and without this stage
+the only thing reuniting those namings is step 4's wording-similarity merge
+-- which would make wording MORE load-bearing than it was before the
+re-forming. It iterates per category until one call reads everything that
+category has left, because a single round over slices reunites only inside
+one slice. That stage also restricts step 4 to folding across categories
+only, for the same reason: inside a category, the consolidation pass has
+already judged which arguments are the same one.
+
+**Cost and wall time accumulate under the pin, never overwrite (issue
+#830).** `usage_for_pass` reports what THIS process spent, so a resumed run
+-- which by design makes no call -- reported `cost_usd: null` and rewrote a
+paid build's figures. `_accumulated_totals` carries the prior manifest's
+figures forward and adds this run's, per stage, with `runs` saying how many
+runs the totals cover.
+
 **Blind, deliberately.** The extraction prompt shows each claim under a bare
 handle -- `[p7] <claim>`, never `[p7] (author) <claim>` -- the one
 deliberate deviation from the scratchpad run this ports (issue #572 kickoff,
@@ -976,21 +995,95 @@ def run_extraction(
     return load_checkpoint_records(reads_path, CorruptReadsLedgerError)
 
 
+def _buckets_without_repeating_a_category(
+    group: Sequence[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """Split one embedding cluster so no bucket holds two positions of the
+    same category (issue #830). Members are taken in `merge_positions`' own
+    deterministic order and each goes into the first bucket that does not
+    already hold its category, so the largest naming of each category meets
+    the largest of every other -- the cross-category fold this merge still
+    exists for -- and a category's further members fold with each other's
+    leftovers rather than being discarded.
+
+    Why the restriction: under category grouping the consolidation pass has
+    already read that category's arguments and judged which of them are the
+    same argument. Two that it left standing were left standing on purpose,
+    and embedding distance is not entitled to overrule that -- it is the
+    wording similarity `docs/approach-positions-not-names.md` §6 removed from
+    the grouping step, and letting it fold inside a category would put it
+    straight back."""
+    buckets: list[list[dict[str, Any]]] = []
+    for position in sorted(group, key=lambda p: (-p["size"], p["argument"])):
+        category = position.get("category")
+        for bucket in buckets:
+            if category not in {member.get("category") for member in bucket}:
+                bucket.append(position)
+                break
+        else:
+            buckets.append([position])
+    return buckets
+
+
+def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """One folded position out of `group`'s raw namings: `argument` (the
+    largest-membership phrasing, ties broken alphabetically -- deterministic
+    regardless of arrival order), `variants` (every raw phrasing, sorted),
+    the union of `chunk_ids`, `sources` and `authors`, `size` (distinct
+    chunk_ids) and `named_times` (how many raw positions folded in here).
+
+    `consolidated_from`, `folded_from` and `categories` are emitted only
+    when the inputs carry them -- they exist on a consolidated position
+    (issue #830) and on nothing the default build produces, so a default
+    map.json and positions.jsonl are unchanged, key for key.
+
+    `folded_from` is the raw arguments underneath a consolidated position,
+    and it is carried through rather than dropped so a reader can see what a
+    fold was made of without reconstructing it from chunk ids. It does not
+    collide with `variants` and does not replace it: `variants` is this
+    merge's own record of the phrasings IT folded, one level up."""
+    representative = min(group, key=lambda p: (-p["size"], p["argument"]))
+    chunk_ids = sorted({cid for position in group for cid in position["chunk_ids"]})
+    record = {
+        "argument": representative["argument"],
+        "variants": sorted(position["argument"] for position in group),
+        "chunk_ids": chunk_ids,
+        "sources": sorted({s for position in group for s in position["sources"]}),
+        "authors": sorted({a for position in group for a in position["authors"]}),
+        "size": len(chunk_ids),
+        "named_times": len(group),
+    }
+    consolidated = [p["consolidated_from"] for p in group if "consolidated_from" in p]
+    if consolidated:
+        record["consolidated_from"] = sum(consolidated)
+    folded_from = [member for p in group for member in p.get("folded_from", [])]
+    if folded_from:
+        record["folded_from"] = folded_from
+    categories = sorted({p["category"] for p in group if p.get("category")})
+    if categories:
+        record["categories"] = categories
+    return record
+
+
 def merge_positions(
     raw_positions: Sequence[dict[str, Any]],
     encode: Encoder,
     cluster_fn: ClusterFn | None = None,
+    *,
+    cross_category_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Fold near-duplicate namings of one argument together (stage 1
     analysis, `MERGE_DISTANCE_THRESHOLD`), because the same argument is
-    routinely named from two different bags. Each merged record carries
-    `argument` (the largest-membership phrasing, ties broken
-    alphabetically -- deterministic regardless of arrival order),
-    `variants` (every raw phrasing, sorted), the union of `chunk_ids`,
-    `sources`, and `authors`, `size` (distinct chunk_ids), and `named_times`
-    (how many raw positions folded into this one). Carries no `position_id`
-    yet -- see `assign_position_ids`. `cluster_fn`, when given, replaces the
-    default agglomerative clustering (for tests)."""
+    routinely named from two different bags. Carries no `position_id` yet --
+    see `assign_position_ids`. `cluster_fn`, when given, replaces the default
+    agglomerative clustering (for tests).
+
+    `cross_category_only` (issue #830, category-grouped builds only, and off
+    by default so the default build is untouched): two positions of the same
+    category are never folded by embedding distance alone -- the
+    consolidation pass has already judged that category's arguments, and this
+    merge is left with the one job §6 keeps it for, folding a near-duplicate
+    naming ACROSS categories. See `_buckets_without_repeating_a_category`."""
     if not raw_positions:
         return []
 
@@ -1006,20 +1099,31 @@ def merge_positions(
 
     merged: list[dict[str, Any]] = []
     for group in groups.values():
-        representative = min(group, key=lambda p: (-p["size"], p["argument"]))
-        chunk_ids = sorted({cid for position in group for cid in position["chunk_ids"]})
-        merged.append(
-            {
-                "argument": representative["argument"],
-                "variants": sorted(position["argument"] for position in group),
-                "chunk_ids": chunk_ids,
-                "sources": sorted({s for position in group for s in position["sources"]}),
-                "authors": sorted({a for position in group for a in position["authors"]}),
-                "size": len(chunk_ids),
-                "named_times": len(group),
-            }
-        )
+        buckets = _buckets_without_repeating_a_category(group) if cross_category_only else [group]
+        merged.extend(_merged_record(bucket) for bucket in buckets)
     return merged
+
+
+def fold_stats(named: int, positions: Sequence[dict[str, Any]], count_key: str) -> dict[str, Any]:
+    """How much folding a stage did, in the three figures the default
+    build's merge is read by (issue #830, founder's comparability note):
+    folds, positions carrying more than one naming, and folds per final
+    position. The default build's own merge reads 269 / 207 / 0.139 at 2,206
+    raw positions, and nothing about the variant's consolidation is
+    comparable to anything until it is reported the same way.
+
+    `count_key` is the field a stage records its own naming count under --
+    `named_times` for the embedding merge, `consolidated_from` for the
+    consolidation pass -- so both stages of a variant build are reported
+    separately and neither is mistaken for the other."""
+    folds = named - len(positions)
+    return {
+        "folds": folds,
+        "positions_with_more_than_one_naming": sum(
+            1 for position in positions if position.get(count_key, 1) > 1
+        ),
+        "folds_per_final_position": folds / len(positions) if positions else 0.0,
+    }
 
 
 def assign_position_ids(positions: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1385,6 +1489,52 @@ def _seed_reads_from_prior_pin(
         )
 
 
+def _accumulated_totals(
+    prior: Mapping[str, Any] | None,
+    usage: Mapping[str, int] | None,
+    cost: float | None,
+    wall_time_sec: float,
+) -> dict[str, Any]:
+    """One stage's `usage`/`cost_usd`/`wall_time_sec`/`runs`, ACCUMULATED
+    under the pin rather than overwritten by whatever this process happened
+    to spend (issue #830, part B).
+
+    `usage_for_pass` reports what THIS process accumulated, so a resumed run
+    -- which by design makes no call -- reports nothing, and writing that
+    straight into `map.json` erased the paid run's figures. Measured live:
+    `9b796b3a6312b329-category` carried `cost_usd: null` / `wall_time_sec:
+    34.37` over a paid run of $0.7052 / 2,466s. A build is never free
+    because the last run that touched it was.
+
+    `cost_usd` stays `None` only when neither the prior manifest nor this
+    run has a figure -- an unpriced model must not read as $0, and a prior
+    manifest carrying a cost but no `usage` (the hand-patched variant build:
+    the dollars were recorded, the token totals never were) carries that cost
+    forward regardless. `runs` says
+    how many runs the totals cover, without which a reader cannot tell one
+    paid pass from five. A `--force` rebuild accumulates like any other run:
+    the money was spent, and `runs` is what says the total covers work that
+    was later set aside."""
+    prior = prior or {}
+    totals = dict(prior.get("usage") or {})
+    for key, value in (usage or {}).items():
+        totals[key] = totals.get(key, 0) + value
+    prior_cost = prior.get("cost_usd")
+    return {
+        "usage": totals or None,
+        "cost_usd": None
+        if prior_cost is None and cost is None
+        else (prior_cost or 0.0) + (cost or 0.0),
+        "wall_time_sec": (prior.get("wall_time_sec") or 0.0) + wall_time_sec,
+        # A prior manifest with no `runs` key was written before this
+        # accumulation existed, and it still stands for a run that happened
+        # -- including the paid variant build whose figures are being
+        # patched back by hand. Counting it as zero would report the pair as
+        # one run.
+        "runs": int(prior.get("runs") or (1 if prior else 0)) + 1,
+    }
+
+
 def run_map_build(
     *,
     answers_dir: Path | None = None,
@@ -1453,7 +1603,16 @@ def run_map_build(
     reads are the DEFAULT build's, and seeding from them would silently
     reproduce the very map this variant exists to be compared against).
     Stage 2, relations, is skipped -- it is slice 07's, and the variant's
-    manifest carries no relations block."""
+    manifest carries no relations block.
+
+    **Issue #830: a category-grouped build consolidates between extraction
+    and merge.** `axial.argmap.consolidate.run_consolidation` reads each
+    category's own per-group arguments and says what recurs among them,
+    ITERATING until one call reads everything the category has left, on its
+    own resume ledger (`consolidation_reads.jsonl`) and under its own pass
+    name; the merge below is then restricted to folding across categories. The manifest reports raw, consolidated and merged positions
+    as three counts, and the two stages' folds separately (`consolidation`
+    and `embedding_merge`). Nothing here runs under `GROUPING_BAG`."""
     started = time.monotonic()
     if grouping not in GROUPING_MODES:
         raise MapError(f"unknown grouping {grouping!r} (expected one of {GROUPING_MODES})")
@@ -1475,6 +1634,10 @@ def run_map_build(
     category_grouped = grouping == GROUPING_CATEGORY
     outdir = Path(map_dir) / (f"{pin}{CATEGORY_VARIANT_SUFFIX}" if category_grouped else pin)
     outdir.mkdir(parents=True, exist_ok=True)
+    # Read before anything overwrites it: this build's cost and wall time
+    # accumulate onto whatever earlier runs under this pin already spent
+    # (issue #830, `_accumulated_totals`).
+    prior_manifest = _load_json_or_none(outdir / "map.json")
     if guard:
         claim_single_instance(outdir)
     log(f"corpus pin {pin} | grouping {grouping} -> {outdir}")
@@ -1575,9 +1738,17 @@ def run_map_build(
     }
     prior_source_ids: set[str] = set()
     if prior_pin_dir is not None:
-        prior_manifest = _load_json_or_none(prior_pin_dir / "map.json")
-        if prior_manifest is not None:
-            prior_source_ids = set(prior_manifest.get("source_ids", []))
+        # A DIFFERENT manifest from `prior_manifest` above, and it must
+        # keep a different name (issue #830, review): that one is this
+        # outdir's own, the figures this run accumulates onto, and this one
+        # is the previous pin's, read for `source_ids` and nothing else.
+        # Sharing the name made a default build accumulate a foreign pin's
+        # dollars -- and erase its own to `null` when that file would not
+        # parse, which is part B's own defect on the path part B did not
+        # exercise.
+        prior_pin_manifest = _load_json_or_none(prior_pin_dir / "map.json")
+        if prior_pin_manifest is not None:
+            prior_source_ids = set(prior_pin_manifest.get("source_ids", []))
     units_total = len(jobs)
     units_reused = sum(1 for job in jobs if (job.bag, job.slice_index) in already_on_disk)
     units_asked_touching_new = sum(
@@ -1626,19 +1797,154 @@ def run_map_build(
         f"failed reads {len(errors)} ({passages_in_failed_reads} passage(s))"
     )
 
-    merged = merge_positions(raw_positions, encode)
-    stamped = assign_position_ids(merged)
-    log(f"merged positions {len(stamped)} (from {len(raw_positions)} raw)")
-
-    with (outdir / "positions.jsonl").open("w", encoding="utf-8") as handle:
-        for position in stamped:
-            handle.write(json.dumps(position, ensure_ascii=False) + "\n")
-
     usage = client.usage_for_pass(PASS_NAME)
     model = client.model_for_pass(PASS_NAME)
     cost = (
         estimate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) if usage else None
     )
+
+    # ------------------------------------------------------------------
+    # Consolidation (issue #830), between extraction and merge, and only
+    # for a category-grouped build.
+    # ------------------------------------------------------------------
+    # A category is read one `claim x mechanism` cell at a time, so an
+    # argument running through several cells is named once per cell. Without
+    # this stage the only thing reuniting those namings is the embedding
+    # merge below, which folds by wording -- exactly the failure mode
+    # `docs/approach-positions-not-names.md` §6 calls disqualifying. The
+    # default build has no such split and needs no such stage.
+    consolidation_manifest: dict[str, Any] | None = None
+    positions_to_merge: Sequence[dict[str, Any]] = raw_positions
+    if category_grouped:
+        # Imported here for the same reason `grouping` is: that module
+        # imports this one for `EXTRACT_SLICE`/`WORKERS`/`MapError`, so a
+        # top-level import either way is a cycle.
+        from axial.argmap.consolidate import (
+            PASS_NAME as CONSOLIDATE_PASS_NAME,
+            POSITION_CONSOLIDATE_REASONING,
+            STOPPED_CONVERGED,
+            STOPPED_FINAL_ROUND_FAILED,
+            STOPPED_NO_PROGRESS,
+            STOPPED_ROUND_CAP,
+            consolidation_reads_path,
+            run_consolidation,
+            write_consolidation_ledger_aside,
+        )
+
+        consolidation_started = time.monotonic()
+        if force:
+            set_aside = write_consolidation_ledger_aside(outdir, _force_aside_suffix())
+            if set_aside is not None:
+                log(f"--force: set aside {set_aside} prior consolidation read(s)")
+        consolidation = run_consolidation(
+            reads,
+            client=client,
+            reads_path=consolidation_reads_path(outdir),
+            workers=workers,
+            log=log,
+        )
+        positions_to_merge = consolidation.positions
+        consolidation_folds = fold_stats(
+            len(raw_positions), positions_to_merge, "consolidated_from"
+        )
+        outcomes = consolidation.outcomes
+        consolidation_usage = client.usage_for_pass(CONSOLIDATE_PASS_NAME)
+        consolidation_model = client.model_for_pass(CONSOLIDATE_PASS_NAME)
+        log(
+            f"consolidated positions {len(positions_to_merge)} (from {len(raw_positions)} raw; "
+            f"{consolidation_folds['folds']} fold(s) over "
+            f"{consolidation_folds['positions_with_more_than_one_naming']} position(s))"
+        )
+        # Nested rather than mixed into the manifest's own fields, the same
+        # arrangement the relations block already has: this manifest now
+        # describes three stages and none of them overwrites another's
+        # counts, usage or cost.
+        consolidation_manifest = {
+            "counts": {
+                "categories": consolidation.categories,
+                "categories_passed_through": consolidation.categories_passed_through,
+                # Was this category ever too big for ONE call -- read off
+                # round 1's own slice count, not off the rounds it took. A
+                # category cut into four slices that folds nothing stops
+                # after one round and would otherwise report itself as
+                # never sliced (issue #830, review).
+                "categories_sliced": sum(1 for o in outcomes if o.round_one_slices > 1),
+                # How each category ENDED. Only `converged` means one call
+                # read everything it had left; the other three still hold
+                # namings nothing reunited, and are the number to watch.
+                "categories_converged": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_CONVERGED
+                ),
+                "categories_stopped_no_progress": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_NO_PROGRESS
+                ),
+                "categories_stopped_at_round_cap": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_ROUND_CAP
+                ),
+                "categories_stopped_final_round_failed": sum(
+                    1 for o in outcomes if o.stopped == STOPPED_FINAL_ROUND_FAILED
+                ),
+                "rounds": sum(o.rounds for o in outcomes),
+                "max_rounds_one_category": max((o.rounds for o in outcomes), default=0),
+                "reads": len(consolidation.records),
+                "failed_reads": len([r for r in consolidation.records if "error" in r]),
+                # What this RESUME cost, all zero on a first run. A retried
+                # read changes its category's arguments, so every later
+                # round of that category is asked again at full price
+                # (`reads_reasked_after_retry`) -- the pass says so up front
+                # and records it here. `reads_abandoned` is a read that has
+                # failed as many times as the client would attempt one call
+                # and will never be asked again without `--force` (issue
+                # #830).
+                "reads_retried": consolidation.reads_retried,
+                "reads_reasked_after_retry": consolidation.reads_reasked_after_retry,
+                "reads_abandoned": consolidation.reads_abandoned,
+                "dropped_handles": sum(
+                    record.get("dropped_handles", 0) for record in consolidation.records
+                ),
+                # The re-read. A position standing for ten or more raw
+                # arguments is read again against them before the round it
+                # came out of finishes, because at that size the blind
+                # audit found every fold wrong (issue #830). These four say
+                # how often it fired, how often it found a heading rather
+                # than a claim, what it broke the heading into, and how
+                # often the extra call failed and left the position
+                # standing. `positions_re_read` at zero on a sliced
+                # category-grouped build is the shape of the defect the
+                # first trigger had, and worth watching.
+                "positions_re_read": len(consolidation.re_reads),
+                "positions_split": sum(1 for r in consolidation.re_reads if r.get("split")),
+                "split_subgroups": sum(
+                    len(r["positions"]) for r in consolidation.re_reads if r.get("split")
+                ),
+                "failed_re_reads": len([r for r in consolidation.re_reads if "error" in r]),
+                "raw_positions": len(raw_positions),
+                "consolidated_positions": len(positions_to_merge),
+                **consolidation_folds,
+            },
+            "model": consolidation_model,
+            "reasoning": POSITION_CONSOLIDATE_REASONING,
+            **_accumulated_totals(
+                (prior_manifest or {}).get("consolidation"),
+                consolidation_usage,
+                estimate_cost(
+                    consolidation_model,
+                    consolidation_usage["prompt_tokens"],
+                    consolidation_usage["completion_tokens"],
+                )
+                if consolidation_usage
+                else None,
+                time.monotonic() - consolidation_started,
+            ),
+        }
+
+    merged = merge_positions(positions_to_merge, encode, cross_category_only=category_grouped)
+    stamped = assign_position_ids(merged)
+    log(f"merged positions {len(stamped)} (from {len(positions_to_merge)} raw)")
+
+    with (outdir / "positions.jsonl").open("w", encoding="utf-8") as handle:
+        for position in stamped:
+            handle.write(json.dumps(position, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
     # Stage 2: relations between positions (issue #572, PR 2 of 4).
@@ -1649,6 +1955,7 @@ def run_map_build(
     # run over yet. The manifest then carries no relations block at all.
     relations_manifest: dict[str, Any] | None = None
     if not category_grouped:
+        relations_started = time.monotonic()
         by_id = {position["position_id"]: position for position in stamped}
         neighbourhoods = build_neighbourhoods(stamped, encode)
         singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
@@ -1728,8 +2035,15 @@ def run_map_build(
             },
             "model": relation_model,
             "reasoning": POSITION_RELATE_REASONING,
-            "usage": relation_usage,
-            "cost_usd": relation_cost,
+            # Accumulated under the pin, not overwritten (issue #830): a
+            # resumed relate stage makes no call and would otherwise report
+            # the paid stage as free, exactly as the position stage did.
+            **_accumulated_totals(
+                (prior_manifest or {}).get("relations"),
+                relation_usage,
+                relation_cost,
+                time.monotonic() - relations_started,
+            ),
         }
 
     manifest = {
@@ -1764,6 +2078,16 @@ def run_map_build(
             "units_asked": units_total - units_reused,
             "units_asked_touching_new": units_asked_touching_new,
             "raw_positions": len(raw_positions),
+            # Issue #830: three counts, never one. A category-grouped build
+            # folds twice -- the consolidation pass inside a category, then
+            # the embedding merge across categories -- and a single
+            # raw -> merged pair hides which stage did the work. The default
+            # build has no consolidation stage and emits only its own two,
+            # the same "a mode emits only its own name" rule `groups`/`bags`
+            # already follows.
+            **(
+                {"consolidated_positions": len(positions_to_merge)} if category_grouped else {}
+            ),
             "merged_positions": len(stamped),
             # Issue #829: the old single `passages_placed` was the slot sum
             # under a name that read as a passage count. Both figures are
@@ -1801,10 +2125,30 @@ def run_map_build(
         # different one is responsible for knowing it no longer matches what
         # this field claims.
         "encoder": ENCODER_MODEL,
-        "usage": usage,
-        "cost_usd": cost,
-        "wall_time_sec": time.monotonic() - started,
+        # Issue #830 (founder's comparability note): the embedding merge's
+        # own folds, reported the three ways the default build's merge is
+        # read -- 269 folds over 207 positions, 0.139 per final position, at
+        # 2,206 raw. In a variant build this covers the CROSS-CATEGORY folds
+        # only; the consolidation pass's own folds are reported under
+        # `consolidation`, never mixed in here.
+        "embedding_merge": fold_stats(len(positions_to_merge), stamped, "named_times"),
+        # Accumulated under the pin (issue #830, part B), not overwritten by
+        # what this process spent -- see `_accumulated_totals`.
+        #
+        # Read these three as different scopes, deliberately (issue #830,
+        # review). `usage` and `cost_usd` here are the EXTRACTION pass alone
+        # (`position_extract`); the consolidation and relations stages carry
+        # their own under their own blocks, and the run's total money is
+        # this plus those. `wall_time_sec` is the WHOLE build -- every stage,
+        # plus selection, grouping and the merge, which belong to no stage --
+        # so the stages' own wall times are subsets of it and must never be
+        # added to it. Measuring a position-stage span instead would be a
+        # fiction: the stage is not contiguous, since the merge runs after
+        # consolidation.
+        **_accumulated_totals(prior_manifest, usage, cost, time.monotonic() - started),
     }
+    if consolidation_manifest is not None:
+        manifest["consolidation"] = consolidation_manifest
     if relations_manifest is not None:
         manifest["relations"] = relations_manifest
     (outdir / "map.json").write_text(

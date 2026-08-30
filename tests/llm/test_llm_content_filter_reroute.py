@@ -17,7 +17,7 @@ And   `content_filter` is NEVER retried same-model: the single completion is
       (an `axial.llm.LLMError` subclass) is raised so callers can quarantine
       the chunk instead of failing the whole source
 And   `error` is treated as a transient provider fault -- backoff-retried
-      within the existing `_MAX_ATTEMPTS` budget, exactly like a transport
+      within the existing `MAX_ATTEMPTS` budget, exactly like a transport
       error or a 5xx, same model each attempt, and succeeds if a later
       attempt returns `"stop"`
 
@@ -120,10 +120,10 @@ def test_length_finish_reason_retries_same_prompt_against_same_model_and_succeed
 
 def test_length_finish_reason_exhausts_retry_budget_and_raises_truncation_error(monkeypatch):
     """A completion that stays truncated on every attempt must exhaust the
-    existing `_MAX_ATTEMPTS` budget -- always against the same primary model
+    existing `MAX_ATTEMPTS` budget -- always against the same primary model
     -- and then raise the existing typed truncation `OpenRouterError`."""
     import axial.llm as llm_module
-    from axial.llm import OpenRouterClient, OpenRouterError, _MAX_ATTEMPTS
+    from axial.llm import OpenRouterClient, OpenRouterError, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     models_seen: list[str] = []
@@ -143,7 +143,7 @@ def test_length_finish_reason_exhausts_retry_budget_and_raises_truncation_error(
     with pytest.raises(OpenRouterError, match="truncat"):
         client.complete("prompt text")
 
-    assert models_seen == [PRIMARY_MODEL] * _MAX_ATTEMPTS
+    assert models_seen == [PRIMARY_MODEL] * MAX_ATTEMPTS
 
 
 # --- criterion 2: "content_filter" reroutes to the fallback, never retries -
@@ -262,11 +262,11 @@ def test_error_finish_reason_is_backoff_retried_like_a_transient_fault(monkeypat
 
 def test_error_finish_reason_exhausts_retry_budget_and_raises_transient_error(monkeypatch):
     """An `error` finish_reason that persists on every attempt must exhaust
-    the existing `_MAX_ATTEMPTS` budget -- always against the same primary
+    the existing `MAX_ATTEMPTS` budget -- always against the same primary
     model, never the fallback -- and raise a typed error that is NOT
     `ContentRefusedError` (that type is reserved for moderation refusals)."""
     import axial.llm as llm_module
-    from axial.llm import ContentRefusedError, OpenRouterClient, OpenRouterError, _MAX_ATTEMPTS
+    from axial.llm import ContentRefusedError, OpenRouterClient, OpenRouterError, MAX_ATTEMPTS
 
     monkeypatch.setattr(llm_module, "_sleep", lambda seconds: None)
     models_seen: list[str] = []
@@ -290,7 +290,7 @@ def test_error_finish_reason_exhausts_retry_budget_and_raises_transient_error(mo
         "a transient 'error' finish_reason must never surface as a content "
         "refusal -- ContentRefusedError is reserved for content_filter"
     )
-    assert models_seen == [PRIMARY_MODEL] * _MAX_ATTEMPTS, (
+    assert models_seen == [PRIMARY_MODEL] * MAX_ATTEMPTS, (
         f"an 'error' finish_reason must never reroute to the fallback -- saw {models_seen!r}"
     )
 
