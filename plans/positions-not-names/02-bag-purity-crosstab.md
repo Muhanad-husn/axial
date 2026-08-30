@@ -22,8 +22,15 @@ central diagnosis is wrong and the feature stops.
   (`bag_state.json`, `data/vocabulary/<column>/assignments.jsonl`); zero
   model calls.
 - **Valuable:** turns the approach's central claim into a number per axis,
-  before any paid rebuild; reused after slice 05 to verify the re-formed
-  groups.
+  before any paid rebuild.
+
+  > **Struck 2026-08-30 ([#837](https://github.com/Muhanad-husn/axial/issues/837)):**
+  > this originally promised the tool would be "reused after slice 05 to verify
+  > the re-formed groups". It cannot be. `map purity` joins *bags* against a
+  > vocabulary column, and under category grouping the groups **are** the
+  > categories, so it reads 1.000 by construction and measures nothing. Slice
+  > 06's D2 is that arithmetic re-pointed from bags to positions, on a
+  > held-out axis that was never grouped on.
 - **Small:** one pure-function module, one CLI wiring, fixtures.
 - **Testable:** deterministic output over fixture bags and assignments.
 

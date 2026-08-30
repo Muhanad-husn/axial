@@ -1,9 +1,48 @@
 # Positions, not names
 
+> ## Shelved 2026-08-30. The rebuild did not clear its own bar.
+>
+> This document proposed re-forming the argument map around categories instead
+> of wording similarity. Slices 1–5 of §13 were built and the structural
+> comparison was run
+> ([#831](https://github.com/Muhanad-husn/axial/issues/831),
+> [#846](https://github.com/Muhanad-husn/axial/pull/846)). **The verdict was
+> no-go**, and the founder shelved the direction the same day. The remaining
+> slices — profiles and ranked relations, the retrieval address arm, and the
+> demolition of the name layer — **are not being built.**
+>
+> **Nothing here was deleted.** §9's ordering rule held: nothing comes out
+> until the re-formed map beats the current one, and it did not. The name
+> pages, gather, the residue pass and the retrieval loop all stand untouched,
+> and the default build path is unchanged — `--grouping` still defaults to
+> `bag`, the variant writes to its own directory, and the consolidation stage
+> is gated on category grouping.
+>
+> **What the comparison found**, in full in
+> [`data/logs/2026-08-30-map-structural-comparison/`](../data/logs/2026-08-30-map-structural-comparison/):
+>
+> | metric | reading | against the bar |
+> |---|---|---|
+> | D1 book-spread, size-matched | rises in every band; 2.6× in the plurality band | **not resolved** — the replicate that supplies the error bar was killed |
+> | D2 held-out `position` purity | 0.6620 against the default build's 0.7597 | **failed** — 0.0977 *below*, three times its floor |
+> | D3 member coherence | top-band margin +0.0048 against that null's own spread of 0.0078 | **not resolved at this sample** |
+> | D4 passages reaching no position | 8.5% against the 6.9% ceiling | **failed** |
+> | D5 blind hand-sample | not run — a veto cannot rescue two failures | — |
+>
+> Failure conditions 2 and 4 of #831 are met. The one thing the rebuild did
+> deliver is book-spread: positions under category grouping reach across many
+> more books, in every size band. It could not be shown to have improved
+> whether a position is *one argument*, and it lost more passages doing it.
+>
+> **Read the rest of this document as the record of what was tried and why,
+> not as a plan.** Where a section makes a claim the measurement later
+> contradicted, the correction is marked inline.
+
 **An architecture approach for Axial. Drafted 2026-08-28, revised the same day
 after review (see
 [`approach-positions-not-names-review.md`](approach-positions-not-names-review.md)).
-This version is the buildable one: §13 is written to take a tdd-plan directly.**
+§13 was written to take a tdd-plan directly, and did: slices 1–5 were built
+from it.**
 
 The map is right and stays. What was missing is a sense of what a passage is
 about, and the interrogation has been producing it all along. The map gets
@@ -519,10 +558,25 @@ not the cake.
 - The pass that reads across name pages looking for disagreement.
 - The tool-driven retrieval loop built to walk that structure.
 - The residue pass. It exists to rescue what the old clustering left out; once
-  categories decide what is comparable, there is no leftover of that kind —
-  and measured, the category path loses *fewer* passages than the bagging does
-  (a half-percent refusal on `claim` against several hundred passages the
-  current build places nowhere or leaves unassigned).
+  categories decide what is comparable, there is no leftover of that kind.
+
+  > **Corrected 2026-08-30 ([#837](https://github.com/Muhanad-husn/axial/issues/837)),
+  > and this one was measurable in advance.** This bullet originally claimed
+  > the category path loses *fewer* passages than bagging does, reading the
+  > several hundred passages the current build places nowhere as a cost of
+  > wording-similarity bagging that categories would recover. That was wrong on
+  > the artifacts before the rebuild ran: **all 6,010 selected passages were
+  > bagged and shown to the model** (`reads.jsonl`'s `shown` sums to 6,010).
+  > The passages reaching no position are the *extraction model declining to
+  > place them* — 414 distinct chunk ids missing from `positions.jsonl`, 6.9%
+  > — and category grouping has no mechanism that changes that.
+  >
+  > It went the other way when measured. The category build declined **457**
+  > passages against the default build's 373, and lost **8.5%** against 6.9%.
+  > That is D4, and it is one of the two conditions that failed. Separately,
+  > the `claim × mechanism` inner split starts at a deterministic **13.3%**
+  > loss before any model call ([#828](https://github.com/Muhanad-husn/axial/issues/828));
+  > it was rejected on that ground.
 - Embedding-based bagging as the thing that decides what gets read together.
   It survives only demoted, as an inner sizing split (§6), if measurement
   picks that variant.
@@ -630,7 +684,34 @@ why §13 measures structure first.
 ## 13. The work, in order
 
 Each step is cheap, each can kill the plan early, and nothing in the name
-layer is touched until the last. This is the section a tdd-plan starts from.
+layer is touched until the last. This is the section the tdd-plan started
+from.
+
+> **Outcome, 2026-08-30.** Slices 1–5 below were built and merged; slice 5, the
+> structural comparison, returned **no-go** and the founder shelved the
+> direction. **Slices 6, 7 and 8 below are retired unbuilt** — they were gated
+> on that go, and it never came. The design worked as intended in one respect:
+> a step that could kill the plan early did exactly that, before anything was
+> deleted and before the expensive slices were started.
+>
+> **A numbering note.** This section counts the structural comparison as
+> "Slice 5"; the issues, plan files and branches count it as **06**, because
+> the built plan splits this section's slice 4 into the re-formed build (04)
+> and the consolidation pass (05). The mapping, for anyone following a
+> reference: §13's slices 4/5/6/7/8 are the plan's 04+05/06/07/08/09. §13 has
+> run one behind the plan files since slice 4 and was never renumbered.
+>
+> | §13 | plan | issue | outcome |
+> |---|---|---|---|
+> | Slice 1 | 01 | [#826](https://github.com/Muhanad-husn/axial/issues/826) | built — the `claim` scheme is committed and the corpus filed against it |
+> | Slice 2 | 02 | [#827](https://github.com/Muhanad-husn/axial/issues/827) | built — the diagnosis held; wording bags do shred a categorised axis |
+> | — | 02b | [#838](https://github.com/Muhanad-husn/axial/issues/838) | built — the held-out `position` column, drawn twice, giving D2 its baseline and its instability floor |
+> | Slice 3 | 03 | [#828](https://github.com/Muhanad-husn/axial/issues/828) | built — the `claim × mechanism` split was computed and **rejected** on a 13.3% deterministic loss |
+> | Slice 4 | 04, 05 | [#829](https://github.com/Muhanad-husn/axial/issues/829), [#830](https://github.com/Muhanad-husn/axial/issues/830) | built — the variant map exists at `data/map/<pin>-category/`, the default build untouched beside it |
+> | Slice 5 | 06 | [#831](https://github.com/Muhanad-husn/axial/issues/831) | built, run, **no-go** |
+> | Slice 6 | 07 | not filed | **retired unbuilt** |
+> | Slice 7 | 08 | not filed | **retired unbuilt** |
+> | Slice 8 | 09 | not filed | **retired unbuilt** — nothing was demolished |
 
 **Slice 1 — the claim vocabulary is committed and assigned.** Run the drafting
 pass over the `claim` column, founder edits, the scheme is committed to
@@ -694,19 +775,29 @@ cross-book" is not the test. Done when: a run log states the comparison
 against D1–D5, names which failure conditions were and were not met, and
 carries the founder's go/no-go on everything after it.
 
-**Slice 6 — profiles and profile-ranked relations.** Positions inherit their
+> **Run 2026-08-30, and it returned no-go.** D2 and D4 failed, D1 and D3 were
+> not resolved at this sample, D5 was not run because a veto cannot rescue two
+> failures. The forced replicate was launched and killed at ~206 of 226
+> extraction reads once two metrics had already failed — it buys an error bar
+> on a verdict it cannot change. Its cost estimate here (~$0.42) predates the
+> consolidation pass: a full forced replicate is **~$2.50 and ~7.5 hours**.
+> The comparison itself is `axial map compare`, offline, zero model calls, and
+> stays in the codebase whatever happens to this direction. Full log:
+> `data/logs/2026-08-30-map-structural-comparison/`.
+
+**RETIRED UNBUILT (2026-08-30).** **Slice 6 — profiles and profile-ranked relations.** Positions inherit their
 passages' category values; relation neighbourhoods are proposed from profile
 rank (same region, opposed stance, different books) instead of
 argument-sentence similarity; the relate pass itself is unchanged. Done when:
 a relations build over the re-formed map reports its cross-author rate next
 to the current build's.
 
-**Slice 7 — retrieval enters through the map's address layer.** Question →
+**RETIRED UNBUILT (2026-08-30).** **Slice 7 — retrieval enters through the map's address layer.** Question →
 region (axis intersection) → positions → relations → passages, names applied
 as a terminal filter. Done when: the sweep runs this arm end to end and
 records it like any other arm.
 
-**Slice 8 — demolition.** Only now, and only for what slices 5–7 made
+**RETIRED UNBUILT (2026-08-30).** **Slice 8 — demolition.** Only now, and only for what slices 5–7 made
 redundant: name pages, gather, the name-walking retrieval loop, the residue
 pass, the vocabulary measurement apparatus, and — last of all — the parts of
 the evaluation code nothing remaining reads. Each deletion cites the slice
@@ -715,5 +806,12 @@ that made it safe.
 ---
 
 *Revised after review, 2026-08-28. Everything above is architecture and logic;
-§13 is the build order. The numbers quoted are measurements already taken —
+§13 was the build order. The numbers quoted are measurements already taken —
 including this revision's own cross-tab — not projections.*
+
+*Shelved 2026-08-30 after the structural comparison returned no-go
+([#831](https://github.com/Muhanad-husn/axial/issues/831),
+[#846](https://github.com/Muhanad-husn/axial/pull/846)); §9's residue claim
+corrected and §13's remaining slices retired the same day
+([#837](https://github.com/Muhanad-husn/axial/issues/837)). Nothing described
+here was deleted, and the default build path is untouched.*
