@@ -1,0 +1,120 @@
+axial map compare -- A is the baseline (the default build), B is the variant
+seed 831, 20 permutation trial(s) per null; vocabulary D:\axial\data\vocabulary
+
+IDENTITY (a field absent on one side is reported, never a mismatch -- a bag-grouped build records no grouping block at all)
+  field                       A                                   B
+  path                        D:\axial\data\map\9b796b3a6312b329  D:\axial\data\map\9b796b3a6312b329-category
+  corpus pin                  9b796b3a6312b329                    9b796b3a6312b329
+  answers pin                 not recorded                        not recorded
+  grouping mode               not recorded                        category
+  scheme version `claim`      not recorded                        2026-08-28-claim-v1
+  scheme version `mechanism`  not recorded                        2026-08-28-mechanism-v1
+
+D1 BOOK-SPREAD RATIO, SIZE-MATCHED (mean distinct source_id per position, over the same figure under a seeded permutation of that build's own placed pool into positions of identical sizes)
+  build  band  positions  slots  observed  null   ratio  cross-book  cross-book null
+  A      2     397        794    1.16      1.96   0.59   16.1%       95.9%
+  A      3-5   519        1923   1.31      3.51   0.37   24.1%       99.9%
+  A      6-10  192        1397   1.56      6.44   0.24   39.1%       100.0%
+  A      11+   66         1110   1.77      12.31  0.14   39.4%       100.0%
+  B      2     256        512    1.29      1.96   0.66   28.9%       96.5%
+  B      3-5   260        968    1.72      3.52   0.49   47.7%       99.9%
+  B      6-10  117        877    2.54      6.64   0.38   70.1%       100.0%
+  B      11+   128        2713   5.10      14.24  0.36   89.1%       100.0%
+  plurality band on B (the band holding the most member slots): 11+
+
+D2 HELD-OUT `position`-AXIS PURITY, SIZE-MATCHED (the modal `position` category's share of a position's CATEGORISED members; the axis is built and never grouped on)
+  build  scored  excluded (<2 categorised)  of which 0 categorised  member-weighted  null    lift   per-position mean
+  A      1121    816                        95                      0.7597           0.4041  1.880  0.7804
+  B      717     516                        75                      0.6620           0.3459  1.914  0.7079
+  categorised base A: 5549 of 6010 selected (92.3%) -- counted over this build's own group state of 6010 chunk id(s), 0 selected passage(s) outside it
+  categorised base A: 5257 of 5596 placed (93.9%)
+  categorised base B: 5537 of 6010 selected (92.1%) -- counted over this build's own group state of 5993 chunk id(s), 17 selected passage(s) outside it
+  categorised base B: 5174 of 5497 placed (94.1%)
+  assignment-instability floor: 0.0331 purity points (measured 2026-08-29 over two model draws of the `position` column)
+  `position` coverage per book for THIS DRAW (D:\axial\data\vocabulary), over the passages either build placed -- worst first, and a property of this draw, never of the corpus: which books a draw refuses on does not reproduce across models (#838)
+    vignal-2021-c7005c2bf8ef: 70 of 121 (57.9%)
+    batatu-1999-598624067df3: 113 of 187 (60.4%)
+    tilly-1978-f908c910464c: 97 of 154 (63.0%)
+    beshara-2011-8410a9059300: 191 of 226 (84.5%)
+    heydemann-2004-72a4a9a9b3b0: 139 of 158 (88.0%)
+    kao-2025-ab19e646ab7d: 98 of 109 (89.9%)
+    wimmer-2013-a67941b77943: 134 of 148 (90.5%)
+    chouliaraki-2024-91e7fc84f05c: 69 of 76 (90.8%)
+    hinnebusch-1990-ac29981e616e: 200 of 218 (91.7%)
+    ungor-2020-ae5701dcc706: 79 of 86 (91.9%)
+    malesevic-2007-323a2518e61b: 136 of 146 (93.2%)
+    mann-v4-2013-1b7e828e0199: 277 of 290 (95.5%)
+    smith-2009-cba7b6f3dfba: 68 of 71 (95.8%)
+    gelvin-1998-f7e1df5f9b1d: 168 of 174 (96.6%)
+    gould-2003-abae3539cf15: 89 of 92 (96.7%)
+    malesevic-2013-5d3ec1809b12: 203 of 209 (97.1%)
+    white-2011-5f35a47d9657: 102 of 105 (97.1%)
+    ayubi-1995-16fd6a2e503f: 294 of 302 (97.4%)
+    gellner-1981-a8b0206cb566: 229 of 234 (97.9%)
+    hall-2006-449559bfe4dc: 207 of 211 (98.1%)
+    kalyvas-2006-0b5817b2642e: 264 of 269 (98.1%)
+    wedeen-2019-3ae1f7af318d: 125 of 127 (98.4%)
+    bayat-2017-ce6bb0643cfb: 112 of 113 (99.1%)
+    elcheroth-2017-78f0cccef5b9: 112 of 113 (99.1%)
+    mann-v1-2012-5f90ead66c93: 341 of 343 (99.4%)
+    agamben-2005-b22edc40e0fc: 48 of 48 (100.0%)
+    caspersen-2012-fbc0efe4fffc: 92 of 92 (100.0%)
+    heydemann-2000-66701ffbb36c: 175 of 175 (100.0%)
+    jackson-1990-7eb3f39a639f: 116 of 116 (100.0%)
+    kandiah-2018-454c87b22e16: 27 of 27 (100.0%)
+    malesevic-2010-fd2cbe41384f: 185 of 185 (100.0%)
+    malesevic-2026-4faeb528594d: 17 of 17 (100.0%)
+    mann-v2-1993-ec759675dcbd: 448 of 448 (100.0%)
+    mann-v3-2012-3e9f48ff605a: 315 of 315 (100.0%)
+    zaum-2007-834d3343aa95: 106 of 106 (100.0%)
+
+D3 MEMBER COHERENCE (mean cosine of members' `claim` texts to their position's own centroid, sentence-transformers/all-MiniLM-L6-v2; the floor is the midpoint of A's own band value and A's own band null)
+  build  band  positions scored  observed  null    floor
+  A      2     397               0.9019    0.7855  0.8437
+  A      3-5   519               0.8495    0.6710  0.7603
+  A      6-10  192               0.8156    0.5878  0.7017
+  A      11+   66                0.7913    0.5374  0.6643
+  B      2     256               0.8738    0.7865  0.8437
+  B      3-5   260               0.7911    0.6707  0.7603
+  B      6-10  117               0.7253    0.5844  0.7017
+  B      11+   128               0.6692    0.5306  0.6643
+  members with no `claim` text (missing, never scored 0): A 0 | B 0
+
+D4 PASSAGES REACHING NO POSITION (passages_selected minus the DISTINCT chunk ids in positions.jsonl -- never a sum of position sizes, which double-counts a passage sitting in two positions)
+  A: 6010 selected, 5596 distinct placed, 414 unplaced = 6.9% of selected (member slots 5987, which is not a passage count)
+     of which: declined by the extraction model 373, shown in a failed read 35, reaching no group at all not recorded
+  B: 6010 selected, 5497 distinct placed, 513 unplaced = 8.5% of selected (member slots 5542, which is not a passage count)
+     of which: declined by the extraction model 457, shown in a failed read 31, reaching no group at all 17
+
+D5 BLIND PAIRED HAND-SAMPLE
+  not computed -- D5 is a human hand-sample: 12 positions from each build, stratified to the same size bands, shuffled, judged before the labels are revealed
+
+CONTEXT (reported, never deciding -- fewer positions, larger positions and a lower single-passage share follow from the extraction call count, not from quality)
+  A: 1937 position(s) | size p25/median/p75 1.0 / 2.0 / 4.0 | 5987 member slot(s) over 5596 distinct placed passage(s)
+     single-passage: 763 = 39.4% of 1937 position(s), 12.7% of 5987 member slot(s)
+     cross-book: 24.7% of 1174 position(s) of size 2+, 27.4% of 5987 member slot(s), 28.3% of 5596 distinct placed passage(s) -- band by band against its own null in D1's table above
+     reads 679 | units asked 0 | units reused 679 | cost not recorded | wall 157.2s
+     embedding merge: not recorded fold(s), n/a per final position
+     consolidation: no consolidation stage in this build
+  B: 1233 position(s) | size p25/median/p75 1.0 / 2.0 / 4.0 | 5542 member slot(s) over 5497 distinct placed passage(s)
+     single-passage: 472 = 38.3% of 1233 position(s), 8.5% of 5542 member slot(s)
+     cross-book: 51.8% of 761 position(s) of size 2+, 66.3% of 5542 member slot(s), 66.3% of 5497 distinct placed passage(s) -- band by band against its own null in D1's table above
+     reads 226 | units asked 0 | units reused 226 | cost $0.7052 | wall 26917.3s
+     embedding merge: 82 fold(s), 0.067 per final position
+     consolidation: 721 fold(s), 0.548 per final position (never added to the embedding merge's own -- two stages, two figures)
+
+NOISE (reporting only, per the approach doc's §6 noise policy)
+  `claim` assignment disagreement ~23% at n=100 (#826)
+  `position` two-model agreement 73.8% where assigned (n=84), 70.0% overall (#838)
+  `position` full-column label agreement 73.0% where both draws assigned, n=5,581 (#831)
+
+REPLICATE
+  not supplied -- the D1 and D2 replicate gaps were NOT measured, and no margin below is quoted against one
+
+VERDICT (the bar is issue #831's own)
+  D1: not resolved at this sample -- clears 2x the baseline in band 11+ and falls in no band, but the replicate gap was not measured
+  D2: failed -- 0.6620 clears the baseline's 0.7597 by -0.0977, which does not exceed the 0.0331 assignment-instability floor
+  D3: passed -- at or above the baseline/null midpoint in every band
+  D4: failed -- 8.5% of selected rises above the baseline's 6.9%
+  D5: not computed -- a blind paired hand-sample: 12 positions per build, size-stratified, shuffled, judged before the labels are revealed
+  overall: no-go on slices 07-09
