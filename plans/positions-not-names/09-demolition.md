@@ -4,7 +4,11 @@
 - **Slice slug:** demolition
 - **Branch:** feat/positions-not-names/09-demolition
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ✗ RETIRED UNBUILT (2026-08-30) — slice 06's structural
+  comparison returned **no-go** and the founder shelved the direction. This
+  plan was gated on a go that never came. Kept as the record of what the
+  direction would have built; nothing here was started, and nothing it names
+  for deletion was deleted.
 - **Walking skeleton?** no
 - **Gated on:** slices 06 (founder go), 07 and 08 shipped — nothing is
   deleted until what replaces it is live (approach §9's ordering rule).
