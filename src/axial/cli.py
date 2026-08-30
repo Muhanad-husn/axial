@@ -28,6 +28,13 @@ from axial.argmap.purity import (
     format_purity_report,
     parse_named_pair,
 )
+from axial.argmap.compare import (
+    DEFAULT_SEED as MAP_COMPARE_DEFAULT_SEED,
+    DEFAULT_TRIALS as MAP_COMPARE_DEFAULT_TRIALS,
+    CompareError,
+    compute_comparison,
+    format_comparison_report,
+)
 from axial.argmap.grouping import compute_grouping_report, format_grouping_report
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
@@ -976,6 +983,67 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="the vocabulary level to join on, for both claim and mechanism (default: each column's own max_level)",
+    )
+
+    map_compare_parser = map_subparsers.add_parser(
+        "compare",
+        help=(
+            "issue #831: the structural verdict on the re-formed map. Puts "
+            "two map builds side by side -- the default build first, the "
+            "category-grouped variant second -- and decides on five metrics: "
+            "D1 book-spread ratio and D2 held-out `position`-axis purity, "
+            "both size-matched against a seeded permutation of each build's "
+            "own placed pool; D3 member coherence as a band-by-band floor; "
+            "D4 passages reaching no position, counted as DISTINCT chunk ids "
+            "in positions.jsonl and never as a sum of position sizes; and D5, "
+            "a blind hand-sample this command names but never computes. Zero "
+            "model calls. Pass the variant's FORCED replicate with "
+            "--replicate: without it, D1 and D2 report 'not resolved at this "
+            "sample' rather than quoting a margin against a gap nobody "
+            "measured. Refuses when the builds disagree on the corpus pin, "
+            "the answers pin or a vocabulary scheme version"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "baseline_dir", help="the baseline (default) build's own pin directory, e.g. data/map/<pin>"
+    )
+    map_compare_parser.add_argument(
+        "variant_dir", help="the variant build's own directory, e.g. data/map/<pin>-category"
+    )
+    map_compare_parser.add_argument(
+        "--replicate",
+        default=None,
+        help=(
+            "the variant's FORCED replicate, in its own directory -- the "
+            "error bar every D1/D2 margin is quoted against. Its manifest "
+            "must read units_reused == 0 or the gap is reported as unusable"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "--vocabulary-dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path). `claim` and `position` are read",
+    )
+    map_compare_parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="the vocabulary level to read both columns at (default: each column's own max_level)",
+    )
+    map_compare_parser.add_argument(
+        "--seed",
+        type=int,
+        default=MAP_COMPARE_DEFAULT_SEED,
+        help=(
+            "the permutation null's seed -- the same seed gives the same "
+            f"figure twice (default: {MAP_COMPARE_DEFAULT_SEED})"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "--trials",
+        type=int,
+        default=MAP_COMPARE_DEFAULT_TRIALS,
+        help=f"permutation trials per null (default: {MAP_COMPARE_DEFAULT_TRIALS})",
     )
 
     eval_parser = subparsers.add_parser(
@@ -3815,6 +3883,37 @@ def _map_purity(
     return 0
 
 
+def _map_compare(
+    baseline_dir: str,
+    variant_dir: str,
+    replicate_dir: str | None,
+    vocabulary_dir: str | None,
+    level: int | None,
+    seed: int,
+    trials: int,
+) -> int:
+    """`axial map compare` (issue #831): zero model calls, like `_map_purity`
+    -- but not zero network. `compute_comparison` builds the local
+    sentence-transformer encoder itself for D3 when this command does not
+    inject one, which it never does, and on a cold cache that construction
+    reaches the HF hub."""
+    try:
+        report = compute_comparison(
+            Path(baseline_dir),
+            Path(variant_dir),
+            Path(replicate_dir) if replicate_dir is not None else None,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            level=level,
+            seed=seed,
+            trials=trials,
+        )
+    except (CompareError, NoVocabularyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_comparison_report(report))
+    return 0
+
+
 def _map_grouping_report(
     pin: str | None,
     map_dir: str | None,
@@ -4195,6 +4294,17 @@ def main(argv: list[str] | None = None) -> int:
             args.vocabulary_dir,
             args.level,
             args.named_pairs,
+        )
+
+    if args.command == "map" and args.map_command == "compare":
+        return _map_compare(
+            args.baseline_dir,
+            args.variant_dir,
+            args.replicate,
+            args.vocabulary_dir,
+            args.level,
+            args.seed,
+            args.trials,
         )
 
     if args.command == "map" and args.map_command == "grouping-report":
