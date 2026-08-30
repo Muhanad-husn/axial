@@ -52,6 +52,7 @@ Develop top to bottom. One slice = one red-green-refactor pass = one PR.
 | 07 | [profiles-and-ranked-relations](07-profiles-and-ranked-relations.md) | Positions carry a category profile and relation neighbourhoods are proposed from profile rank | ✗ retired unbuilt | — |
 | 08 | [retrieval-address-arm](08-retrieval-address-arm.md) | A question enters through the axis intersection — question → region → positions → relations → passages — as a sweep arm | ✗ retired unbuilt | — |
 | 09 | [demolition](09-demolition.md) | Name pages, gather, the name-walking loop, the residue pass, the category join (#825, absorbed) and the dead eval code are deleted, each deletion citing the slice that made it safe | ✗ retired unbuilt | — |
+| 10 [#850](https://github.com/Muhanad-husn/axial/issues/850) | [category-code-deleted](10-category-code-deleted.md) | The shelved category-grouping code (modules, build branch, CLI surface) is deleted in one PR; the record, the data and the default path stay | ☐ planned | — |
 
 ## Out of scope (whole feature)
 
