@@ -122,3 +122,49 @@ with `console.log`; both stay on the box.
 
 **Anything reading extraction's cost off the post-run manifest is reading a
 $0.7052 that was typed in.**
+
+## A second pass over the finished folds does not improve them (negative result)
+
+2026-08-30. The blind audit of the built map found folded positions whose
+standing sentence states something not every member asserts, and folds holding
+arguments that do not share a claim. The obvious cheap fix -- re-read every
+fold once against its own members, in one concurrent wave over the finished
+map, no rebuild -- was run and **it does not work**.
+
+`repair_map.py` (kept beside this file) put all 341 folded positions in front
+of `deepseek-v4-flash` at `reasoning: high`, one call each, 40 at a time: 1,529s
+wall, 341 of 341 answered, 0 failed, 1.14M tokens. The prompt was RE_READ_PROMPT's
+question without its heading framing, which presumes a group is too large to be
+one claim and is false of a two-member fold. Members were redistributed, never
+invented or dropped: `sum(consolidated_from)` closes at 2,036 on both sides.
+
+**Taken wholesale it destroys the deliverable.** 309 of the 341 folds were
+split, including 143 of the 165 two-member folds shattered into singletons.
+Folding falls from 803 to 195 and the map goes 1,233 -> 1,841 positions, which
+is a 9.6% reduction on 2,036 raw arguments -- what the map looked like before
+consolidation existed. Reading ten of the shattered pairs by hand, three are
+plainly one argument (two phrasings of Mann's sociology being exemplary; two
+statements that modern bureaucracy was never fully rationalised). A call asked
+to verify a merge finds a reason to reject it.
+
+**Taken selectively it changes nothing measurable.** Keeping the original
+wherever the repair returned every member in its own group -- a call that
+declines to group has not found a better grouping -- and accepting the 103 real
+regroupings gives 1,424 positions and 612 folds. 36 folded groups, 18 from each
+map, shuffled and judged blind against their own members before the labels were
+revealed:
+
+| map | sound | mixed | wrong |
+|---|---|---|---|
+| before the repair | 7 | 6 | 5 |
+| after the repair | 8 | 4 | 6 |
+
+Nothing moves. One group drawn into both samples (a legitimacy-crisis fold the
+repair left alone) was judged wrong on both sides, so the two columns are at
+least reading the same way.
+
+The cost was $1.80 and 25 minutes, and what it buys is the knowledge that the
+remaining defect is not reachable by asking the same model the same question a
+second time. It is a judgment limit at this model and price, not a missing pass.
+`positions.selective.jsonl`, `repair_reads.jsonl`, `audit_items.md` and
+`audit_key.json` are under `repair/` on the box; `.gitignore` keeps them there.

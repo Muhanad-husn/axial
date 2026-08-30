@@ -416,6 +416,24 @@ been necessary. The field survives the embedding merge onto the written
 position. It does not collide with the merge's own `variants`, which records
 the consolidated phrasings *that* stage folded, one level up.
 
+**A third negative result: re-reading every fold once more does not repair
+what is left.** After the pass shipped, all 341 folded positions of the built
+map were put back in front of the model in a single concurrent wave -- one call
+per fold, at every fold size, with the re-read's question minus the framing
+that presumes a large group is a heading. 341 answered, none failed, members
+redistributed and never lost. Taken wholesale it split 309 of them, shattering
+143 of the 165 two-member folds into singletons and taking the map to 1,841
+positions from 2,036 raw arguments: consolidation undone. Reading ten shattered
+pairs by hand, three are plainly one argument, which is what a call asked to
+verify a merge does to a merge. Taken selectively -- keeping the original
+wherever the call returned every member separately, since a call that declines
+to group has proposed nothing, and accepting the 103 real regroupings -- 36
+folds, 18 from each map, were judged blind against their own members before the
+labels were revealed: **7 sound / 6 mixed / 5 wrong before, 8 / 4 / 6 after**.
+Nothing moves. The residue is a judgment limit of this model at this price, not
+a pass that is missing; $1.80 and 25 minutes bought that, and a fourth attempt
+should propose a different instrument, not the same question again.
+
 **A resume announces its bill, and abandons a read that cannot pass.** An
 error record is re-asked, which is right — but the retry comes back different
 from the error record's pass-through, so that category's later rounds are
