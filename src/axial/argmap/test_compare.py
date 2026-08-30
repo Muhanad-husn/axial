@@ -104,7 +104,24 @@ def write_group_state(outdir: Path, chunk_ids) -> None:
     )
 
 
-def write_vocabulary(root: Path, column: str, records, *, max_level: int = 1) -> Path:
+# The scheme version each built column's own manifest carries. `claim` is the
+# version the variant's `grouping` block also records, so the two can be
+# compared; `position` is recorded by no build at all and can only be read
+# here (issue #831 rule (d)).
+COLUMN_SCHEME_VERSIONS = {
+    "claim": "2026-08-28-claim-v1",
+    "position": "2026-08-29-position-v1",
+}
+
+
+def write_vocabulary(
+    root: Path,
+    column: str,
+    records,
+    *,
+    max_level: int = 1,
+    scheme_version: str | None = None,
+) -> Path:
     column_dir = root / column
     column_dir.mkdir(parents=True, exist_ok=True)
     (column_dir / "assignments.jsonl").write_text(
@@ -114,7 +131,7 @@ def write_vocabulary(root: Path, column: str, records, *, max_level: int = 1) ->
         json.dumps(
             {
                 "column": column,
-                "scheme_version": "v1",
+                "scheme_version": scheme_version or COLUMN_SCHEME_VERSIONS.get(column, "v1"),
                 "max_level": max_level,
                 "categories": [],
             }
@@ -193,9 +210,11 @@ REPLICATE_POSITIONS = (
 
 BASELINE_MANIFEST = {
     "corpus_pin": "pin-1",
-    # Deliberately the manifest a build predating slices 04-05 leaves: no
-    # `grouping` block, no `answers_pin`, and the ambiguous `passages_placed`
-    # slot sum instead of the two named counts.
+    # Deliberately the manifest the live default build leaves
+    # (`data/map/9b796b3a6312b329/map.json`, checked 2026-08-30): no
+    # `grouping` block, no `answers_pin`, no `embedding_merge` block either,
+    # and the ambiguous `passages_placed` slot sum instead of the two named
+    # counts. Its embedding-merge folds exist only as raw minus merged.
     "counts": {
         "passages_selected": 15,
         "bags": 3,
@@ -203,14 +222,9 @@ BASELINE_MANIFEST = {
         "units_total": 9,
         "units_reused": 4,
         "units_asked": 5,
-        "raw_positions": 6,
+        "raw_positions": 7,
         "merged_positions": 5,
         "passages_placed": 17,
-    },
-    "embedding_merge": {
-        "folds": 1,
-        "positions_with_more_than_one_naming": 1,
-        "folds_per_final_position": 0.2,
     },
     "model": "baseline-model",
     "cost_usd": 1.5,
@@ -666,7 +680,15 @@ def test_d4_subtracts_distinct_chunk_ids_and_a_chunk_in_two_positions_never_goes
 # ---------------------------------------------------------------------------
 
 
-def _run_report(tmp_path, monkeypatch, *, replicate=True, units_reused=0, variant_positions=None):
+def _run_report(
+    tmp_path,
+    monkeypatch,
+    *,
+    replicate=True,
+    units_reused=0,
+    variant_positions=None,
+    baseline_positions=None,
+):
     """The rendered report over the standard three-build fixture."""
     from axial.argmap import compare as compare_mod
     from axial.argmap.compare import compute_comparison, format_comparison_report
@@ -674,6 +696,8 @@ def _run_report(tmp_path, monkeypatch, *, replicate=True, units_reused=0, varian
     monkeypatch.setattr(compare_mod, "_default_encoder", lambda: fake_encode)
     map_dir = tmp_path / "map"
     baseline = build_baseline(map_dir)
+    if baseline_positions is not None:
+        write_positions(baseline, baseline_positions)
     variant = build_variant(
         map_dir, positions=variant_positions or VARIANT_POSITIONS, units_reused=units_reused
     )
@@ -850,15 +874,33 @@ def _d2_verdict_over(*, variant_purity, baseline_purity, replicate_gap, floor, l
     )
 
 
-def test_d2_fails_outright_when_the_gap_is_inside_the_assignment_instability_floor():
-    from axial.argmap.compare import FAILED
+def test_d2_is_not_resolved_when_a_positive_gap_sits_inside_the_instability_floor():
+    """Issue #831's failure condition 6: a gap that does not exceed the floor
+    is "not resolved at this sample", never "passed" -- and never "failed"
+    either, which is what a sub-floor RISE would have been labelled."""
+    from axial.argmap.compare import NOT_RESOLVED
 
     verdict = _d2_verdict_over(
         variant_purity=0.7700, baseline_purity=0.7597, replicate_gap=0.0001, floor=0.0331
     )
 
-    assert verdict.status == FAILED
+    assert verdict.status == NOT_RESOLVED
     assert "assignment-instability floor" in verdict.reason
+
+
+def test_d2_fails_when_the_variant_falls_below_the_baseline_and_the_reason_says_it_fell():
+    """A negative gap is failure condition 2, and the reason must not read
+    "clears the baseline by -0.0977" -- that is wrong prose on the deciding
+    line."""
+    from axial.argmap.compare import FAILED
+
+    verdict = _d2_verdict_over(
+        variant_purity=0.6620, baseline_purity=0.7597, replicate_gap=0.0001, floor=0.0331
+    )
+
+    assert verdict.status == FAILED
+    assert "clears" not in verdict.reason
+    assert "0.0977" in verdict.reason and "below" in verdict.reason.lower()
 
 
 def test_d2_is_not_resolved_when_the_gap_clears_the_floor_but_not_twice_the_replicate_gap():
@@ -1071,3 +1113,248 @@ def test_position_coverage_is_reported_per_book_for_this_draw_never_as_a_corpus_
     assert "`position` coverage per book for THIS DRAW" in out
     assert "never of the corpus" in out
     assert "s4: 1 of 2 (50.0%)" in out
+
+
+# ---------------------------------------------------------------------------
+# The reviewer's findings on PR #846: what the identity check actually
+# verified, the baseline's derived folds, every null's own trial spread, the
+# three scales D2's floor was measured on, and the two mislabels.
+# ---------------------------------------------------------------------------
+
+
+def _report_over(verdicts):
+    """A `ComparisonReport` carrying nothing but verdicts -- `overall` reads
+    no other field."""
+    from axial.argmap.compare import ComparisonReport, IdentityAudit
+
+    return ComparisonReport(
+        baseline=None,
+        variant=None,
+        replicate=None,
+        seed=1,
+        trials=1,
+        instability_floor=0.0331,
+        vocabulary_dir=Path("/fixture"),
+        d1_gap=None,
+        d2_gap=None,
+        replicate_gap_usable=False,
+        identity=IdentityAudit((), (), {}),
+        position_coverage=(),
+        verdicts=tuple(verdicts),
+    )
+
+
+def test_a_not_computed_deciding_metric_never_reads_as_the_structural_bar_met():
+    """`overall` is a go/no-go line. A D1-D4 metric that could not be computed
+    at all is not evidence the bar was met -- it reads "not resolved at this
+    sample". D5 is not computed BY DESIGN and is excluded."""
+    from axial.argmap.compare import NOT_COMPUTED, NOT_RESOLVED, PASSED, Verdict
+
+    passing = [Verdict(m, PASSED, "") for m in ("D1", "D2", "D3", "D4")]
+    d5 = Verdict("D5", NOT_COMPUTED, "a blind paired hand-sample")
+
+    assert _report_over([*passing, d5]).overall.startswith("structural bar met")
+
+    blind_d2 = [*passing[:1], Verdict("D2", NOT_COMPUTED, "no scored position"), *passing[2:]]
+    assert _report_over([*blind_d2, d5]).overall == NOT_RESOLVED
+
+
+def _coherence_band(label, observed, null, spread):
+    from axial.argmap.compare import BandStat
+
+    return BandStat(
+        label=label,
+        positions=10,
+        slots=200,
+        passages=200,
+        size_max=48,
+        sources_observed=None,
+        sources_null=None,
+        cross_book_observed=None,
+        cross_book_null=None,
+        coherence_positions=10,
+        coherence_observed=observed,
+        coherence_null=null,
+        coherence_null_spread=spread,
+    )
+
+
+def _band_holder(bands):
+    class Holder:
+        def __init__(self, rows):
+            self.bands = tuple(rows)
+
+        def band(self, label):
+            return next((row for row in self.bands if row.label == label), None)
+
+    return Holder(bands)
+
+
+def test_d3_is_not_resolved_when_a_bands_margin_over_the_floor_is_inside_the_nulls_spread():
+    """The live run's shape: B's 11+ band reads 0.6692 against a 0.6643 floor,
+    a margin of 0.0049. The floor is half a null estimate, so a margin inside
+    that null's own trial spread is not resolved -- the same test D1 and D2
+    are held to, applied to the metric that passed."""
+    from axial.argmap.compare import NOT_RESOLVED, PASSED, _d3_verdict
+
+    baseline = _band_holder([_coherence_band("11+", 0.7913, 0.5374, (0.5300, 0.5450))])
+    variant = _band_holder([_coherence_band("11+", 0.6692, 0.5306, (0.5250, 0.5400))])
+
+    verdict = _d3_verdict(baseline, variant)
+    assert verdict.status == NOT_RESOLVED
+    assert "0.0049" in verdict.reason and "11+" in verdict.reason
+
+    wide = _band_holder([_coherence_band("11+", 0.8000, 0.5306, (0.5250, 0.5400))])
+    assert _d3_verdict(baseline, wide).status == PASSED
+    assert "11+" in _d3_verdict(baseline, wide).reason
+
+
+def test_the_embedding_merge_folds_are_derived_when_a_build_has_no_consolidation_stage(
+    tmp_path, monkeypatch
+):
+    """Issue #831 rule (c): both builds have to sit on one consolidation axis.
+    The live default build's `map.json` carries no `embedding_merge` block at
+    all -- only `raw_positions` 2,206 and `merged_positions` 1,937 -- so the
+    folds are derived from the difference and LABELLED derived. Only where
+    there is no consolidation stage: on a consolidated build that same
+    difference conflates two stages."""
+    out = _run_report(tmp_path, monkeypatch)
+
+    # A: raw 7 - merged 5 = 2 folds over 5 final positions.
+    assert "embedding merge: 2 fold(s) (derived: raw 7 - merged 5), 0.400 per final position" in out
+    # B records the block and is never derived.
+    assert "embedding merge: 1 fold(s), 0.250 per final position" in out
+    assert "not recorded fold(s)" not in out
+
+
+def test_a_consolidated_build_missing_the_block_is_not_derived_from_raw_minus_merged():
+    """The variant's raw-minus-merged is 8 - 4 = 4, which is the consolidation
+    pass AND the embedding merge together. With no `embedding_merge` block to
+    read, that is reported as not recorded rather than derived."""
+    from axial.argmap.compare import _embedding_folds
+
+    manifest = variant_manifest()
+    manifest.pop("embedding_merge")
+
+    assert _embedding_folds(manifest) == (None, None, False)
+
+
+def test_every_null_is_printed_with_its_own_trial_spread(tmp_path, monkeypatch):
+    """20 trials are drawn per null and only the mean survived into the
+    report. D1's, D2's and D3's nulls each print their min-max spread beside
+    the mean, so no margin can be quoted without the noise it sits in."""
+    out = _run_report(tmp_path, monkeypatch)
+    lines = out.splitlines()
+
+    d1_header = next(line for line in lines if "cross-book null" in line)
+    assert "null spread" in d1_header
+    d2_header = next(line for line in lines if "per-position mean" in line and "lift" in line)
+    assert "null spread" in d2_header
+    d3_header = next(line for line in lines if "positions scored" in line)
+    assert "null spread" in d3_header
+
+
+def test_the_d3_block_says_the_top_band_is_open_ended_and_which_way_that_cuts(
+    tmp_path, monkeypatch
+):
+    """A's top band is 11-48 by construction -- 48 is A's own largest position
+    -- while B's is open-ended. B is judged against a floor set by
+    systematically smaller positions, and coherence falls with size, so the
+    direction is conservative against B. Say so rather than leave it to be
+    noticed."""
+    out = _run_report(
+        tmp_path,
+        monkeypatch,
+        variant_positions=(
+            ("pos-0001", ["c01", "c02", "c03", "c04", "c05", "c06", "c07", "c08",
+                          "c09", "c10", "c11", "c12", "c13"]),
+            ("pos-0002", ["c01", "c05", "c09"]),
+        ),
+        baseline_positions=(
+            ("pos-0001", ["c01", "c02", "c03", "c04", "c05", "c06", "c07", "c08",
+                          "c09", "c10", "c11"]),
+            ("pos-0002", ["c12", "c13", "c14"]),
+        ),
+    )
+
+    assert "conservative against B" in out
+    assert "the top band is open-ended" in out
+
+
+def test_the_d2_block_prints_the_instability_floor_on_all_three_scales(tmp_path, monkeypatch):
+    """Issue #831 measured the floor as 0.0331 purity points, 0.0294 on the
+    per-position mean and 0.068 on lift. The report printed the first alone,
+    directly beside a lift column -- so a lift difference could be quoted
+    without its own floor."""
+    out = _run_report(tmp_path, monkeypatch)
+
+    assert "0.0331" in out and "0.0294" in out and "0.068" in out
+    difference = next(line for line in out.splitlines() if "against that scale's own floor" in line)
+    assert "member-weighted" in difference and "lift" in difference
+
+
+def test_the_identity_block_names_what_was_actually_compared_and_what_could_not_be(
+    tmp_path, monkeypatch
+):
+    """Issue #831 rule (d) exists because the corpus pin alone is not
+    sufficient. On the real pair only the corpus pin was compared at all: the
+    answers pin is recorded by neither build, and `mechanism`'s scheme version
+    by one. Absence is still tolerated -- it is now DISCLOSED."""
+    out = _run_report(tmp_path, monkeypatch, replicate=False)
+
+    verified = next(line for line in out.splitlines() if line.strip().startswith("verified equal:"))
+    assert "corpus pin" in verified
+    not_verified = next(
+        line for line in out.splitlines() if line.strip().startswith("not verifiable")
+    )
+    assert "answers pin (recorded by neither build)" in not_verified
+    assert "`mechanism` scheme version (recorded by B only)" in not_verified
+
+
+def test_the_identity_block_prints_the_position_columns_own_scheme_version(tmp_path, monkeypatch):
+    """`position` is the axis D2 scores on and no build records its scheme
+    version, so the identity table was silent about it. It is read from the
+    column's own manifest -- the file `_column_level` already opens."""
+    out = _run_report(tmp_path, monkeypatch, replicate=False)
+
+    assert "2026-08-29-position-v1" in out
+    # `claim` is recorded by B AND by the column on disk, so it is one of the
+    # few fields that genuinely got compared.
+    verified = next(line for line in out.splitlines() if line.strip().startswith("verified equal:"))
+    assert "`claim` scheme version" in verified
+
+
+def test_the_plurality_band_is_the_band_holding_the_most_placed_passages(tmp_path, monkeypatch):
+    """Issue #831 says the band holding the plurality of the variant's placed
+    PASSAGES. Member slots are not passages (rule (b)), so the band is counted
+    over distinct chunk ids and the line names the denominator."""
+    stats = _stats(
+        [
+            ["c01", "c02"],
+            ["c03", "c04"],
+            ["c05", "c06"],
+            ["c01", "c02", "c03", "c04", "c05"],
+        ]
+    )
+
+    # Band 2 holds 6 distinct passages over three positions, band 3-5 five over
+    # one -- 6 slots against 5, so the two weightings agree here only because
+    # the overlap is small. The denominator still has to be stated.
+    assert stats.plurality_band == "2"
+    assert stats.band("2").passages == 6
+    assert stats.band("3-5").passages == 5
+
+    out = _run_report(tmp_path, monkeypatch)
+    line = next(line for line in out.splitlines() if "plurality band on B" in line)
+    assert "placed passages" in line and "slot" in line
+
+
+def test_d4s_breakdown_names_its_residual_and_reads_as_a_lower_bound(tmp_path, monkeypatch):
+    """457 + 31 + 17 is 505 against 513 unplaced. The three counts are not
+    guaranteed disjoint either, so each is a lower bound and the remainder is
+    named rather than left to the reader's arithmetic."""
+    out = _run_report(tmp_path, monkeypatch)
+
+    assert "of which, at least:" in out
+    residual = next(line for line in out.splitlines() if "not attributed" in line)
+    assert "lower bound" in residual

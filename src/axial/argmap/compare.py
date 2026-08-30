@@ -38,6 +38,12 @@ legitimately carries no `grouping` block at all, and neither build's
 `map.json` carries an answers pin today. Refusing on absence would refuse
 the exact pair this command exists to compare.
 
+That tolerance has a cost, and the identity block now states it: on the live
+pair the corpus pin is the ONLY field two builds both record, so it is the
+only field that was actually compared. `position`'s scheme version -- the
+axis D2 scores on -- is recorded by no build anywhere and is read from the
+column's own manifest instead.
+
 **Where the source and the claim text come from.** A position record lists
 its `chunk_ids` and the SET of its `sources`, never the mapping between
 them, and it carries no claim text at all. Both come from the built
@@ -84,6 +90,14 @@ SIZE_BANDS: tuple[tuple[int, int | None, str], ...] = (
 # a tuned constant -- and a parameter of `compute_comparison` rather than a
 # CLI flag, because re-measuring it is a paid pass, not a preference.
 D2_ASSIGNMENT_INSTABILITY_FLOOR = 0.0331
+
+# The same measurement expressed on the other two scales the D2 table prints
+# (issue #831, "D2's readability floor"). Reporting only -- what binds the
+# verdict is the member-weighted floor above -- but the report prints a lift
+# column, and a lift difference quoted without its own floor is how +0.034
+# gets read as "marginally better" when the floor is 0.068.
+D2_FLOOR_PER_POSITION_MEAN = 0.0294
+D2_FLOOR_LIFT = 0.068
 
 # The margin every claim must clear over the measured replicate gap. A
 # chosen margin, stated as one in issue #831: the smallest multiple that
@@ -260,11 +274,33 @@ def load_build(path: Path, label: str) -> Build:
     )
 
 
-def _column_level(column_dir: Path, level: int | None) -> int:
+def _column_manifest(column_dir: Path) -> dict[str, Any]:
     manifest = _load_json_or_none(column_dir / MANIFEST_FILENAME)
     if manifest is None:
         raise NoVocabularyError(column_dir.name, column_dir)
+    return manifest
+
+
+def _column_level(column_dir: Path, level: int | None) -> int:
+    manifest = _column_manifest(column_dir)
     return level if level is not None else int(manifest.get("max_level", ROOT_LEVEL))
+
+
+def column_scheme_versions(vocabulary_dir: Path) -> dict[str, str]:
+    """`{column: scheme_version}` for the two columns this command reads, off
+    the same manifests `_column_level` already opens.
+
+    `position` is the axis D2 scores on and NO map build records its scheme
+    version anywhere -- a build's `grouping.scheme_versions` carries only the
+    columns it grouped ON. Without this the identity block is silent about the
+    one column the deciding metric depends on (issue #831 rule (d))."""
+    versions: dict[str, str] = {}
+    for column in ("claim", "position"):
+        manifest = _load_json_or_none(Path(vocabulary_dir) / column / MANIFEST_FILENAME)
+        version = (manifest or {}).get("scheme_version")
+        if isinstance(version, str) and version:
+            versions[column] = version
+    return versions
 
 
 def load_passages(vocabulary_dir: Path, level: int | None = None) -> dict[str, Passage]:
@@ -409,7 +445,11 @@ def _purity(position: Sequence[str], passages: Mapping[str, Passage]) -> tuple[i
 class BandStat:
     """One size band of one build: D1 and D3 observed against this build's
     own size-matched null, plus the cross-book rate the approach doc allows
-    to be printed only next to that null."""
+    to be printed only next to that null.
+
+    Each null carries the `(min, max)` of its own per-trial estimates. A null
+    is 20 draws and a mean; quoting the mean alone lets a margin be read as
+    resolved when it sits inside the noise the same run measured."""
 
     label: str
     positions: int
@@ -421,12 +461,20 @@ class BandStat:
     coherence_positions: int
     coherence_observed: float | None
     coherence_null: float | None
+    passages: int = 0
+    size_max: int = 0
+    sources_null_spread: tuple[float, float] | None = None
+    coherence_null_spread: tuple[float, float] | None = None
 
     @property
     def ratio(self) -> float | None:
         if self.sources_observed is None or not self.sources_null:
             return None
         return self.sources_observed / self.sources_null
+
+    @property
+    def mean_size(self) -> float | None:
+        return self.slots / self.positions if self.positions else None
 
 
 @dataclass(frozen=True)
@@ -445,6 +493,7 @@ class PurityStat:
     selected_outside_universe: int | None
     categorised_of_placed: int
     placed: int
+    null_spread: tuple[float, float] | None = None
 
     @property
     def lift(self) -> float | None:
@@ -495,6 +544,9 @@ class ContextStat:
     consolidation_folds_per_position: float | None
     embedding_folds: int | None
     embedding_folds_per_position: float | None
+    embedding_folds_derived: bool = False
+    raw_positions: int | None = None
+    merged_positions: int | None = None
 
 
 @dataclass(frozen=True)
@@ -542,6 +594,38 @@ def _fold_block(block: Any) -> tuple[int | None, float | None]:
         int(folds) if isinstance(folds, (int, float)) else None,
         float(per_position) if isinstance(per_position, (int, float)) else None,
     )
+
+
+def _embedding_folds(manifest: Mapping[str, Any]) -> tuple[int | None, float | None, bool]:
+    """`(folds, folds per final position, derived)` for the embedding merge.
+
+    The live default build's `map.json` records no `embedding_merge` block at
+    all -- only `raw_positions` 2,206 and `merged_positions` 1,937 -- so
+    without a fallback the one line putting both builds on issue #831 rule
+    (c)'s single consolidation axis goes missing. Where a build has NO
+    consolidation stage the difference is the embedding merge and nothing
+    else, and it is derived from it and flagged as derived. Where a build has
+    one, the same difference conflates two stages and nothing is derived."""
+    folds, per_position = _fold_block(manifest.get("embedding_merge"))
+    if folds is not None:
+        return folds, per_position, False
+    if isinstance(manifest.get("consolidation"), dict):
+        return None, None, False
+    counts = manifest.get("counts")
+    if not isinstance(counts, dict):
+        return None, None, False
+    raw = counts.get("raw_positions")
+    merged = counts.get("merged_positions")
+    if not isinstance(raw, (int, float)) or not isinstance(merged, (int, float)) or merged <= 0:
+        return None, None, False
+    derived = int(raw) - int(merged)
+    return derived, derived / int(merged), True
+
+
+def _spread(values: Sequence[float]) -> tuple[float, float] | None:
+    """`(min, max)` over a null's per-trial estimates -- the noise the same
+    run measured, kept rather than collapsed into the mean."""
+    return (min(values), max(values)) if values else None
 
 
 def compute_build_stats(
@@ -621,6 +705,10 @@ def compute_build_stats(
                 coherence_positions=len(scores),
                 coherence_observed=_mean(scores),
                 coherence_null=_mean(null_coherence.get(label, [])),
+                passages=len({chunk_id for position in group for chunk_id in position}),
+                size_max=max(len(position) for position in group),
+                sources_null_spread=_spread(null_sources.get(label, [])),
+                coherence_null_spread=_spread(null_coherence.get(label, [])),
             )
         )
 
@@ -671,6 +759,7 @@ def compute_build_stats(
             if chunk_id in passages and passages[chunk_id].position_category
         ),
         placed=len(placed_distinct),
+        null_spread=_spread(null_purity),
     )
 
     # D4. Never a sum of position sizes -- see the module docstring.
@@ -699,7 +788,7 @@ def compute_build_stats(
     ]
     cross_book_chunks = {chunk_id for position in cross_book for chunk_id in position}
     consolidation_folds, consolidation_per = _fold_block(build.manifest.get("consolidation"))
-    embedding_folds, embedding_per = _fold_block(build.manifest.get("embedding_merge"))
+    embedding_folds, embedding_per, embedding_derived = _embedding_folds(build.manifest)
     cost = build.manifest.get("cost_usd")
     wall = build.manifest.get("wall_time_sec")
     context = ContextStat(
@@ -731,12 +820,21 @@ def compute_build_stats(
         consolidation_folds_per_position=consolidation_per,
         embedding_folds=embedding_folds,
         embedding_folds_per_position=embedding_per,
+        embedding_folds_derived=embedding_derived,
+        raw_positions=_int_or_none(build.counts.get("raw_positions")),
+        merged_positions=_int_or_none(build.counts.get("merged_positions")),
     )
 
-    slots_by_band = collections.Counter(
-        {label: sum(len(position) for position in group) for label, group in banded.items()}
+    # Issue #831 says the band holding the plurality of the variant's placed
+    # PASSAGES, and member slots are not passages (rule (b)). Counted over
+    # distinct chunk ids, which is why the bands' passage counts do not
+    # partition: a chunk in two positions of different sizes is in both.
+    plurality_band = max(
+        (band for band in bands if band.passages),
+        key=lambda band: band.passages,
+        default=None,
     )
-    plurality_band = slots_by_band.most_common(1)[0][0] if slots_by_band else None
+    plurality_band = plurality_band.label if plurality_band is not None else None
 
     return BuildStats(
         build=build,
@@ -817,6 +915,20 @@ class Verdict:
 
 
 @dataclass(frozen=True)
+class IdentityAudit:
+    """What the identity check could ACTUALLY compare on this pair, and what
+    it could not. The check tolerates an absent field by design -- refusing on
+    absence would refuse the exact pair this command exists for -- but a
+    tolerated absence read as a passed check is how "the builds agree" comes
+    to mean "the corpus pin agreed and nothing else was looked at" (issue
+    #831 rule (d))."""
+
+    verified: tuple[str, ...]
+    unverifiable: tuple[str, ...]
+    vocabulary_versions: dict[str, str]
+
+
+@dataclass(frozen=True)
 class ComparisonReport:
     baseline: BuildStats
     variant: BuildStats
@@ -828,17 +940,63 @@ class ComparisonReport:
     d1_gap: float | None
     d2_gap: float | None
     replicate_gap_usable: bool
+    identity: IdentityAudit
     position_coverage: tuple[SourceCoverage, ...]
     verdicts: tuple[Verdict, ...]
 
     @property
     def overall(self) -> str:
+        """The go/no-go line. A deciding metric that could not be computed is
+        not evidence the bar was met -- it falls to "not resolved", never
+        through to the pass string. D5 is not computed by design and is the
+        one exclusion."""
         statuses = {verdict.status for verdict in self.verdicts}
         if FAILED in statuses:
             return "no-go on slices 07-09"
         if NOT_RESOLVED in statuses:
             return NOT_RESOLVED
+        if any(v.status == NOT_COMPUTED for v in self.verdicts if v.metric != "D5"):
+            return NOT_RESOLVED
         return "structural bar met on D1-D4; D5 (the blind hand-sample) still outstanding"
+
+
+def audit_identity(
+    builds: Sequence[Build], vocabulary_versions: Mapping[str, str]
+) -> IdentityAudit:
+    """Which identity fields were compared over two or more recorded values,
+    and which were not comparable at all. A vocabulary column's own manifest
+    counts as a recorded value: it is the only place `position`'s scheme
+    version exists, and `claim`'s is recorded both there and by any build that
+    grouped on it."""
+    verified: list[str] = []
+    unverifiable: list[str] = []
+
+    def audit(field: str, values: Mapping[str, str]) -> None:
+        if len(values) < 2:
+            where = (
+                "recorded by neither build"
+                if not values
+                else f"recorded by {', '.join(values)} only"
+            )
+            unverifiable.append(f"{field} ({where})")
+        elif len(set(values.values())) > 1:
+            rendered = ", ".join(f"{label} {value}" for label, value in values.items())
+            unverifiable.append(f"{field} (DISAGREE: {rendered})")
+        else:
+            verified.append(f"{field} ({', '.join(values)})")
+
+    audit("corpus pin", {b.label: b.corpus_pin for b in builds if b.corpus_pin is not None})
+    audit("answers pin", {b.label: b.answers_pin for b in builds if b.answers_pin is not None})
+    columns = sorted(
+        {column for build in builds for column in build.scheme_versions}
+        | set(vocabulary_versions)
+    )
+    for column in columns:
+        values = {b.label: b.scheme_versions[column] for b in builds if column in b.scheme_versions}
+        if column in vocabulary_versions:
+            values["the column on disk"] = vocabulary_versions[column]
+        audit(f"`{column}` scheme version", values)
+    return IdentityAudit(tuple(verified), tuple(unverifiable), dict(vocabulary_versions))
 
 
 def _d1_verdict(
@@ -919,12 +1077,22 @@ def _d2_verdict(
     if lift is not None and lift <= 1.0:
         return Verdict("D2", FAILED, f"lift {lift:.3f} is at or below 1.00")
     gap = observed - reference
-    if gap <= floor:
+    if gap <= 0:
         return Verdict(
             "D2",
             FAILED,
-            f"{observed:.4f} clears the baseline's {reference:.4f} by {gap:.4f}, which does not "
-            f"exceed the {floor:.4f} assignment-instability floor",
+            f"{observed:.4f} is {-gap:.4f} BELOW the baseline's {reference:.4f} -- issue #831's "
+            "failure condition 2, and the wrong direction, not a small margin",
+        )
+    if gap <= floor:
+        # Issue #831's failure condition 6, not condition 2: a rise that does
+        # not reach the floor is unreadable at this sample, and calling it a
+        # failure claims more than the measurement supports.
+        return Verdict(
+            "D2",
+            NOT_RESOLVED,
+            f"{observed:.4f} clears the baseline's {reference:.4f} by only {gap:.4f}, which does "
+            f"not exceed the {floor:.4f} assignment-instability floor",
         )
     if not gap_usable or d2_gap is None:
         return Verdict(
@@ -958,7 +1126,17 @@ def band_floor(band: BandStat) -> float | None:
 
 
 def _d3_verdict(baseline: BuildStats, variant: BuildStats) -> Verdict:
+    """Every band at or above its floor, with the margin named band by band.
+
+    A margin inside the noise the same run measured is not resolved. The floor
+    is the midpoint of the baseline's own band value and that band's null, so
+    it moves with the null estimate: the margin is tested against the width of
+    that null's own per-trial spread. The floor moves by HALF that width, so
+    the test is conservative on purpose -- D1 and D2 are held to a 2x margin
+    over their error bar and D3's floor was quoted with none at all."""
     breaches: list[str] = []
+    unresolved: list[str] = []
+    margins: list[str] = []
     unfloored: list[str] = []
     checked = 0
     for band in variant.bands:
@@ -966,20 +1144,36 @@ def _d3_verdict(baseline: BuildStats, variant: BuildStats) -> Verdict:
             continue
         reference = baseline.band(band.label)
         floor = band_floor(reference) if reference is not None else None
-        if floor is None:
+        if floor is None or reference is None:
             unfloored.append(band.label)
             continue
         checked += 1
-        if band.coherence_observed < floor:
-            breaches.append(f"{band.label} {band.coherence_observed:.3f} < {floor:.3f}")
+        margin = band.coherence_observed - floor
+        margins.append(f"{band.label} {band.coherence_observed:.4f} - {floor:.4f} = {margin:+.4f}")
+        if margin < 0:
+            breaches.append(f"{band.label} {band.coherence_observed:.4f} < {floor:.4f}")
+            continue
+        spread = reference.coherence_null_spread
+        if spread is not None and margin < (spread[1] - spread[0]):
+            unresolved.append(
+                f"{band.label} margin {margin:.4f} is inside that band's own null spread "
+                f"{spread[1] - spread[0]:.4f}"
+            )
+    stated = "; ".join(margins)
     if breaches:
         return Verdict("D3", FAILED, "breaches the band floor at " + "; ".join(breaches))
     if not checked:
         return Verdict("D3", NOT_COMPUTED, "no band has a floor on the baseline to check against")
-    note = (
-        f" (no baseline floor for band(s) {', '.join(unfloored)})" if unfloored else ""
+    note = f" (no baseline floor for band(s) {', '.join(unfloored)})" if unfloored else ""
+    if unresolved:
+        return Verdict(
+            "D3",
+            NOT_RESOLVED,
+            f"at or above the floor in every band ({stated}), but {'; '.join(unresolved)}{note}",
+        )
+    return Verdict(
+        "D3", PASSED, f"at or above the baseline/null midpoint in every band ({stated}){note}"
     )
-    return Verdict("D3", PASSED, f"at or above the baseline/null midpoint in every band{note}")
 
 
 def _d4_verdict(baseline: BuildStats, variant: BuildStats) -> Verdict:
@@ -1031,6 +1225,7 @@ def compute_comparison(
 
     vocab_root = Path(vocabulary_dir) if vocabulary_dir is not None else VOCABULARY_DIR
     passages = load_passages(vocab_root, level)
+    identity = audit_identity(builds, column_scheme_versions(vocab_root))
 
     placed = {
         chunk_id for build in builds for position in build.positions for chunk_id in position
@@ -1103,6 +1298,7 @@ def compute_comparison(
         d1_gap=d1_gap,
         d2_gap=d2_gap,
         replicate_gap_usable=gap_usable,
+        identity=identity,
         position_coverage=position_coverage_by_source(stats, passages),
         verdicts=verdicts,
     )
@@ -1160,12 +1356,79 @@ def _int(value: int | None) -> str:
     return str(value) if value is not None else NOT_RECORDED
 
 
+def _range(spread: tuple[float, float] | None, places: int = 4) -> str:
+    if spread is None:
+        return "n/a"
+    return f"{spread[0]:.{places}f}-{spread[1]:.{places}f}"
+
+
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]], indent: str = "  ") -> list[str]:
     columns = [list(column) for column in zip(headers, *rows)] if rows else [[h] for h in headers]
     widths = [max(len(cell) for cell in column) for column in columns]
     return [
         indent + "  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip()
         for row in [headers, *rows]
+    ]
+
+
+def _d2_scale_lines(report: ComparisonReport) -> list[str]:
+    """B minus A on each of the three scales D2's floor was measured on, each
+    against its own floor. The report prints a lift column beside a single
+    purity-point floor, and the lift difference between the live builds is
+    +0.034 against a 0.068 floor -- half of it. Printed together so neither
+    can be quoted without the other."""
+    scales = (
+        (
+            "member-weighted",
+            report.baseline.purity.member_weighted,
+            report.variant.purity.member_weighted,
+            report.instability_floor,
+            4,
+        ),
+        (
+            "per-position mean",
+            report.baseline.purity.per_position_mean,
+            report.variant.purity.per_position_mean,
+            D2_FLOOR_PER_POSITION_MEAN,
+            4,
+        ),
+        ("lift", report.baseline.purity.lift, report.variant.purity.lift, D2_FLOOR_LIFT, 3),
+    )
+    rendered = []
+    for name, before, after, floor, places in scales:
+        if before is None or after is None:
+            rendered.append(f"{name} n/a")
+            continue
+        difference = after - before
+        verdict = "inside" if abs(difference) <= floor else "outside"
+        rendered.append(
+            f"{name} {difference:+.{places}f} against {floor:.{places}f} ({verdict} the floor)"
+        )
+    return [
+        "  B - A on each scale, against that scale's own floor: " + " | ".join(rendered),
+        "  a difference inside its own floor is not readable at this sample, whichever way it "
+        "points",
+    ]
+
+
+def _top_band_lines(report: ComparisonReport) -> list[str]:
+    """Which way the top band's floor cuts. The band is open-ended by design
+    (48 is the baseline's own largest position, not a rule), so the baseline
+    sets a floor from systematically smaller positions than the variant is
+    then judged in. Coherence falls with size in both builds, so the
+    direction is conservative against the variant -- say so on the block
+    rather than leave it to be noticed."""
+    label = SIZE_BANDS[-1][2]
+    baseline = report.baseline.band(label)
+    variant = report.variant.band(label)
+    if baseline is None or variant is None:
+        return []
+    return [
+        f"  the top band is open-ended: A's largest position holds {baseline.size_max} member "
+        f"slot(s) over {baseline.positions} position(s), mean {_num(baseline.mean_size, 1)}; B's "
+        f"holds {variant.size_max} over {variant.positions}, mean {_num(variant.mean_size, 1)}. "
+        f"B is scored in {label} against a floor set by A's systematically smaller positions, "
+        "and coherence falls with size in both builds -- the direction is conservative against B"
     ]
 
 
@@ -1204,6 +1467,30 @@ def format_comparison_report(report: ComparisonReport) -> str:
             ]
         )
     lines += _table(["field", *[s.label for s in stats]], identity_rows)
+    if report.identity.vocabulary_versions:
+        lines.append(
+            "  vocabulary columns on disk (one value each, not a per-build field): "
+            + " | ".join(
+                f"`{column}` {version}"
+                for column, version in sorted(report.identity.vocabulary_versions.items())
+            )
+        )
+    lines.append(
+        "  verified equal: "
+        + ("; ".join(report.identity.verified) if report.identity.verified else "nothing")
+    )
+    lines.append(
+        "  not verifiable on this pair: "
+        + (
+            "; ".join(report.identity.unverifiable)
+            if report.identity.unverifiable
+            else "nothing -- every field was compared"
+        )
+    )
+    lines.append(
+        "  the refusal above fires on a build-versus-build disagreement only; a field only one "
+        "side records is disclosed here and does not refuse"
+    )
     lines.append("")
 
     # ---------------- D1 ----------------
@@ -1221,8 +1508,10 @@ def format_comparison_report(report: ComparisonReport) -> str:
                     band.label,
                     str(band.positions),
                     str(band.slots),
+                    str(band.passages),
                     _num(band.sources_observed),
                     _num(band.sources_null),
+                    _range(band.sources_null_spread),
                     _num(band.ratio),
                     _pct(band.cross_book_observed),
                     _pct(band.cross_book_null),
@@ -1234,8 +1523,10 @@ def format_comparison_report(report: ComparisonReport) -> str:
             "band",
             "positions",
             "slots",
+            "passages",
             "observed",
             "null",
+            "null spread",
             "ratio",
             "cross-book",
             "cross-book null",
@@ -1243,8 +1534,14 @@ def format_comparison_report(report: ComparisonReport) -> str:
         d1_rows,
     )
     lines.append(
-        f"  plurality band on B (the band holding the most member slots): "
-        f"{report.variant.plurality_band or 'n/a'}"
+        f"  plurality band on B: {report.variant.plurality_band or 'n/a'} -- the band holding the "
+        "most DISTINCT placed passages, which is issue #831's own denominator. Positions "
+        "overlap, so a passage can sit in two bands and the passage column does not partition; "
+        "the slot column does"
+    )
+    lines.append(
+        f"  null spread is the min-max of the {report.trials} per-trial estimates behind each "
+        "null mean, not a confidence interval"
     )
     for stat in stats:
         if stat.missing_source:
@@ -1267,6 +1564,7 @@ def format_comparison_report(report: ComparisonReport) -> str:
             "of which 0 categorised",
             "member-weighted",
             "null",
+            "null spread",
             "lift",
             "per-position mean",
         ],
@@ -1278,6 +1576,7 @@ def format_comparison_report(report: ComparisonReport) -> str:
                 str(stat.purity.excluded_uncategorised),
                 _num(stat.purity.member_weighted, 4),
                 _num(stat.purity.null, 4),
+                _range(stat.purity.null_spread),
                 _num(stat.purity.lift, 3),
                 _num(stat.purity.per_position_mean, 4),
             ]
@@ -1307,9 +1606,12 @@ def format_comparison_report(report: ComparisonReport) -> str:
             f"{purity.placed} placed ({_pct(placed_share)})"
         )
     lines.append(
-        f"  assignment-instability floor: {report.instability_floor:.4f} purity points "
-        "(measured 2026-08-29 over two model draws of the `position` column)"
+        f"  assignment-instability floor: {report.instability_floor:.4f} purity points, "
+        f"{D2_FLOOR_PER_POSITION_MEAN:.4f} on the per-position mean, {D2_FLOOR_LIFT:.3f} on lift "
+        "(one measurement, 2026-08-29, over two model draws of the `position` column, on each "
+        "of the three scales this table prints)"
     )
+    lines += _d2_scale_lines(report)
     lines.append(
         f"  `position` coverage per book for THIS DRAW ({report.vocabulary_dir}), over the "
         "passages either build placed -- worst first, and a property of this draw, never of "
@@ -1340,12 +1642,26 @@ def format_comparison_report(report: ComparisonReport) -> str:
                     str(band.coherence_positions),
                     _num(band.coherence_observed, 4),
                     _num(band.coherence_null, 4),
+                    _range(band.coherence_null_spread),
                     _num(floor, 4),
+                    _num(
+                        band.coherence_observed - floor
+                        if band.coherence_observed is not None and floor is not None
+                        else None,
+                        4,
+                    ),
                 ]
             )
     lines += _table(
-        ["build", "band", "positions scored", "observed", "null", "floor"], d3_rows
+        ["build", "band", "positions scored", "observed", "null", "null spread", "floor", "margin"],
+        d3_rows,
     )
+    lines.append(
+        "  the floor is half an estimate: it moves with the baseline's own null, whose per-trial "
+        "spread is in the column beside it. A margin inside that spread is reported as not "
+        "resolved, never as passed"
+    )
+    lines += _top_band_lines(report)
     lines.append(
         "  members with no `claim` text (missing, never scored 0): "
         + " | ".join(f"{stat.label} {stat.missing_claim}" for stat in stats)
@@ -1366,9 +1682,17 @@ def format_comparison_report(report: ComparisonReport) -> str:
             f"(member slots {u.slots}, which is not a passage count)"
         )
         lines.append(
-            f"     of which: declined by the extraction model {_int(u.unassigned)}, "
+            f"     of which, at least: declined by the extraction model {_int(u.unassigned)}, "
             f"shown in a failed read {_int(u.in_failed_reads)}, "
             f"reaching no group at all {_int(u.ungrouped)}"
+        )
+        attributed = sum(
+            value for value in (u.unassigned, u.in_failed_reads, u.ungrouped) if value is not None
+        )
+        lines.append(
+            f"        {attributed} attributed of {u.unplaced}, {u.unplaced - attributed} not "
+            "attributed -- the three counts are not guaranteed disjoint, so each is a lower "
+            "bound and the remainder is a residual, not a fourth cause"
         )
     lines.append("")
 
@@ -1409,8 +1733,13 @@ def format_comparison_report(report: ComparisonReport) -> str:
             f"{('$' + format(c.cost_usd, '.4f')) if c.cost_usd is not None else NOT_RECORDED} | "
             f"wall {_num(c.wall_time_sec, 1)}s"
         )
+        derived = (
+            f" (derived: raw {_int(c.raw_positions)} - merged {_int(c.merged_positions)})"
+            if c.embedding_folds_derived
+            else ""
+        )
         lines.append(
-            f"     embedding merge: {_int(c.embedding_folds)} fold(s), "
+            f"     embedding merge: {_int(c.embedding_folds)} fold(s){derived}, "
             f"{_num(c.embedding_folds_per_position, 3)} per final position"
         )
         if c.consolidation_folds is None:
