@@ -110,3 +110,14 @@ edits: src/axial/test_cli.py
 
 - 2026-08-30 planned from #850's body (sprint-plan on a single filed issue —
   the issue is the draft and the contract; no new issues filed).
+- 2026-08-30 built. Acceptance tests written first and watched red (5 red, 1
+  keep-guard green); 8 files deleted, build.py/cli.py stripped, two mixed
+  test files edited. −10,875/+192 lines. Fast tier green (exit 0), ruff
+  clean, `git grep` criterion empty. Two deviations from the issue, stated
+  in the PR: `_prior_pin_dir` keeps its `-category` exclusion (the variant
+  artifacts stay on disk and would otherwise become a seedable prior pin),
+  and `test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin`
+  plus `test_distinct_placed_passages_are_counted_below_the_slot_sum` stay
+  (they pin kept behaviour). The manifest is byte-identical except
+  `wall_time_sec`/`runs`, which accumulate by design on every resume — the
+  issue's "byte-identical" claim was optimistic about those two fields.
