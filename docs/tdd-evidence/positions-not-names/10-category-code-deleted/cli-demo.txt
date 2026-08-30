@@ -28,3 +28,69 @@ $ uv run axial map grouping-report
 usage: axial map [-h] {build,ask,residue} ...
 axial map: error: argument map_command: invalid choice: 'grouping-report' (choose from 'build', 'ask', 'residue')
 exit code: 2
+
+# Appended after verifier findings (two evidence gaps closed):
+
+$ uv run axial map build --grouping category
+usage: axial [-h] [--version]
+             {schema,intake,extract,envelope,chunk,interrogate,position-backfill,artifacts,names,vocabulary,map,eval,gather-eval,vault,polity,drive,sources,ingest,run,status,console,runs,pipeline-ready,brief,paper,pin,publish,panel,gate,reconcile,key,ask} ...
+axial: error: unrecognized arguments: --grouping category
+exit code: 2
+
+$ uv run axial map --help
+usage: axial map [-h] {build,ask,residue} ...
+
+positional arguments:
+  {build,ask,residue}
+    build              run both stages (positions, then relations) and pin the
+                       result to the corpus's own content hash; each stage is
+                       independently resumable (positions by (bag, slice) via
+                       reads.jsonl, relations by neighbourhood via
+                       relation_reads.jsonl), and the command refuses to start
+                       a second copy over the same pin while an earlier one is
+                       still running
+    ask                the door and the landing (issue #572, PR 3 of 4): one
+                       model call states the arguments a brief's case/request
+                       are actually about, then each is matched against the
+                       pinned map's own positions by cosine similarity --
+                       prints the stated arguments and the landed positions,
+                       each with its score, passage count, authors, and text
+    residue            the semantic residue resolver's full pass (issue #651):
+                       every arguing_against target the relational join
+                       reaches nothing with (data/answers/ + the name layer),
+                       matched against the pinned map's own positions by one
+                       model call per target, both blocking arms, threaded.
+                       Requires a map already built at this pin ('axial map
+                       build' first); writes residue_decisions.jsonl as a
+                       sibling of positions.jsonl under the same pinned
+                       directory. Fold the result into the store with 'axial
+                       names materialize --residue-decisions-path <that file>'
+
+options:
+  -h, --help           show this help message and exit
+exit code: 0
+
+$ uv run axial vocabulary --help
+usage: axial vocabulary [-h] {examine,build} ...
+
+positional arguments:
+  {examine,build}
+    examine        read data/answers/ and, per column: report its
+                   answered/distinct/excluded counts, have a model propose a
+                   category scheme from a random sample, assign a disjoint
+                   held-out sample against it in batches, and have a SECOND
+                   model re-assign a subsample of the same held-out values for
+                   a self-consistency check -- writes no pipeline artifact,
+                   only propose/assign/check model calls
+    build          issue #806 (derived-vocabulary, slice 02): assign every
+                   answered value in a column against the category scheme
+                   frozen in config\vocabulary.yaml and persist the assignment
+                   under data/vocabulary/<column>/. The scheme is an INPUT a
+                   person commits, never derived here. A second run over
+                   unchanged answers and an unchanged scheme re-assigns
+                   nothing and makes zero model calls; a run after new answers
+                   land assigns only those
+
+options:
+  -h, --help       show this help message and exit
+exit code: 0
