@@ -16,3 +16,32 @@ exit code: 1 (1 = no matches)
 units_reused: 679
 units_asked: 0
 units_asked_touching_new: 0
+
+# Appended after reviewer findings F1 and the stage-0 weak link:
+
+$ git grep -l "argmap.purity\|argmap.grouping\|argmap.consolidate\|argmap.compare" -- src/ tests/
+exit code: 1 (1 = no matches in src/ OR tests/)
+
+# The decisive resume check, staged as the real diff this time. map.json.before was
+# snapshotted after a plain `uv run axial map build` on main (53165ff, pre-deletion);
+# data/map/9b796b3a6312b329/map.json is what a plain `uv run axial map build` on this
+# branch rewrote. Full before-file committed beside this transcript as map.json.before.
+
+$ diff <(jq -S . map.json.before) <(jq -S . data/map/9b796b3a6312b329/map.json)
+46c46
+<     "runs": 2,
+---
+>     "runs": 3,
+48c48
+<     "wall_time_sec": 14.751520499994513
+---
+>     "wall_time_sec": 28.214490499987733
+50c50
+<   "runs": 2,
+---
+>   "runs": 3,
+89c89
+<   "wall_time_sec": 280.9926164000208
+---
+>   "wall_time_sec": 380.46520550000423
+diff exit code: 1

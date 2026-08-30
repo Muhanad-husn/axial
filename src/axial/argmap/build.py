@@ -824,15 +824,13 @@ def run_extraction(
     reads_path: Path,
     pass_name: str = PASS_NAME,
     workers: int = WORKERS,
-    unit_word: str = "bag",
     log: Callable[[str], None] = print,
 ) -> list[dict[str, Any]]:
     """Run every job in `jobs` through one model call each, resumable by
     `(bag, slice)` via `reads_path`: a restart skips whatever this ledger
     already carries.
 
-    Calls run concurrently (`workers`), but every
-    checkpoint write happens on this one collecting thread -- the same
+    Calls run concurrently (`workers`), but every checkpoint write happens on this one collecting thread -- the same
     pattern `axial.merge_names`/`axial.gather` already use -- so a mid-run
     kill can never race two threads onto the same line, and every result is
     durable the instant it returns rather than held in memory.
@@ -863,7 +861,7 @@ def run_extraction(
                 completed += 1
                 log(
                     f"  read {completed}/{len(pending)} "
-                    f"({unit_word} {record['bag']} slice {record['slice']})"
+                    f"(bag {record['bag']} slice {record['slice']})"
                 )
 
     return load_checkpoint_records(reads_path, CorruptReadsLedgerError)
@@ -874,9 +872,7 @@ def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
     largest-membership phrasing, ties broken alphabetically -- deterministic
     regardless of arrival order), `variants` (every raw phrasing, sorted),
     the union of `chunk_ids`, `sources` and `authors`, `size` (distinct
-    chunk_ids) and `named_times` (how many raw positions folded in here).
-
-    """
+    chunk_ids) and `named_times` (how many raw positions folded in here)."""
     representative = min(group, key=lambda p: (-p["size"], p["argument"]))
     chunk_ids = sorted({cid for position in group for cid in position["chunk_ids"]})
     record = {
@@ -1345,7 +1341,6 @@ def run_map_build(
     envelopes_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_dir: Path | None = None,
-    vocabulary_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
     encode: Encoder | None = None,
@@ -1447,13 +1442,12 @@ def run_map_build(
 
     _write_bag_state(_bag_state_path(outdir), bags, centroids)
 
-    unit_word = "bag"
     jobs = build_jobs(bags)
     # Issue #829: "every passage shown once" read as a coverage guarantee,
     # printed one line under "17 passage(s) reached no group". It only ever
     # meant that no passage appears in two reads.
     log(
-        f"reads {len(jobs)} over {len(bags)} {unit_word}(s) "
+        f"reads {len(jobs)} over {len(bags)} bag(s) "
         f"(no passage appears in more than one read)"
     )
 
@@ -1511,7 +1505,6 @@ def run_map_build(
         client=client,
         reads_path=reads_path,
         workers=workers,
-        unit_word=unit_word,
         log=log,
     )
 
@@ -1559,7 +1552,6 @@ def run_map_build(
     # ------------------------------------------------------------------
     # Stage 2: relations between positions (issue #572, PR 2 of 4).
     # ------------------------------------------------------------------
-    relations_manifest: dict[str, Any] | None = None
     relations_started = time.monotonic()
     by_id = {position["position_id"]: position for position in stamped}
     neighbourhoods = build_neighbourhoods(stamped, encode)
@@ -1732,8 +1724,7 @@ def run_map_build(
         # own wall times are subsets of it and must never be added to it.
         **_accumulated_totals(prior_manifest, usage, cost, time.monotonic() - started),
     }
-    if relations_manifest is not None:
-        manifest["relations"] = relations_manifest
+    manifest["relations"] = relations_manifest
     (outdir / "map.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",

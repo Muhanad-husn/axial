@@ -1765,8 +1765,7 @@ def test_map_help_still_offers_ask_and_build_without_the_category_surface(capsys
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "ask" in captured.out
-    assert "build" in captured.out
+    assert "{build,ask,residue}" in captured.out
     assert "purity" not in captured.out
     assert "grouping-report" not in captured.out
 
@@ -1779,4 +1778,4 @@ def test_vocabulary_help_still_offers_build(capsys):
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "build" in captured.out
+    assert "{examine,build}" in captured.out

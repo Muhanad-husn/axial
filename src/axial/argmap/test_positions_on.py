@@ -248,13 +248,12 @@ def _write_answers(answers_dir: Path, chunk_ids: list[str]) -> None:
 
 
 def _handles(prompt: str) -> list[str]:
-    """Every handle `render_claims_blind` (`p1`, `p2`, ...) or
-    `render_arguments_blind` (`a1`, `a2`, ..., issue #830) put in `prompt`,
+    """Every handle `render_claims_blind` (`p1`, `p2`, ...) put in `prompt`,
     so a fake client can answer about exactly what it was shown."""
     return [
         line.split("]")[0][1:]
         for line in prompt.splitlines()
-        if line.startswith("[p") or line.startswith("[a")
+        if line.startswith("[p")
     ]
 
 
@@ -296,6 +295,44 @@ def _run_map_build(corpus: dict, *, client, log=None, **kwargs):
         log=log if log is not None else (lambda _message: None),
         **kwargs,
     )
+
+
+def test_the_manifest_counts_and_passage_arithmetic_close_on_the_default_build(
+    build_corpus: dict,
+) -> None:
+    """The default-mode halves of two tests deleted with the category code
+    (issue #850, reviewer finding F5): the bag count and unit word in the
+    log, the `grouping` block, and the passage-arithmetic closure the
+    manifest's own comment promises -- `selected - ungrouped -
+    placed_distinct - unassigned - in_failed_reads == 0`."""
+
+    class _EveryHandleClient(StubLLMClient):
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            self.call_count += 1
+            return json.dumps(
+                {"arguments": [{"argument": "An argument.", "handles": _handles(prompt)}]}
+            )
+
+        def model_for_pass(self, pass_name: str | None = None) -> str:
+            return "fake-model"
+
+    logged: list[str] = []
+    manifest = _run_map_build(build_corpus, client=_EveryHandleClient(), log=logged.append)
+
+    counts = manifest["counts"]
+    assert counts["bags"] == 1
+    assert counts["passages_ungrouped"] == 0
+    assert counts["passages_in_failed_reads"] == 0
+    assert (
+        counts["passages_selected"]
+        - counts["passages_ungrouped"]
+        - counts["passages_placed_distinct"]
+        - counts["passages_unassigned"]
+        - counts["passages_in_failed_reads"]
+    ) == 0
+    assert manifest["grouping"] == {"mode": "bag", "scheme_versions": {}}
+    assert any(line.startswith("reads 1 over 1 bag(s)") for line in logged)
+    assert not any("every passage shown once" in line for line in logged)
 
 
 def test_distinct_placed_passages_are_counted_below_the_slot_sum(build_corpus: dict) -> None:
