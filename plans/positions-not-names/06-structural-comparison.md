@@ -204,22 +204,38 @@ depends-on: 05-category-consolidation
   roughly 5% of the column is refused and which passages varies by model.
 
 - 2026-08-30 built, run and decided. `axial map compare` shipped
-  (`src/axial/argmap/compare.py`, 33 tests). Run over the default build and the
+  (`src/axial/argmap/compare.py`, 45 tests). Run over the default build and the
   variant: **D1 rises in every band** (0.66 / 0.49 / 0.38 / 0.36 against 0.59 /
   0.37 / 0.24 / 0.14, 2.6× in the plurality band) but reads **not resolved**
   without a replicate gap; **D2 failed** (0.6620 against 0.7597 — down 0.0977,
-  the wrong direction); **D3 passed** thinly; **D4 failed** (8.5% against the
-  6.9% ceiling). **Verdict: no-go on slices 07–09.** Full log:
-  `data/logs/2026-08-30-map-structural-comparison/`.
+  the wrong direction); **D3 not resolved** (every band at or above its floor,
+  but the 11+ margin is 0.0048 against that band's own null spread of 0.0078);
+  **D4 failed** (8.5% against the 6.9% ceiling). **Verdict: no-go on slices
+  07–09.** Full log: `data/logs/2026-08-30-map-structural-comparison/`.
 - 2026-08-30 the forced replicate was launched and **killed by the founder at
   ~206 of 226 extraction reads**, before the consolidation stage: it buys an
   error bar on a verdict it cannot change, and #831's ~$0.42 estimate predates
   slice 05 — a full replicate is **~$2.50 and ~7.5 hours**. ~$0.30 spent, the
   partial ledger kept.
-- 2026-08-30 **open for the founder: D2 is not size-matched the way D1 is.**
-  The bar compares raw purity across builds whose position sizes differ (band
-  11+ holds 2,713 of B's 5,542 member slots against 1,110 of A's 5,987), and
-  purity falls with size mechanically. Against its own size-matched null the
-  variant reads **lift 1.914 against the baseline's 1.880**. On the bar as
-  written D2 fails; on D1's own logic applied to D2 it does not. D4's failure
-  is unaffected either way.
+- 2026-08-30 **D2 is not size-matched the way D1 is — flagged, and it changes
+  nothing.** The bar compares raw purity across builds whose position sizes
+  differ (band 11+ holds 2,713 of B's 5,542 member slots against 1,110 of A's
+  5,987), and purity falls with size mechanically. On a size-matched ratio
+  basis the two builds are **indistinguishable**: lift 1.914 against 1.880 is
+  **+0.034 against the 0.068 lift floor** the same 2026-08-29 measurement
+  produced — half the floor. And D1's bar applied to D2 would require a lift of
+  at least **2 × 1.880 = 3.76** against the variant's 1.914: **D2 fails on the
+  bar as written and on D1's construction alike.** D4's failure is unaffected
+  either way.
+- 2026-08-30 reviewer findings on PR #846 addressed on the branch: the false
+  "D1's logic applied to D2" reading corrected here and in the run log; the
+  instability floor printed on all three scales it was measured on; the
+  identity block now names what it could actually compare (**only the corpus
+  pin**, plus `claim` against the column on disk) and reads `position`'s scheme
+  version off the column manifest; the baseline's embedding-merge folds derived
+  from raw minus merged (**0.139** per final position against B's 0.067, #831
+  rule (c)); every null printed with its own per-trial spread, which is what
+  moved D3 to not resolved; a `not computed` deciding metric no longer reads as
+  the bar met; the plurality band counted over placed passages; D4's breakdown
+  given its residual. Report re-run, byte-identical over two runs, $0. **The
+  verdict is unchanged.**

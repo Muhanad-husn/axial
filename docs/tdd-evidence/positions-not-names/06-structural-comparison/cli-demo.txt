@@ -9,28 +9,35 @@ IDENTITY (a field absent on one side is reported, never a mismatch -- a bag-grou
   grouping mode               not recorded                        category
   scheme version `claim`      not recorded                        2026-08-28-claim-v1
   scheme version `mechanism`  not recorded                        2026-08-28-mechanism-v1
+  vocabulary columns on disk (one value each, not a per-build field): `claim` 2026-08-28-claim-v1 | `position` 2026-08-29-position-v1
+  verified equal: corpus pin (A, B); `claim` scheme version (B, the column on disk)
+  not verifiable on this pair: answers pin (recorded by neither build); `mechanism` scheme version (recorded by B only); `position` scheme version (recorded by the column on disk only)
+  the refusal above fires on a build-versus-build disagreement only; a field only one side records is disclosed here and does not refuse
 
 D1 BOOK-SPREAD RATIO, SIZE-MATCHED (mean distinct source_id per position, over the same figure under a seeded permutation of that build's own placed pool into positions of identical sizes)
-  build  band  positions  slots  observed  null   ratio  cross-book  cross-book null
-  A      2     397        794    1.16      1.96   0.59   16.1%       95.9%
-  A      3-5   519        1923   1.31      3.51   0.37   24.1%       99.9%
-  A      6-10  192        1397   1.56      6.44   0.24   39.1%       100.0%
-  A      11+   66         1110   1.77      12.31  0.14   39.4%       100.0%
-  B      2     256        512    1.29      1.96   0.66   28.9%       96.5%
-  B      3-5   260        968    1.72      3.52   0.49   47.7%       99.9%
-  B      6-10  117        877    2.54      6.64   0.38   70.1%       100.0%
-  B      11+   128        2713   5.10      14.24  0.36   89.1%       100.0%
-  plurality band on B (the band holding the most member slots): 11+
+  build  band  positions  slots  passages  observed  null   null spread      ratio  cross-book  cross-book null
+  A      2     397        794    783       1.16      1.96   1.9421-1.9748    0.59   16.1%       95.9%
+  A      3-5   519        1923   1842      1.31      3.51   3.4740-3.5356    0.37   24.1%       99.9%
+  A      6-10  192        1397   1355      1.56      6.44   6.3594-6.5573    0.24   39.1%       100.0%
+  A      11+   66         1110   1078      1.77      12.31  12.0606-12.5455  0.14   39.4%       100.0%
+  B      2     256        512    512       1.29      1.96   1.9375-1.9805    0.66   28.9%       96.5%
+  B      3-5   260        968    968       1.72      3.52   3.4615-3.5538    0.49   47.7%       99.9%
+  B      6-10  117        877    875       2.54      6.64   6.4957-6.7436    0.38   70.1%       100.0%
+  B      11+   128        2713   2694      5.10      14.24  14.0703-14.3828  0.36   89.1%       100.0%
+  plurality band on B: 11+ -- the band holding the most DISTINCT placed passages, which is issue #831's own denominator. Positions overlap, so a passage can sit in two bands and the passage column does not partition; the slot column does
+  null spread is the min-max of the 20 per-trial estimates behind each null mean, not a confidence interval
 
 D2 HELD-OUT `position`-AXIS PURITY, SIZE-MATCHED (the modal `position` category's share of a position's CATEGORISED members; the axis is built and never grouped on)
-  build  scored  excluded (<2 categorised)  of which 0 categorised  member-weighted  null    lift   per-position mean
-  A      1121    816                        95                      0.7597           0.4041  1.880  0.7804
-  B      717     516                        75                      0.6620           0.3459  1.914  0.7079
+  build  scored  excluded (<2 categorised)  of which 0 categorised  member-weighted  null    null spread    lift   per-position mean
+  A      1121    816                        95                      0.7597           0.4041  0.3932-0.4108  1.880  0.7804
+  B      717     516                        75                      0.6620           0.3459  0.3425-0.3526  1.914  0.7079
   categorised base A: 5549 of 6010 selected (92.3%) -- counted over this build's own group state of 6010 chunk id(s), 0 selected passage(s) outside it
   categorised base A: 5257 of 5596 placed (93.9%)
   categorised base B: 5537 of 6010 selected (92.1%) -- counted over this build's own group state of 5993 chunk id(s), 17 selected passage(s) outside it
   categorised base B: 5174 of 5497 placed (94.1%)
-  assignment-instability floor: 0.0331 purity points (measured 2026-08-29 over two model draws of the `position` column)
+  assignment-instability floor: 0.0331 purity points, 0.0294 on the per-position mean, 0.068 on lift (one measurement, 2026-08-29, over two model draws of the `position` column, on each of the three scales this table prints)
+  B - A on each scale, against that scale's own floor: member-weighted -0.0977 against 0.0331 (outside the floor) | per-position mean -0.0726 against 0.0294 (outside the floor) | lift +0.034 against 0.068 (inside the floor)
+  a difference inside its own floor is not readable at this sample, whichever way it points
   `position` coverage per book for THIS DRAW (D:\axial\data\vocabulary), over the passages either build placed -- worst first, and a property of this draw, never of the corpus: which books a draw refuses on does not reproduce across models (#838)
     vignal-2021-c7005c2bf8ef: 70 of 121 (57.9%)
     batatu-1999-598624067df3: 113 of 187 (60.4%)
@@ -69,22 +76,26 @@ D2 HELD-OUT `position`-AXIS PURITY, SIZE-MATCHED (the modal `position` category'
     zaum-2007-834d3343aa95: 106 of 106 (100.0%)
 
 D3 MEMBER COHERENCE (mean cosine of members' `claim` texts to their position's own centroid, sentence-transformers/all-MiniLM-L6-v2; the floor is the midpoint of A's own band value and A's own band null)
-  build  band  positions scored  observed  null    floor
-  A      2     397               0.9019    0.7855  0.8437
-  A      3-5   519               0.8495    0.6710  0.7603
-  A      6-10  192               0.8156    0.5878  0.7017
-  A      11+   66                0.7913    0.5374  0.6643
-  B      2     256               0.8738    0.7865  0.8437
-  B      3-5   260               0.7911    0.6707  0.7603
-  B      6-10  117               0.7253    0.5844  0.7017
-  B      11+   128               0.6692    0.5306  0.6643
+  build  band  positions scored  observed  null    null spread    floor   margin
+  A      2     397               0.9019    0.7855  0.7828-0.7888  0.8437  0.0582
+  A      3-5   519               0.8495    0.6710  0.6684-0.6734  0.7603  0.0892
+  A      6-10  192               0.8156    0.5878  0.5850-0.5910  0.7017  0.1139
+  A      11+   66                0.7913    0.5374  0.5340-0.5418  0.6643  0.1269
+  B      2     256               0.8738    0.7865  0.7813-0.7928  0.8437  0.0301
+  B      3-5   260               0.7911    0.6707  0.6675-0.6754  0.7603  0.0308
+  B      6-10  117               0.7253    0.5844  0.5806-0.5886  0.7017  0.0236
+  B      11+   128               0.6692    0.5306  0.5284-0.5335  0.6643  0.0048
+  the floor is half an estimate: it moves with the baseline's own null, whose per-trial spread is in the column beside it. A margin inside that spread is reported as not resolved, never as passed
+  the top band is open-ended: A's largest position holds 48 member slot(s) over 66 position(s), mean 16.8; B's holds 79 over 128, mean 21.2. B is scored in 11+ against a floor set by A's systematically smaller positions, and coherence falls with size in both builds -- the direction is conservative against B
   members with no `claim` text (missing, never scored 0): A 0 | B 0
 
 D4 PASSAGES REACHING NO POSITION (passages_selected minus the DISTINCT chunk ids in positions.jsonl -- never a sum of position sizes, which double-counts a passage sitting in two positions)
   A: 6010 selected, 5596 distinct placed, 414 unplaced = 6.9% of selected (member slots 5987, which is not a passage count)
-     of which: declined by the extraction model 373, shown in a failed read 35, reaching no group at all not recorded
+     of which, at least: declined by the extraction model 373, shown in a failed read 35, reaching no group at all not recorded
+        408 attributed of 414, 6 not attributed -- the three counts are not guaranteed disjoint, so each is a lower bound and the remainder is a residual, not a fourth cause
   B: 6010 selected, 5497 distinct placed, 513 unplaced = 8.5% of selected (member slots 5542, which is not a passage count)
-     of which: declined by the extraction model 457, shown in a failed read 31, reaching no group at all 17
+     of which, at least: declined by the extraction model 457, shown in a failed read 31, reaching no group at all 17
+        505 attributed of 513, 8 not attributed -- the three counts are not guaranteed disjoint, so each is a lower bound and the remainder is a residual, not a fourth cause
 
 D5 BLIND PAIRED HAND-SAMPLE
   not computed -- D5 is a human hand-sample: 12 positions from each build, stratified to the same size bands, shuffled, judged before the labels are revealed
@@ -94,7 +105,7 @@ CONTEXT (reported, never deciding -- fewer positions, larger positions and a low
      single-passage: 763 = 39.4% of 1937 position(s), 12.7% of 5987 member slot(s)
      cross-book: 24.7% of 1174 position(s) of size 2+, 27.4% of 5987 member slot(s), 28.3% of 5596 distinct placed passage(s) -- band by band against its own null in D1's table above
      reads 679 | units asked 0 | units reused 679 | cost not recorded | wall 157.2s
-     embedding merge: not recorded fold(s), n/a per final position
+     embedding merge: 269 fold(s) (derived: raw 2206 - merged 1937), 0.139 per final position
      consolidation: no consolidation stage in this build
   B: 1233 position(s) | size p25/median/p75 1.0 / 2.0 / 4.0 | 5542 member slot(s) over 5497 distinct placed passage(s)
      single-passage: 472 = 38.3% of 1233 position(s), 8.5% of 5542 member slot(s)
@@ -113,8 +124,8 @@ REPLICATE
 
 VERDICT (the bar is issue #831's own)
   D1: not resolved at this sample -- clears 2x the baseline in band 11+ and falls in no band, but the replicate gap was not measured
-  D2: failed -- 0.6620 clears the baseline's 0.7597 by -0.0977, which does not exceed the 0.0331 assignment-instability floor
-  D3: passed -- at or above the baseline/null midpoint in every band
+  D2: failed -- 0.6620 is 0.0977 BELOW the baseline's 0.7597 -- issue #831's failure condition 2, and the wrong direction, not a small margin
+  D3: not resolved at this sample -- at or above the floor in every band (2 0.8738 - 0.8437 = +0.0301; 3-5 0.7911 - 0.7603 = +0.0308; 6-10 0.7253 - 0.7017 = +0.0236; 11+ 0.6692 - 0.6643 = +0.0048), but 11+ margin 0.0048 is inside that band's own null spread 0.0078
   D4: failed -- 8.5% of selected rises above the baseline's 6.9%
   D5: not computed -- a blind paired hand-sample: 12 positions per build, size-stratified, shuffled, judged before the labels are revealed
   overall: no-go on slices 07-09
