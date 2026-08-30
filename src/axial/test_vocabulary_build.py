@@ -1203,3 +1203,33 @@ def test_build_refuses_a_scheme_deeper_than_the_level_it_assigns(tmp_path):
 
     assert "mechanism" in str(excinfo.value)
     assert client.asked_values == []
+
+
+def test_the_report_never_calls_the_processed_count_assigned(tmp_path):
+    """Issue #835. The build report printed two different numbers one line
+    apart and called them both "assigned": the values it processed, and the
+    values that landed in a category. `manifest.json` records the second, so a
+    reader who quotes the first is off by the refusals -- 26 on the `claim`
+    run, 556 on `mechanism`. The word belongs to the number the manifest
+    agrees with, and to no other."""
+    _write_answers(tmp_path / "answers")
+    _write_scheme(tmp_path / "vocabulary.yaml")
+
+    lookup = {value: WAR_AND_STATE for value in EXTRACTION}
+    lookup[ONE_OFFS[0]] = "none"
+
+    stats = _build(tmp_path, _ScriptedAssignClient(lookup))
+    column = stats.columns[0]
+    assert column.refused_count > 0, "the fixture must refuse, or there is nothing to confuse"
+    assert column.newly_assigned_count != column.assigned_count
+
+    report = format_vocabulary_build_report(stats)
+
+    processed_line = next(line for line in report.splitlines() if line.startswith("  built:"))
+    assert str(column.newly_assigned_count) in processed_line
+    assert "assigned" not in processed_line
+
+    assigned_line = next(
+        line for line in report.splitlines() if "assigned to a category" in line
+    )
+    assert assigned_line.strip().startswith(str(column.assigned_count))

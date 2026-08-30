@@ -1691,7 +1691,12 @@ def format_vocabulary_build_report(stats: VocabularyBuildStats) -> str:
             )
         else:
             lines.append(
-                f"  built: {column.newly_assigned_count} newly assigned, "
+                # Issue #835: "asked", never "assigned". This is every value
+                # the build processed; the line below is the subset that landed
+                # in a category, and `manifest.json` records that one. Two
+                # numbers a line apart under one word is how a wrong figure
+                # reaches a decision log.
+                f"  built: {column.newly_assigned_count} newly asked, "
                 f"{column.reused_assignment_count} reused from the previous build"
             )
         lines.append(
