@@ -265,3 +265,22 @@ VERDICT (the bar is issue #831's own)
   D5: not computed -- a blind paired hand-sample: 12 positions per build, size-stratified, shuffled, judged before the labels are revealed
   overall: no-go on slices 07-09
 ```
+
+## Known limitation of the instrument, recorded rather than fixed
+
+The reviewer on PR #846 found that D2's permutation null is **size-matched but
+not population-matched**. The observed reading scores positions with at least
+two categorised members; the null re-tests that condition on each drawn
+position independently. Permuting redistributes uncategorised members, so the
+set of positions that qualify under the null is not the set scored observed,
+and since purity falls with group size, that shift moves the null. Every lift
+figure in this report inherits it — including the 1.914 against 1.880 that the
+D2 discussion above turns on.
+
+Matching the population would fix it and would change every lift printed here.
+The founder shelved this direction on 2026-08-30 after the no-go, so it is
+recorded here and in `compare.py`'s docstring rather than fixed: the correction
+would move numbers nobody is going to read. **Do not quote a lift from this
+report as a settled figure without doing it first.** The verdict does not rest
+on it — D2 fails on member-weighted purity and on the per-position mean, both
+outside their own floors, and D4 fails on arithmetic with no null at all.

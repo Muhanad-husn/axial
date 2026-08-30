@@ -30,6 +30,19 @@ build, so "selected minus placed" prints -60. Positions overlap (issue #822:
 passages and never were. D4 subtracts the distinct chunk ids, and every
 share printed anywhere below names the denominator it is a share of.
 
+**Known limitation: the null is size-matched, not population-matched.** D2's
+observed reading scores positions with at least 2 CATEGORISED members, and the
+null re-tests that condition on each drawn position independently. Permuting
+redistributes uncategorised members, so the set of positions clearing the
+condition under the null is not the set scored observed. Purity falls with
+group size, so a shift in which positions qualify moves the null, and every
+lift figure inherits it. Matching the population -- scoring drawn position `i`
+only where observed position `i` was scored -- would fix it, and would change
+every lift the report prints. Recorded rather than fixed: the founder shelved
+this direction on 2026-08-30 after the no-go, so the fix would move numbers
+nobody is going to read. Do not quote a lift from this report as a settled
+figure without doing it first.
+
 **Why an absent field is not a mismatch.** The identity check refuses on a
 corpus pin, an answers pin or a vocabulary scheme version that DIFFERS
 between the builds. A field recorded on one side and absent on the other is
