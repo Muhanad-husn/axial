@@ -5,7 +5,7 @@
 - **Issue:** [#831](https://github.com/Muhanad-husn/axial/issues/831)
 - **Branch:** feat/positions-not-names/06-structural-comparison
 - **Project directory:** .
-- **Status:** ☐ todo
+- **Status:** ☑ done — verdict **no-go** on slices 07–09
 - **Walking skeleton?** no
 
 > **Bar rewritten 2026-08-29** to the one the founder approved in #831, with
@@ -95,7 +95,7 @@ creates: src/axial/argmap/compare.py
 creates: src/axial/argmap/test_compare.py
 edits: src/axial/cli.py
 edits: src/axial/test_cli.py
-creates: data/logs/2026-08-28-map-structural-comparison/summary.md
+creates: data/logs/2026-08-30-map-structural-comparison/summary.md
 depends-on: 05-category-consolidation
 ```
 
@@ -145,7 +145,7 @@ depends-on: 05-category-consolidation
    variant replicate. The replicate runs in its own directory with prior-pin
    seeding off (`force=True` sets `prior_pin_dir = None`); confirm
    `units_reused == 0` before quoting any margin against the gap. Write
-   `data/logs/2026-08-28-map-structural-comparison/` with `run.jsonl`,
+   `data/logs/2026-08-30-map-structural-comparison/` with `run.jsonl`,
    `console.log` and `summary.md`, in the main checkout — `data/` does not
    exist in a worktree.
 2. **Blind paired hand-sample (D5).** Draw 12 positions from each build,
@@ -178,12 +178,15 @@ depends-on: 05-category-consolidation
 
 ## Definition of done
 
-- [ ] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
-- [ ] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
-- [ ] Refactor pass complete with the bar green.
-- [ ] Slice's tests run in CI (`tdd-ci`).
-- [ ] Comparison run over all three builds, blind paired hand-sample done, log
-      written, founder verdict recorded against #831's failure conditions.
+- [x] Acceptance/e2e test written, seen to fail for the right reason, now GREEN.
+- [x] All seeded unit behaviours covered; fast tier green locally, CI green for the rest.
+- [x] Refactor pass complete with the bar green.
+- [x] Slice's tests run in CI (`tdd-ci`) — the suite runs under the existing workflow; no new job needed.
+- [x] Comparison run over the default build and the variant, log written, founder
+      verdict recorded against #831's failure conditions. **The third build — the
+      forced replicate — was killed by the founder mid-extraction, and D5 was not
+      run: both buy evidence that cannot change a verdict two failed metrics
+      already settle.**
 - [ ] Evidence collected and PR opened into main (`safe-pr`).
 
 ## Status / progress log
@@ -199,3 +202,24 @@ depends-on: 05-category-consolidation
   D2 is blind on `vignal-2021` / `batatu-1999` / `tilly-1978`: the second draw
   refuses on none of them and concentrates elsewhere. What stands is that
   roughly 5% of the column is refused and which passages varies by model.
+
+- 2026-08-30 built, run and decided. `axial map compare` shipped
+  (`src/axial/argmap/compare.py`, 33 tests). Run over the default build and the
+  variant: **D1 rises in every band** (0.66 / 0.49 / 0.38 / 0.36 against 0.59 /
+  0.37 / 0.24 / 0.14, 2.6× in the plurality band) but reads **not resolved**
+  without a replicate gap; **D2 failed** (0.6620 against 0.7597 — down 0.0977,
+  the wrong direction); **D3 passed** thinly; **D4 failed** (8.5% against the
+  6.9% ceiling). **Verdict: no-go on slices 07–09.** Full log:
+  `data/logs/2026-08-30-map-structural-comparison/`.
+- 2026-08-30 the forced replicate was launched and **killed by the founder at
+  ~206 of 226 extraction reads**, before the consolidation stage: it buys an
+  error bar on a verdict it cannot change, and #831's ~$0.42 estimate predates
+  slice 05 — a full replicate is **~$2.50 and ~7.5 hours**. ~$0.30 spent, the
+  partial ledger kept.
+- 2026-08-30 **open for the founder: D2 is not size-matched the way D1 is.**
+  The bar compares raw purity across builds whose position sizes differ (band
+  11+ holds 2,713 of B's 5,542 member slots against 1,110 of A's 5,987), and
+  purity falls with size mechanically. Against its own size-matched null the
+  variant reads **lift 1.914 against the baseline's 1.880**. On the bar as
+  written D2 fails; on D1's own logic applied to D2 it does not. D4's failure
+  is unaffected either way.
