@@ -1,0 +1,18 @@
+$ uv run axial --help  # kept surface still offered
+             {schema,intake,extract,envelope,chunk,interrogate,position-backfill,artifacts,names,vocabulary,map,eval,gather-eval,vault,polity,drive,sources,ingest,run,status,console,runs,pipeline-ready,brief,paper,pin,publish,panel,gate,reconcile,key,ask} ...
+  {schema,intake,extract,envelope,chunk,interrogate,position-backfill,artifacts,names,vocabulary,map,eval,gather-eval,vault,polity,drive,sources,ingest,run,status,console,runs,pipeline-ready,brief,paper,pin,publish,panel,gate,reconcile,key,ask}
+                        map; 'materialize' is slice 06 (issue #411) -- writes
+                        from the alias map, zero model calls. Unrelated to
+    vocabulary          issue #805 (derived-vocabulary, slice 01): 'examine'
+                        vocabulary/README.md)
+
+$ git grep -l "argmap.purity\|argmap.grouping\|argmap.consolidate\|argmap.compare" -- src/
+exit code: 1 (1 = no matches)
+
+# The $0 resume check: uv run axial map build before (main, 53165ff) and after the deletion.
+# Both runs: units_reused: 679, units_asked: 0. Manifest diff, wall_time_sec/runs excluded
+# (they accumulate on every resume by design; the before-run moved them identically):
+#   identical minus wall_time_sec/runs: True
+units_reused: 679
+units_asked: 0
+units_asked_touching_new: 0

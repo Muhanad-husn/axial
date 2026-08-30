@@ -1,0 +1,3 @@
+$ uv run pytest -q  # fast tier (src), exit code below
+[dots omitted -- full output in test-run.txt]
+exit code: 0
