@@ -29,18 +29,6 @@ Four steps, run in one command (`axial map build`):
      (`merge_positions`), and each surviving position is stamped with a
      stable `position_id` (`assign_position_ids`).
 
-A category-grouped build (`--grouping category`) runs one more stage
-between 3 and 4: **consolidation** (`axial.argmap.consolidate`, issue #830).
-A category is read one `claim x mechanism` cell at a time, so an argument
-running through several cells is named once per cell, and without this stage
-the only thing reuniting those namings is step 4's wording-similarity merge
--- which would make wording MORE load-bearing than it was before the
-re-forming. It iterates per category until one call reads everything that
-category has left, because a single round over slices reunites only inside
-one slice. That stage also restricts step 4 to folding across categories
-only, for the same reason: inside a category, the consolidation pass has
-already judged which arguments are the same one.
-
 **Cost and wall time accumulate under the pin, never overwrite (issue
 #830).** `usage_for_pass` reports what THIS process spent, so a resumed run
 -- which by design makes no call -- reported `cost_usd: null` and rewrote a
@@ -279,32 +267,10 @@ class MapError(Exception):
     """Base class for all argument-map build errors."""
 
 
-# The two grouping modes `run_map_build` takes (issue #829). `GROUPING_BAG`
-# is what every build before this slice did and stays the default;
-# `GROUPING_CATEGORY` groups by slice 03's chosen `claim x mechanism` split
-# and writes beside the default build, under `<pin>` + `CATEGORY_VARIANT_
-# SUFFIX`, so the two maps exist at once and can be compared (slice 06).
+# The one grouping mode left (the category-grouped variant was shelved,
+# DEC-74, and its code deleted -- issue #850). The manifest still records
+# `grouping.mode: "bag"` so prior artifacts read identically.
 GROUPING_BAG = "bag"
-GROUPING_CATEGORY = "category"
-GROUPING_MODES = (GROUPING_BAG, GROUPING_CATEGORY)
-CATEGORY_VARIANT_SUFFIX = "-category"
-
-
-class SchemeVersionMismatchError(MapError):
-    """Raised when a category-grouped build finds its own directory already
-    holds work grouped under different vocabulary scheme versions. Resuming
-    would finish one half of a map under a scheme the other half was never
-    asked under -- the ledger is keyed by group label, and a scheme change
-    silently re-labels every group. The fix is a fresh variant directory or
-    `--force`, both deliberate acts."""
-
-    def __init__(self, column: str, recorded: str, on_disk: str, outdir: Path) -> None:
-        self.column = column
-        super().__init__(
-            f"{outdir} was grouped under {column} scheme {recorded!r}, but "
-            f"{column} on disk is now {on_disk!r} -- refusing to resume a "
-            "variant build across two schemes"
-        )
 
 
 class CorruptReadsLedgerError(MapError):
@@ -349,13 +315,10 @@ class ExtractJob:
     """One model call's worth of work: `bag`'s `slice_index`-th slice of at
     most `EXTRACT_SLICE` passages, already author-spread.
 
-    `bag` is the group's own identity, and what that is depends on the
-    grouping mode: a wording bag's integer label under `GROUPING_BAG`, a
-    category cell's own label string (`<claim>::<mechanism>`) under
-    `GROUPING_CATEGORY` (issue #829). It is only ever used as half of the
-    `(bag, slice)` resume key and printed in the progress log, so both types
-    work unchanged -- and both survive the JSON round-trip through
-    `reads.jsonl` as themselves."""
+    `bag` is the group's own identity: a wording bag's integer label. It is
+    only ever used as half of the `(bag, slice)` resume key and printed in
+    the progress log, and it survives the JSON round-trip through
+    `reads.jsonl` as itself."""
 
     bag: int | str
     slice_index: int
@@ -606,87 +569,6 @@ def _write_bag_state(
     path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _write_category_group_state(
-    path: Path, groups: Mapping[str, list[Passage]], scheme_versions: Mapping[str, str]
-) -> None:
-    """The category-grouped build's own `bag_state.json` (issue #829).
-
-    It exists for two readers already on disk. `axial.argmap.purity._load_
-    bag_assignments` and `axial.argmap.grouping.compute_grouping_report`
-    both take this file as the passage universe of a built map, and slice
-    06 measures the variant directory through them. That is why the
-    assignment values are INTEGERS -- `_load_bag_assignments` calls
-    `int(...)` on each one, and a raw label string would raise there -- with
-    the labels themselves kept alongside in `group_labels`, indexed by the
-    same numbering.
-
-    Its `assignments` hold only the passages that reached a GROUP, so on the
-    real corpus its key count is 5,993 against 6,010 selected -- the 17
-    ungrouped ones are absent. That is what a file recording group
-    membership should say, but it means neither reader above can be used to
-    count selected passages: `map grouping-report` prints 5,993 for this
-    pin, and anything measuring coverage against that number understates
-    the loss. `passages_selected` in `map.json` is the honest denominator.
-
-    It can never be mistaken for a bag fit to reuse: `_bag_state_reusable`
-    requires `config.encoder`/`bag_distance_threshold`/`sklearn_version`,
-    and this config carries none of them, because none of them decided
-    anything here. `centroids` is written empty for the same reason -- a
-    category cell has no centroid, and an incremental build has nothing to
-    place a new passage against.
-
-    `scheme_versions` is written here rather than only in `map.json`
-    because this file lands BEFORE the first model call and `map.json` only
-    after the last one: a run killed halfway leaves the ledger and this,
-    and `_check_scheme_versions` needs something to compare against in
-    exactly that case."""
-    ordered = sorted(groups)
-    index_by_label = {label: index for index, label in enumerate(ordered)}
-    state = {
-        "config": {
-            "grouping": GROUPING_CATEGORY,
-            "scheme_versions": dict(scheme_versions),
-        },
-        "assignments": {
-            member.chunk_id: index_by_label[label]
-            for label, members in groups.items()
-            for member in members
-        },
-        "group_labels": {str(index): label for label, index in index_by_label.items()},
-        "centroids": {},
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def _check_scheme_versions(
-    outdir: Path, scheme_versions: Mapping[str, str], *, force: bool
-) -> None:
-    """Refuse to resume a category-grouped build under a scheme it was not
-    started under (issue #829).
-
-    There is nothing to compare against on a FIRST run -- no prior state
-    exists, and the build simply records what it grouped under. The refusal
-    is meaningful on a re-run: the group labels the resume ledger is keyed
-    by are category ids, so a scheme change re-labels every group, and
-    finishing the ledger would produce a map half-asked under each scheme.
-    Compared against `bag_state.json` rather than `map.json` because that
-    file is written before the first call and covers a killed run too.
-
-    `force` skips the check, because it is exactly the deliberate act this
-    refusal asks for: it sets the whole prior ledger aside and re-asks every
-    group under the scheme now on disk."""
-    if force:
-        return
-    state = _load_json_or_none(_bag_state_path(outdir))
-    recorded = (state or {}).get("config", {}).get("scheme_versions")
-    if not isinstance(recorded, dict):
-        return
-    for column, version in sorted(scheme_versions.items()):
-        if recorded.get(column, version) != version:
-            raise SchemeVersionMismatchError(column, recorded[column], version, outdir)
-
-
 def _average_linkage_distance(vector: np.ndarray, centroid: np.ndarray) -> float:
     """The distance a candidate point's placement against `centroid` must
     clear -- the SAME criterion `_agglomerative_cluster`'s own average
@@ -814,11 +696,7 @@ def build_jobs(
     one -- there is no special case: the model is asked about it exactly
     like any other slice, and its answer (an argument, or nothing usable)
     flows through the same placed/unassigned/failed accounting as every
-    other job.
-
-    A category-grouped build (issue #829) passes label-keyed groups here
-    instead of integer-keyed bags; `sorted` orders either kind, since one
-    build's keys are all of one type."""
+    other job."""
     jobs: list[ExtractJob] = []
     for label, members in sorted(bags.items()):
         ordered = author_spread(members)
@@ -946,19 +824,13 @@ def run_extraction(
     reads_path: Path,
     pass_name: str = PASS_NAME,
     workers: int = WORKERS,
-    unit_word: str = "bag",
     log: Callable[[str], None] = print,
 ) -> list[dict[str, Any]]:
     """Run every job in `jobs` through one model call each, resumable by
     `(bag, slice)` via `reads_path`: a restart skips whatever this ledger
     already carries.
 
-    `unit_word` is what the per-read progress line calls a job's grouping
-    unit (issue #829). It is "bag" by default and "group" under category
-    grouping, because printing "bag" while `--grouping category` runs names
-    the OTHER value of the flag the operator just set, and reads as the flag
-    having been ignored. Calls run concurrently (`workers`), but every
-    checkpoint write happens on this one collecting thread -- the same
+    Calls run concurrently (`workers`), but every checkpoint write happens on this one collecting thread -- the same
     pattern `axial.merge_names`/`axial.gather` already use -- so a mid-run
     kill can never race two threads onto the same line, and every result is
     durable the instant it returns rather than held in memory.
@@ -989,40 +861,10 @@ def run_extraction(
                 completed += 1
                 log(
                     f"  read {completed}/{len(pending)} "
-                    f"({unit_word} {record['bag']} slice {record['slice']})"
+                    f"(bag {record['bag']} slice {record['slice']})"
                 )
 
     return load_checkpoint_records(reads_path, CorruptReadsLedgerError)
-
-
-def _buckets_without_repeating_a_category(
-    group: Sequence[dict[str, Any]],
-) -> list[list[dict[str, Any]]]:
-    """Split one embedding cluster so no bucket holds two positions of the
-    same category (issue #830). Members are taken in `merge_positions`' own
-    deterministic order and each goes into the first bucket that does not
-    already hold its category, so the largest naming of each category meets
-    the largest of every other -- the cross-category fold this merge still
-    exists for -- and a category's further members fold with each other's
-    leftovers rather than being discarded.
-
-    Why the restriction: under category grouping the consolidation pass has
-    already read that category's arguments and judged which of them are the
-    same argument. Two that it left standing were left standing on purpose,
-    and embedding distance is not entitled to overrule that -- it is the
-    wording similarity `docs/approach-positions-not-names.md` §6 removed from
-    the grouping step, and letting it fold inside a category would put it
-    straight back."""
-    buckets: list[list[dict[str, Any]]] = []
-    for position in sorted(group, key=lambda p: (-p["size"], p["argument"])):
-        category = position.get("category")
-        for bucket in buckets:
-            if category not in {member.get("category") for member in bucket}:
-                bucket.append(position)
-                break
-        else:
-            buckets.append([position])
-    return buckets
 
 
 def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -1030,18 +872,7 @@ def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
     largest-membership phrasing, ties broken alphabetically -- deterministic
     regardless of arrival order), `variants` (every raw phrasing, sorted),
     the union of `chunk_ids`, `sources` and `authors`, `size` (distinct
-    chunk_ids) and `named_times` (how many raw positions folded in here).
-
-    `consolidated_from`, `folded_from` and `categories` are emitted only
-    when the inputs carry them -- they exist on a consolidated position
-    (issue #830) and on nothing the default build produces, so a default
-    map.json and positions.jsonl are unchanged, key for key.
-
-    `folded_from` is the raw arguments underneath a consolidated position,
-    and it is carried through rather than dropped so a reader can see what a
-    fold was made of without reconstructing it from chunk ids. It does not
-    collide with `variants` and does not replace it: `variants` is this
-    merge's own record of the phrasings IT folded, one level up."""
+    chunk_ids) and `named_times` (how many raw positions folded in here)."""
     representative = min(group, key=lambda p: (-p["size"], p["argument"]))
     chunk_ids = sorted({cid for position in group for cid in position["chunk_ids"]})
     record = {
@@ -1053,15 +884,6 @@ def _merged_record(group: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "size": len(chunk_ids),
         "named_times": len(group),
     }
-    consolidated = [p["consolidated_from"] for p in group if "consolidated_from" in p]
-    if consolidated:
-        record["consolidated_from"] = sum(consolidated)
-    folded_from = [member for p in group for member in p.get("folded_from", [])]
-    if folded_from:
-        record["folded_from"] = folded_from
-    categories = sorted({p["category"] for p in group if p.get("category")})
-    if categories:
-        record["categories"] = categories
     return record
 
 
@@ -1069,21 +891,12 @@ def merge_positions(
     raw_positions: Sequence[dict[str, Any]],
     encode: Encoder,
     cluster_fn: ClusterFn | None = None,
-    *,
-    cross_category_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Fold near-duplicate namings of one argument together (stage 1
     analysis, `MERGE_DISTANCE_THRESHOLD`), because the same argument is
     routinely named from two different bags. Carries no `position_id` yet --
     see `assign_position_ids`. `cluster_fn`, when given, replaces the default
-    agglomerative clustering (for tests).
-
-    `cross_category_only` (issue #830, category-grouped builds only, and off
-    by default so the default build is untouched): two positions of the same
-    category are never folded by embedding distance alone -- the
-    consolidation pass has already judged that category's arguments, and this
-    merge is left with the one job §6 keeps it for, folding a near-duplicate
-    naming ACROSS categories. See `_buckets_without_repeating_a_category`."""
+    agglomerative clustering (for tests)."""
     if not raw_positions:
         return []
 
@@ -1097,11 +910,7 @@ def merge_positions(
     for label, position in zip(labels, raw_positions):
         groups[label].append(position)
 
-    merged: list[dict[str, Any]] = []
-    for group in groups.values():
-        buckets = _buckets_without_repeating_a_category(group) if cross_category_only else [group]
-        merged.extend(_merged_record(bucket) for bucket in buckets)
-    return merged
+    return [_merged_record(group) for group in groups.values()]
 
 
 def fold_stats(named: int, positions: Sequence[dict[str, Any]], count_key: str) -> dict[str, Any]:
@@ -1109,13 +918,8 @@ def fold_stats(named: int, positions: Sequence[dict[str, Any]], count_key: str) 
     build's merge is read by (issue #830, founder's comparability note):
     folds, positions carrying more than one naming, and folds per final
     position. The default build's own merge reads 269 / 207 / 0.139 at 2,206
-    raw positions, and nothing about the variant's consolidation is
-    comparable to anything until it is reported the same way.
-
-    `count_key` is the field a stage records its own naming count under --
-    `named_times` for the embedding merge, `consolidated_from` for the
-    consolidation pass -- so both stages of a variant build are reported
-    separately and neither is mistaken for the other."""
+    raw positions. `count_key` is the field a stage records its own naming
+    count under -- `named_times` for the embedding merge."""
     folds = named - len(positions)
     return {
         "folds": folds,
@@ -1412,18 +1216,13 @@ def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
     (`map.json` is written last, at the very end of a build, so a directory
     without one was never a completed build to seed from).
 
-    A category variant directory (issue #829) is never a candidate. It is a
-    sibling under the same `map_dir` and it does carry a `map.json`, so
-    without this it would be the newest "prior pin" the moment it is built --
-    and a later default rebuild would then seed its ledger from reads asked
-    over category groups. A real pin is a 16-character hex digest, so it can
-    never end in this suffix.
-
-    That exclusion reaches the second caller too: `axial.argmap.purity.
-    resolve_map_pin_dir` resolves a bare `axial map purity`/`map
-    grouping-report` through here, so those keep measuring the DEFAULT build
-    once a variant exists beside it. Reading the variant is `--pin
-    <pin>-category`, which bypasses this resolution entirely."""
+    A `-category` variant directory is never a candidate. The code that
+    wrote those is gone (issue #850) but `data/map/<pin>-category/` artifacts
+    stay on disk, they carry a `map.json`, and without this exclusion the
+    newest of them would become the "prior pin" a later default rebuild seeds
+    its ledger from -- reads asked over category groups, not wording bags. A
+    real pin is a 16-character hex digest, so it can never end in this
+    suffix."""
     root = Path(map_dir)
     if not root.is_dir():
         return None
@@ -1432,7 +1231,7 @@ def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
         for child in root.iterdir()
         if child.is_dir()
         and child.name != current_pin
-        and not child.name.endswith(CATEGORY_VARIANT_SUFFIX)
+        and not child.name.endswith("-category")
         and (child / "map.json").is_file()
     ]
     if not candidates:
@@ -1542,7 +1341,6 @@ def run_map_build(
     envelopes_dir: Path | None = None,
     sources_dir: Path | None = None,
     map_dir: Path | None = None,
-    vocabulary_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
     encode: Encoder | None = None,
@@ -1550,7 +1348,6 @@ def run_map_build(
     guard: bool = True,
     pin: str | None = None,
     force: bool = False,
-    grouping: str = GROUPING_BAG,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Run both stages -- positions, then relations -- and write
@@ -1589,33 +1386,8 @@ def run_map_build(
     the prior pin's own read for every slice whose ordered claims match
     exactly (`_seed_reads_from_prior_pin`), so `run_extraction`'s existing
     `(bag, slice)` resume skips those with no model call. `force=True`
-    skips both -- a full re-bag is always available and never automatic.
-
-    **Issue #829: `grouping=GROUPING_CATEGORY` builds the re-formed map
-    beside the default one.** Step 2 groups by slice 03's chosen `claim x
-    mechanism` split plus the claim-only fallback (`axial.argmap.grouping.
-    load_category_grouping`) instead of wording similarity, and everything
-    downstream -- author-spread slicing, the blind render, the extraction
-    call, the resume ledger, the merge -- is the same code over a different
-    grouping. The variant writes to `<pin>-category/`, never `<pin>/`, and
-    it consults no prior pin at all: neither for bag state (a category cell
-    has no centroid to place against) nor for seeded reads (a prior pin's
-    reads are the DEFAULT build's, and seeding from them would silently
-    reproduce the very map this variant exists to be compared against).
-    Stage 2, relations, is skipped -- it is slice 07's, and the variant's
-    manifest carries no relations block.
-
-    **Issue #830: a category-grouped build consolidates between extraction
-    and merge.** `axial.argmap.consolidate.run_consolidation` reads each
-    category's own per-group arguments and says what recurs among them,
-    ITERATING until one call reads everything the category has left, on its
-    own resume ledger (`consolidation_reads.jsonl`) and under its own pass
-    name; the merge below is then restricted to folding across categories. The manifest reports raw, consolidated and merged positions
-    as three counts, and the two stages' folds separately (`consolidation`
-    and `embedding_merge`). Nothing here runs under `GROUPING_BAG`."""
+    skips both -- a full re-bag is always available and never automatic."""
     started = time.monotonic()
-    if grouping not in GROUPING_MODES:
-        raise MapError(f"unknown grouping {grouping!r} (expected one of {GROUPING_MODES})")
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
     if trees_dir is None:
@@ -1631,8 +1403,7 @@ def run_map_build(
     if pin is None:
         pin = compute_corpus_pin(envelopes_dir, sources_dir)
 
-    category_grouped = grouping == GROUPING_CATEGORY
-    outdir = Path(map_dir) / (f"{pin}{CATEGORY_VARIANT_SUFFIX}" if category_grouped else pin)
+    outdir = Path(map_dir) / pin
     outdir.mkdir(parents=True, exist_ok=True)
     # Read before anything overwrites it: this build's cost and wall time
     # accumulate onto whatever earlier runs under this pin already spent
@@ -1640,75 +1411,43 @@ def run_map_build(
     prior_manifest = _load_json_or_none(outdir / "map.json")
     if guard:
         claim_single_instance(outdir)
-    log(f"corpus pin {pin} | grouping {grouping} -> {outdir}")
+    log(f"corpus pin {pin} | grouping {GROUPING_BAG} -> {outdir}")
 
     passages = select_passages(answers_dir, trees_dir)
     log(f"passages {len(passages)} | authors {len({p.author for p in passages})}")
 
-    ungrouped_chunk_ids: tuple[str, ...] = ()
-    scheme_versions: dict[str, str] = {}
-    if category_grouped:
-        # Imported here, not at module scope: `axial.argmap.grouping` imports
-        # this module for its own constants and clustering seam, so a
-        # top-level import either way is a cycle.
-        from axial.argmap.grouping import load_category_grouping
-
-        by_chunk_id = {passage.chunk_id: passage for passage in passages}
-        grouped = load_category_grouping(by_chunk_id.keys(), vocabulary_dir=vocabulary_dir)
-        scheme_versions = grouped.scheme_versions
-        _check_scheme_versions(outdir, scheme_versions, force=force)
-        bags = {
-            group.label: [by_chunk_id[chunk_id] for chunk_id in group.chunk_ids]
-            for group in grouped.result.groups
-        }
-        ungrouped_chunk_ids = grouped.result.ungrouped_chunk_ids
-        prior_pin_dir = None
-        schemes = ", ".join(
-            f"{column} {version}" for column, version in sorted(scheme_versions.items())
-        )
+    # Issue #677: `--force` always re-bags globally (the founder's chosen
+    # escape hatch), so a forced run never even looks for a prior pin.
+    prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
+    prior_bag_state = (
+        _load_json_or_none(_bag_state_path(prior_pin_dir)) if prior_pin_dir is not None else None
+    )
+    if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
         log(
-            f"groups {len(bags)} (claim x mechanism, schemes {schemes}; "
-            f"{len(ungrouped_chunk_ids)} passage(s) reached no group)"
+            f"map: prior bag state at {prior_pin_dir} does not match this run's "
+            "encoder/threshold/library version -- falling back to a full re-bag"
         )
-        _write_category_group_state(_bag_state_path(outdir), bags, scheme_versions)
+        prior_bag_state = None
+
+    if prior_bag_state is not None:
+        bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
+        log(
+            f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
+            f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
+            "their prior bag)"
+        )
     else:
-        # Issue #677: `--force` always re-bags globally (the founder's chosen
-        # escape hatch), so a forced run never even looks for a prior pin.
-        prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
-        prior_bag_state = (
-            _load_json_or_none(_bag_state_path(prior_pin_dir))
-            if prior_pin_dir is not None
-            else None
-        )
-        if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
-            log(
-                f"map: prior bag state at {prior_pin_dir} does not match this run's "
-                "encoder/threshold/library version -- falling back to a full re-bag"
-            )
-            prior_bag_state = None
+        bags, centroids = _bag_passages_with_centroids(passages, encode)
+        log(f"bags {len(bags)} (full re-bag)")
 
-        if prior_bag_state is not None:
-            bags, centroids, new_count = _incremental_bag_passages(
-                passages, encode, prior_bag_state
-            )
-            log(
-                f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
-                f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
-                "their prior bag)"
-            )
-        else:
-            bags, centroids = _bag_passages_with_centroids(passages, encode)
-            log(f"bags {len(bags)} (full re-bag)")
+    _write_bag_state(_bag_state_path(outdir), bags, centroids)
 
-        _write_bag_state(_bag_state_path(outdir), bags, centroids)
-
-    unit_word = "group" if category_grouped else "bag"
     jobs = build_jobs(bags)
     # Issue #829: "every passage shown once" read as a coverage guarantee,
     # printed one line under "17 passage(s) reached no group". It only ever
     # meant that no passage appears in two reads.
     log(
-        f"reads {len(jobs)} over {len(bags)} {unit_word}(s) "
+        f"reads {len(jobs)} over {len(bags)} bag(s) "
         f"(no passage appears in more than one read)"
     )
 
@@ -1766,7 +1505,6 @@ def run_map_build(
         client=client,
         reads_path=reads_path,
         workers=workers,
-        unit_word=unit_word,
         log=log,
     )
 
@@ -1803,144 +1541,9 @@ def run_map_build(
         estimate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) if usage else None
     )
 
-    # ------------------------------------------------------------------
-    # Consolidation (issue #830), between extraction and merge, and only
-    # for a category-grouped build.
-    # ------------------------------------------------------------------
-    # A category is read one `claim x mechanism` cell at a time, so an
-    # argument running through several cells is named once per cell. Without
-    # this stage the only thing reuniting those namings is the embedding
-    # merge below, which folds by wording -- exactly the failure mode
-    # `docs/approach-positions-not-names.md` §6 calls disqualifying. The
-    # default build has no such split and needs no such stage.
-    consolidation_manifest: dict[str, Any] | None = None
-    positions_to_merge: Sequence[dict[str, Any]] = raw_positions
-    if category_grouped:
-        # Imported here for the same reason `grouping` is: that module
-        # imports this one for `EXTRACT_SLICE`/`WORKERS`/`MapError`, so a
-        # top-level import either way is a cycle.
-        from axial.argmap.consolidate import (
-            PASS_NAME as CONSOLIDATE_PASS_NAME,
-            POSITION_CONSOLIDATE_REASONING,
-            STOPPED_CONVERGED,
-            STOPPED_FINAL_ROUND_FAILED,
-            STOPPED_NO_PROGRESS,
-            STOPPED_ROUND_CAP,
-            consolidation_reads_path,
-            run_consolidation,
-            write_consolidation_ledger_aside,
-        )
-
-        consolidation_started = time.monotonic()
-        if force:
-            set_aside = write_consolidation_ledger_aside(outdir, _force_aside_suffix())
-            if set_aside is not None:
-                log(f"--force: set aside {set_aside} prior consolidation read(s)")
-        consolidation = run_consolidation(
-            reads,
-            client=client,
-            reads_path=consolidation_reads_path(outdir),
-            workers=workers,
-            log=log,
-        )
-        positions_to_merge = consolidation.positions
-        consolidation_folds = fold_stats(
-            len(raw_positions), positions_to_merge, "consolidated_from"
-        )
-        outcomes = consolidation.outcomes
-        consolidation_usage = client.usage_for_pass(CONSOLIDATE_PASS_NAME)
-        consolidation_model = client.model_for_pass(CONSOLIDATE_PASS_NAME)
-        log(
-            f"consolidated positions {len(positions_to_merge)} (from {len(raw_positions)} raw; "
-            f"{consolidation_folds['folds']} fold(s) over "
-            f"{consolidation_folds['positions_with_more_than_one_naming']} position(s))"
-        )
-        # Nested rather than mixed into the manifest's own fields, the same
-        # arrangement the relations block already has: this manifest now
-        # describes three stages and none of them overwrites another's
-        # counts, usage or cost.
-        consolidation_manifest = {
-            "counts": {
-                "categories": consolidation.categories,
-                "categories_passed_through": consolidation.categories_passed_through,
-                # Was this category ever too big for ONE call -- read off
-                # round 1's own slice count, not off the rounds it took. A
-                # category cut into four slices that folds nothing stops
-                # after one round and would otherwise report itself as
-                # never sliced (issue #830, review).
-                "categories_sliced": sum(1 for o in outcomes if o.round_one_slices > 1),
-                # How each category ENDED. Only `converged` means one call
-                # read everything it had left; the other three still hold
-                # namings nothing reunited, and are the number to watch.
-                "categories_converged": sum(
-                    1 for o in outcomes if o.stopped == STOPPED_CONVERGED
-                ),
-                "categories_stopped_no_progress": sum(
-                    1 for o in outcomes if o.stopped == STOPPED_NO_PROGRESS
-                ),
-                "categories_stopped_at_round_cap": sum(
-                    1 for o in outcomes if o.stopped == STOPPED_ROUND_CAP
-                ),
-                "categories_stopped_final_round_failed": sum(
-                    1 for o in outcomes if o.stopped == STOPPED_FINAL_ROUND_FAILED
-                ),
-                "rounds": sum(o.rounds for o in outcomes),
-                "max_rounds_one_category": max((o.rounds for o in outcomes), default=0),
-                "reads": len(consolidation.records),
-                "failed_reads": len([r for r in consolidation.records if "error" in r]),
-                # What this RESUME cost, all zero on a first run. A retried
-                # read changes its category's arguments, so every later
-                # round of that category is asked again at full price
-                # (`reads_reasked_after_retry`) -- the pass says so up front
-                # and records it here. `reads_abandoned` is a read that has
-                # failed as many times as the client would attempt one call
-                # and will never be asked again without `--force` (issue
-                # #830).
-                "reads_retried": consolidation.reads_retried,
-                "reads_reasked_after_retry": consolidation.reads_reasked_after_retry,
-                "reads_abandoned": consolidation.reads_abandoned,
-                "dropped_handles": sum(
-                    record.get("dropped_handles", 0) for record in consolidation.records
-                ),
-                # The re-read. A position standing for ten or more raw
-                # arguments is read again against them before the round it
-                # came out of finishes, because at that size the blind
-                # audit found every fold wrong (issue #830). These four say
-                # how often it fired, how often it found a heading rather
-                # than a claim, what it broke the heading into, and how
-                # often the extra call failed and left the position
-                # standing. `positions_re_read` at zero on a sliced
-                # category-grouped build is the shape of the defect the
-                # first trigger had, and worth watching.
-                "positions_re_read": len(consolidation.re_reads),
-                "positions_split": sum(1 for r in consolidation.re_reads if r.get("split")),
-                "split_subgroups": sum(
-                    len(r["positions"]) for r in consolidation.re_reads if r.get("split")
-                ),
-                "failed_re_reads": len([r for r in consolidation.re_reads if "error" in r]),
-                "raw_positions": len(raw_positions),
-                "consolidated_positions": len(positions_to_merge),
-                **consolidation_folds,
-            },
-            "model": consolidation_model,
-            "reasoning": POSITION_CONSOLIDATE_REASONING,
-            **_accumulated_totals(
-                (prior_manifest or {}).get("consolidation"),
-                consolidation_usage,
-                estimate_cost(
-                    consolidation_model,
-                    consolidation_usage["prompt_tokens"],
-                    consolidation_usage["completion_tokens"],
-                )
-                if consolidation_usage
-                else None,
-                time.monotonic() - consolidation_started,
-            ),
-        }
-
-    merged = merge_positions(positions_to_merge, encode, cross_category_only=category_grouped)
+    merged = merge_positions(raw_positions, encode)
     stamped = assign_position_ids(merged)
-    log(f"merged positions {len(stamped)} (from {len(positions_to_merge)} raw)")
+    log(f"merged positions {len(stamped)} (from {len(raw_positions)} raw)")
 
     with (outdir / "positions.jsonl").open("w", encoding="utf-8") as handle:
         for position in stamped:
@@ -1949,102 +1552,96 @@ def run_map_build(
     # ------------------------------------------------------------------
     # Stage 2: relations between positions (issue #572, PR 2 of 4).
     # ------------------------------------------------------------------
-    # Skipped entirely for a category-grouped variant (issue #829):
-    # relations over the variant are slice 07's, and asking them here
-    # would spend a paid pass on a map the consolidation pass has not
-    # run over yet. The manifest then carries no relations block at all.
-    relations_manifest: dict[str, Any] | None = None
-    if not category_grouped:
-        relations_started = time.monotonic()
-        by_id = {position["position_id"]: position for position in stamped}
-        neighbourhoods = build_neighbourhoods(stamped, encode)
-        singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
+    relations_started = time.monotonic()
+    by_id = {position["position_id"]: position for position in stamped}
+    neighbourhoods = build_neighbourhoods(stamped, encode)
+    singletons = len(stamped) - sum(len(n.position_ids) for n in neighbourhoods)
+    log(
+        f"neighbourhoods {len(neighbourhoods)} (positions {len(stamped)}, "
+        f"target size {TARGET_NEIGHBOURHOOD}, max {MAX_NEIGHBOURHOOD}, "
+        f"{singletons} singleton(s) skipped)"
+    )
+
+    relation_reads_path = outdir / "relation_reads.jsonl"
+    if force and relation_reads_path.exists():
+        prior_relation_reads = load_checkpoint_records(
+            relation_reads_path, CorruptRelationsLedgerError
+        )
+        relation_aside_path = outdir / f"relation_reads.{_force_aside_suffix()}.jsonl"
+        relation_reads_path.replace(relation_aside_path)
         log(
-            f"neighbourhoods {len(neighbourhoods)} (positions {len(stamped)}, "
-            f"target size {TARGET_NEIGHBOURHOOD}, max {MAX_NEIGHBOURHOOD}, "
-            f"{singletons} singleton(s) skipped)"
+            f"--force: set aside {len(prior_relation_reads)} prior relation read(s) to "
+            f"{relation_aside_path.name}; re-asking all {len(neighbourhoods)} "
+            "neighbourhood(s) under this pin"
         )
+    relation_reads = run_relations(
+        neighbourhoods,
+        by_id,
+        client=client,
+        reads_path=relation_reads_path,
+        workers=workers,
+        log=log,
+    )
 
-        relation_reads_path = outdir / "relation_reads.jsonl"
-        if force and relation_reads_path.exists():
-            prior_relation_reads = load_checkpoint_records(
-                relation_reads_path, CorruptRelationsLedgerError
-            )
-            relation_aside_path = outdir / f"relation_reads.{_force_aside_suffix()}.jsonl"
-            relation_reads_path.replace(relation_aside_path)
-            log(
-                f"--force: set aside {len(prior_relation_reads)} prior relation read(s) to "
-                f"{relation_aside_path.name}; re-asking all {len(neighbourhoods)} "
-                "neighbourhood(s) under this pin"
-            )
-        relation_reads = run_relations(
-            neighbourhoods,
-            by_id,
-            client=client,
-            reads_path=relation_reads_path,
-            workers=workers,
-            log=log,
-        )
+    flat_relations = [relation for read in relation_reads for relation in read["relations"]]
+    failed_relation_reads = [read for read in relation_reads if "error" in read]
+    dropped_relations = sum(read.get("dropped", 0) for read in relation_reads)
+    pairs_possible = sum(
+        read["positions"] * (read["positions"] - 1) // 2
+        for read in relation_reads
+        if "error" not in read
+    )
+    distinct_labels = len({relation["relation"] for relation in flat_relations})
+    cross_author_relations = sum(
+        1
+        for relation in flat_relations
+        if set(by_id[relation["from_position_id"]]["authors"])
+        != set(by_id[relation["to_position_id"]]["authors"])
+    )
+    log(
+        f"relations {len(flat_relations)} of {pairs_possible} possible pairs "
+        f"(dropped {dropped_relations}, failed reads {len(failed_relation_reads)}, "
+        f"distinct labels {distinct_labels}, cross-author {cross_author_relations})"
+    )
 
-        flat_relations = [relation for read in relation_reads for relation in read["relations"]]
-        failed_relation_reads = [read for read in relation_reads if "error" in read]
-        dropped_relations = sum(read.get("dropped", 0) for read in relation_reads)
-        pairs_possible = sum(
-            read["positions"] * (read["positions"] - 1) // 2
-            for read in relation_reads
-            if "error" not in read
-        )
-        distinct_labels = len({relation["relation"] for relation in flat_relations})
-        cross_author_relations = sum(
-            1
-            for relation in flat_relations
-            if set(by_id[relation["from_position_id"]]["authors"])
-            != set(by_id[relation["to_position_id"]]["authors"])
-        )
-        log(
-            f"relations {len(flat_relations)} of {pairs_possible} possible pairs "
-            f"(dropped {dropped_relations}, failed reads {len(failed_relation_reads)}, "
-            f"distinct labels {distinct_labels}, cross-author {cross_author_relations})"
-        )
+    with (outdir / "relations.jsonl").open("w", encoding="utf-8") as handle:
+        for relation in flat_relations:
+            handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
 
-        with (outdir / "relations.jsonl").open("w", encoding="utf-8") as handle:
-            for relation in flat_relations:
-                handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
-
-        relation_usage = client.usage_for_pass(RELATE_PASS_NAME)
-        relation_model = client.model_for_pass(RELATE_PASS_NAME)
-        relation_cost = (
-            estimate_cost(
-                relation_model, relation_usage["prompt_tokens"], relation_usage["completion_tokens"]
-            )
-            if relation_usage
-            else None
+    relation_usage = client.usage_for_pass(RELATE_PASS_NAME)
+    relation_model = client.model_for_pass(RELATE_PASS_NAME)
+    relation_cost = (
+        estimate_cost(
+            relation_model, relation_usage["prompt_tokens"], relation_usage["completion_tokens"]
         )
-        # Nested rather than mixed into the manifest's own fields -- this
-        # manifest describes both stages, and nothing here overwrites the
-        # position stage's own counts/usage/cost.
-        relations_manifest = {
-            "counts": {
-                "neighbourhoods_read": len(relation_reads),
-                "failed_reads": len(failed_relation_reads),
-                "relations_asserted": len(flat_relations),
-                "pairs_possible": pairs_possible,
-                "distinct_labels": distinct_labels,
-                "cross_author_relations": cross_author_relations,
-                "dropped_relations": dropped_relations,
-            },
-            "model": relation_model,
-            "reasoning": POSITION_RELATE_REASONING,
-            # Accumulated under the pin, not overwritten (issue #830): a
-            # resumed relate stage makes no call and would otherwise report
-            # the paid stage as free, exactly as the position stage did.
-            **_accumulated_totals(
-                (prior_manifest or {}).get("relations"),
-                relation_usage,
-                relation_cost,
-                time.monotonic() - relations_started,
-            ),
-        }
+        if relation_usage
+        else None
+    )
+    # Nested rather than mixed into the manifest's own fields -- this
+    # manifest describes both stages, and nothing here overwrites the
+    # position stage's own counts/usage/cost.
+    relations_manifest = {
+        "counts": {
+            "neighbourhoods_read": len(relation_reads),
+            "failed_reads": len(failed_relation_reads),
+            "relations_asserted": len(flat_relations),
+            "pairs_possible": pairs_possible,
+            "distinct_labels": distinct_labels,
+            "cross_author_relations": cross_author_relations,
+            "dropped_relations": dropped_relations,
+        },
+        "model": relation_model,
+        "reasoning": POSITION_RELATE_REASONING,
+        # Accumulated under the pin, not overwritten (issue #830): a
+        # resumed relate stage makes no call and would otherwise report
+        # the paid stage as free, exactly as the position stage did.
+        **_accumulated_totals(
+            (prior_manifest or {}).get("relations"),
+            relation_usage,
+            relation_cost,
+            time.monotonic() - relations_started,
+        ),
+    }
 
     manifest = {
         "corpus_pin": pin,
@@ -2055,13 +1652,7 @@ def run_map_build(
         "source_ids": sorted({passage.source_id for passage in passages}),
         "counts": {
             "passages_selected": len(passages),
-            # Issue #829 (review): under category grouping these units are
-            # vocabulary cells, not wording bags. Same key in both manifests
-            # made `bags 660 -> 176` read as one quantity changing when the
-            # two are read side by side, which is the defect
-            # `passages_placed` was already split to avoid. A mode emits
-            # only its own name.
-            ("groups" if category_grouped else "bags"): len(bags),
+            "bags": len(bags),
             "reads": len(jobs),
             # Issue #677: how much of this run's own reads work was
             # actually new. `units_total` is `reads` again, kept alongside
@@ -2078,16 +1669,6 @@ def run_map_build(
             "units_asked": units_total - units_reused,
             "units_asked_touching_new": units_asked_touching_new,
             "raw_positions": len(raw_positions),
-            # Issue #830: three counts, never one. A category-grouped build
-            # folds twice -- the consolidation pass inside a category, then
-            # the embedding merge across categories -- and a single
-            # raw -> merged pair hides which stage did the work. The default
-            # build has no consolidation stage and emits only its own two,
-            # the same "a mode emits only its own name" rule `groups`/`bags`
-            # already follows.
-            **(
-                {"consolidated_positions": len(positions_to_merge)} if category_grouped else {}
-            ),
             "merged_positions": len(stamped),
             # Issue #829: the old single `passages_placed` was the slot sum
             # under a name that read as a passage count. Both figures are
@@ -2099,7 +1680,10 @@ def run_map_build(
             # `passages_ungrouped`, which is a passage that reached no group
             # to be shown in at all (issue #829).
             "passages_unassigned": unassigned,
-            "passages_ungrouped": len(ungrouped_chunk_ids),
+            # Always 0 since the category-grouped variant left (issue #850);
+            # kept so the passage arithmetic below still closes, key for key,
+            # against every manifest already on disk.
+            "passages_ungrouped": 0,
             "failed_reads": len(errors),
             # `failed_reads` is a count of READS. This is the passages they
             # were shown, so `passages_selected - passages_ungrouped -
@@ -2108,11 +1692,9 @@ def run_map_build(
             # anything (issue #829 review).
             "passages_in_failed_reads": passages_in_failed_reads,
         },
-        # Issue #829: what step 2 grouped by, and -- for a category-grouped
-        # build -- the vocabulary scheme versions it grouped under.
-        # `scheme_versions` is empty under `GROUPING_BAG`, which consults no
-        # vocabulary at all.
-        "grouping": {"mode": grouping, "scheme_versions": scheme_versions},
+        # What step 2 grouped by. One mode since issue #850; the block stays
+        # so every manifest on disk reads identically.
+        "grouping": {"mode": GROUPING_BAG, "scheme_versions": {}},
         "model": model,
         "reasoning": POSITION_EXTRACT_REASONING,
         # `ENCODER_MODEL` (issue #572, PR 3 of 4): the position-argument
@@ -2128,29 +1710,21 @@ def run_map_build(
         # Issue #830 (founder's comparability note): the embedding merge's
         # own folds, reported the three ways the default build's merge is
         # read -- 269 folds over 207 positions, 0.139 per final position, at
-        # 2,206 raw. In a variant build this covers the CROSS-CATEGORY folds
-        # only; the consolidation pass's own folds are reported under
-        # `consolidation`, never mixed in here.
-        "embedding_merge": fold_stats(len(positions_to_merge), stamped, "named_times"),
+        # 2,206 raw.
+        "embedding_merge": fold_stats(len(raw_positions), stamped, "named_times"),
         # Accumulated under the pin (issue #830, part B), not overwritten by
         # what this process spent -- see `_accumulated_totals`.
         #
         # Read these three as different scopes, deliberately (issue #830,
         # review). `usage` and `cost_usd` here are the EXTRACTION pass alone
-        # (`position_extract`); the consolidation and relations stages carry
-        # their own under their own blocks, and the run's total money is
-        # this plus those. `wall_time_sec` is the WHOLE build -- every stage,
-        # plus selection, grouping and the merge, which belong to no stage --
-        # so the stages' own wall times are subsets of it and must never be
-        # added to it. Measuring a position-stage span instead would be a
-        # fiction: the stage is not contiguous, since the merge runs after
-        # consolidation.
+        # (`position_extract`); the relations stage carries its own under
+        # its own block, and the run's total money is this plus that.
+        # `wall_time_sec` is the WHOLE build -- every stage, plus selection,
+        # grouping and the merge, which belong to no stage -- so the stages'
+        # own wall times are subsets of it and must never be added to it.
         **_accumulated_totals(prior_manifest, usage, cost, time.monotonic() - started),
     }
-    if consolidation_manifest is not None:
-        manifest["consolidation"] = consolidation_manifest
-    if relations_manifest is not None:
-        manifest["relations"] = relations_manifest
+    manifest["relations"] = relations_manifest
     (outdir / "map.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",

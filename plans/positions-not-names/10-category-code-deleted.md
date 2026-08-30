@@ -101,12 +101,24 @@ edits: src/axial/test_cli.py
 
 ## Definition of done
 
-- [ ] Acceptance Gherkin from #850 green (fast tier local, full tree in CI).
-- [ ] Manifest diff empty on the $0 resume check.
-- [ ] `grouping` parameter decision stated in the PR body.
-- [ ] Evidence collected and PR opened into main (`safe-pr`), closing #850.
+- [x] Acceptance Gherkin from #850 green (fast tier local; full tree runs in CI on PR #851).
+- [x] Manifest diff empty on the $0 resume check (modulo `wall_time_sec`/`runs`, which accumulate on every resume by design).
+- [x] `grouping` parameter decision stated in the PR body (removed from the signature).
+- [x] Evidence collected and PR #851 opened into main (`safe-pr`), closing #850.
 
 ## Status / progress log
 
 - 2026-08-30 planned from #850's body (sprint-plan on a single filed issue —
   the issue is the draft and the contract; no new issues filed).
+- 2026-08-30 built. Acceptance tests written first and watched red (5 red, 1
+  keep-guard green); 8 files deleted, build.py/cli.py stripped, two mixed
+  test files edited. −10,875/+192 lines. Fast tier green (exit 0), ruff
+  clean, `git grep` criterion empty. Two deviations from the issue, stated
+  in the PR: `_prior_pin_dir` keeps its `-category` exclusion (the variant
+  artifacts stay on disk and would otherwise become a seedable prior pin),
+  and `test_a_later_default_build_never_treats_a_category_variant_as_a_prior_pin`
+  plus `test_distinct_placed_passages_are_counted_below_the_slot_sum` stay
+  (they pin kept behaviour). The manifest is byte-identical except
+  `wall_time_sec`/`runs`, which accumulate by design on every resume — the
+  issue's "byte-identical" claim was optimistic about those two fields.
+- 2026-08-30 PR opened: https://github.com/Muhanad-husn/axial/pull/851. Reviewer and verifier dispatched, findings to follow as advisory PR comments.
