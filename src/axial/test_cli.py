@@ -1009,7 +1009,7 @@ def test_main_vocabulary_build_writes_then_reuses_then_extends_the_assignment(
     assert len(after_lines) == 10
     for line in before_lines:
         assert line in after_lines
-    assert "2 newly assigned" in captured.out
+    assert "2 newly asked" in captured.out
 
 
 def test_main_vocabulary_build_without_a_scheme_for_the_column_fails_naming_it(
