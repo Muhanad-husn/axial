@@ -89,6 +89,7 @@ correct on a `refuse` disposition where stage 3/4 never ran.
 
 from __future__ import annotations
 
+import collections
 import copy
 import json
 import sys
@@ -111,6 +112,7 @@ from axial.answer.render import render_markdown
 from axial.answer.run_report import PassClock, build_run_report, persist_run_report
 from axial.answer.source_usage import compute_source_usage
 from axial.argmap.ask import (
+    CORRIDOR_ORDER_KIND,
     DECOMPOSE_PASS_NAME,
     AskResult,
     resolve_pinned_map_dir,
@@ -383,6 +385,24 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
         payload["vocabulary"] = _vocabulary_to_dict(
             ask_result.vocabulary, ask_result.assembled_chunk_ids
         )
+    if ask_result.corridor_order == CORRIDOR_ORDER_KIND:
+        # Issue #855: which kinds the corridor walked, present only when the
+        # kind-aware order ran -- a count-order run carries no block at all.
+        kind_counts: collections.Counter[str] = collections.Counter()
+        unassigned = 0
+        for position, entry in zip(ask_result.corridor, payload["corridor"]):
+            entry["kinds"] = list(position.kinds)
+            for kind in position.kinds:
+                if kind is None:
+                    unassigned += 1
+                else:
+                    kind_counts[kind] += 1
+        payload["relation_kinds"] = {
+            "order": ask_result.corridor_order,
+            "scheme_version": ask_result.relation_scheme_version,
+            "kind_counts": dict(sorted(kind_counts.items())),
+            "unassigned": unassigned,
+        }
     return payload
 
 

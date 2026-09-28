@@ -34,7 +34,9 @@ position it reaches, and both are kept. This is where the account the
 answer must reject comes from, and it arrives BECAUSE it argues with what
 landed, never because a stated argument happened to name it. A landed
 position is never also a corridor position. Corridor positions are ordered
-by how many relations connect them to the landed set, descending.
+by how many relations connect them to the landed set, descending -- or,
+once the map's relations are filed under a committed kind (issue #855),
+conflicts first and that count second (`build_corridor`).
 
 **The assembly order** (`assemble_map_evidence`), which is the real
 retrieval. `axial.analyze.synthesis.synthesize`'s own `evidence_char_budget`
@@ -89,6 +91,12 @@ from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.query.relations import Resolution, chunk_ids_for_name
+from axial.vocabulary import (
+    ASSIGNMENTS_FILENAME,
+    MANIFEST_FILENAME,
+    RELATION_COLUMN,
+    VOCABULARY_DIR,
+)
 
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of.
 DECOMPOSE_PASS_NAME = "brief_decompose"
@@ -225,6 +233,72 @@ class CorridorPosition:
     sources: tuple[str, ...]
     authors: tuple[str, ...]
     chunk_ids: tuple[str, ...]
+    # Issue #855: the committed kind of each relation in `labels`, in the
+    # same order -- `None` for a relation no assignment covers. Empty when
+    # the corridor ran without kinds (the count-order fallback).
+    kinds: tuple[str | None, ...] = ()
+
+
+# Issue #855: the relation-kind genus the kind-aware corridor puts first.
+# The Argument Interchange Format's conflict genus, committed under this id
+# in `config/vocabulary.yaml`'s `relation` scheme.
+CONFLICT_KIND = "conflict"
+
+CORRIDOR_ORDER_KIND = "kind"
+CORRIDOR_ORDER_COUNT = "count"
+
+
+@dataclass(frozen=True)
+class RelationKinds:
+    """The map's relations filed under a committed kind (`axial vocabulary
+    build --column relation`, issue #855): each relation's level-1 kind id
+    by `(from_position_id, to_position_id, relation)`, and the scheme
+    version it was filed under. A refused relation is absent."""
+
+    scheme_version: str | None
+    by_key: dict[tuple[str, str, str], str]
+
+    def kind_of(self, relation: dict[str, Any]) -> str | None:
+        return self.by_key.get(
+            (
+                str(relation.get("from_position_id", "")),
+                str(relation.get("to_position_id", "")),
+                str(relation.get("relation", "")),
+            )
+        )
+
+
+def load_relation_kinds(vocabulary_dir: Path | None = None) -> RelationKinds | None:
+    """`<vocabulary_dir>/relation/assignments.jsonl` read as `RelationKinds`,
+    or `None` when no relation build has run -- the signal for the corridor
+    to keep its bare relation-count order."""
+    column_dir = Path(vocabulary_dir if vocabulary_dir is not None else VOCABULARY_DIR) / (
+        RELATION_COLUMN
+    )
+    assignments_path = column_dir / ASSIGNMENTS_FILENAME
+    if not assignments_path.is_file():
+        return None
+    by_key: dict[tuple[str, str, str], str] = {}
+    for line in assignments_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        category_id = record.get("category_id")
+        if record.get("level", 1) == 1 and isinstance(category_id, str):
+            by_key[
+                (
+                    str(record.get("from_position_id", "")),
+                    str(record.get("to_position_id", "")),
+                    str(record.get("relation", "")),
+                )
+            ] = category_id
+    manifest_path = column_dir / MANIFEST_FILENAME
+    scheme_version = None
+    if manifest_path.is_file():
+        scheme_version = json.loads(manifest_path.read_text(encoding="utf-8")).get(
+            "scheme_version"
+        )
+    return RelationKinds(scheme_version=scheme_version, by_key=by_key)
 
 
 @dataclass(frozen=True)
@@ -253,6 +327,11 @@ class AskResult:
     # honest absence, the same contract `map_retrieval` itself already
     # gives the name-layer path (module docstring's "the vocabulary step").
     vocabulary: VocabularyJoinResult | None = None
+    # Issue #855: which order the corridor ran in -- `"kind"` when relation
+    # kinds were on disk, `"count"` (the fallback) when not -- and the
+    # relation scheme version the kinds were filed under.
+    corridor_order: str = CORRIDOR_ORDER_COUNT
+    relation_scheme_version: str | None = None
 
 
 def render_decompose_prompt(brief: Brief) -> str:
@@ -336,6 +415,7 @@ def build_corridor(
     landed: Sequence[LandedPosition],
     positions_by_id: dict[str, dict[str, Any]],
     relations: Sequence[dict[str, Any]],
+    kinds: RelationKinds | None = None,
 ) -> list[CorridorPosition]:
     """The corridor (issue #572, PR 4 of 4): every relation touching a
     landed position pulls its counterpart in, in both directions -- this is
@@ -356,18 +436,35 @@ def build_corridor(
 
     Ordered by how many relations connect a position to the landed set,
     descending; ties broken by `position_id` so the result is deterministic
-    regardless of `relations`' own arrival order."""
+    regardless of `relations`' own arrival order.
+
+    **Kind-aware order (issue #855).** With `kinds` (the map's relations
+    filed under a committed kind), positions reached by a `conflict`
+    relation come first, more conflicts first, and the relation count
+    orders within that. This is the default for every question, because
+    every brief asks the answer to weigh accounts against each other, and
+    the account the answer must reject is the one a conflict reaches.
+    Without `kinds` the bare relation-count order stands; a relation no
+    assignment covers counts toward the relation count and never as a
+    conflict."""
     landed_ids = {position.position_id for position in landed}
     labels_by_far: dict[str, list[str]] = {}
+    kinds_by_far: dict[str, list[str | None]] = {}
     for relation in relations:
         src = relation.get("from_position_id")
         dst = relation.get("to_position_id")
         label = relation.get("relation", "")
+        kind = kinds.kind_of(relation) if kinds is not None else None
         for near, far, arrow in ((src, dst, "->"), (dst, src, "<-")):
             if near in landed_ids and far not in landed_ids and far in positions_by_id:
                 labels_by_far.setdefault(far, []).append(f"{label} {arrow}")
+                kinds_by_far.setdefault(far, []).append(kind)
 
-    ordered_ids = sorted(labels_by_far, key=lambda pid: (-len(labels_by_far[pid]), pid))
+    def order_key(pid: str) -> tuple[int, int, str]:
+        conflicts = sum(1 for kind in kinds_by_far[pid] if kind == CONFLICT_KIND)
+        return (-conflicts, -len(labels_by_far[pid]), pid)
+
+    ordered_ids = sorted(labels_by_far, key=order_key)
     corridor: list[CorridorPosition] = []
     for position_id in ordered_ids:
         position = positions_by_id[position_id]
@@ -382,6 +479,7 @@ def build_corridor(
                 sources=tuple(position["sources"]),
                 authors=tuple(position["authors"]),
                 chunk_ids=tuple(position["chunk_ids"]),
+                kinds=tuple(kinds_by_far[position_id]) if kinds is not None else (),
             )
         )
     return corridor
@@ -701,8 +799,10 @@ def run_map_ask_for_brief(
     vocabulary_neighbours` over `vocabulary_column` at `vocabulary_level`
     (the column's own finest persisted level when `None`), reading
     `<vocabulary_dir>/<vocabulary_column>/` (default `axial.vocabulary.
-    VOCABULARY_DIR`). Ignored, like the other `vocabulary_*` arguments, when
-    `use_vocabulary` is `False` -- the `map` arm is unchanged either way.
+    VOCABULARY_DIR`). The other `vocabulary_*` arguments are ignored when
+    `use_vocabulary` is `False`; `vocabulary_dir` is not, because it is
+    also where the corridor reads relation kinds from (issue #855,
+    `load_relation_kinds`) on either map arm.
 
     Raises `MapNotBuiltError` (no map at this pin), `EncoderMismatchError`
     (the map was built with a different encoder), `DecomposeError` (the
@@ -734,7 +834,10 @@ def run_map_ask_for_brief(
     asks = decompose_brief(brief, client)
     landed = land_arguments(asks, positions, encode, top_k=top_k)
     positions_by_id = {position["position_id"]: position for position in positions}
-    corridor = build_corridor(landed, positions_by_id, relations)
+    # Issue #855: the corridor orders by relation kind whenever a relation
+    # build is on disk under `vocabulary_dir`, and by bare count otherwise.
+    relation_kinds = load_relation_kinds(vocabulary_dir)
+    corridor = build_corridor(landed, positions_by_id, relations, kinds=relation_kinds)
 
     vocabulary: VocabularyJoinResult | None = None
     vocabulary_positions: tuple[VocabularyPosition, ...] = ()
@@ -786,6 +889,12 @@ def run_map_ask_for_brief(
         assembled_chunk_ids=tuple(assembled),
         pin=pin,
         vocabulary=vocabulary,
+        corridor_order=(
+            CORRIDOR_ORDER_KIND if relation_kinds is not None else CORRIDOR_ORDER_COUNT
+        ),
+        relation_scheme_version=(
+            relation_kinds.scheme_version if relation_kinds is not None else None
+        ),
     )
 
 
