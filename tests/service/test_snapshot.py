@@ -162,8 +162,8 @@ def test_a_note_that_would_not_fit_under_the_snapshot_refuses_before_copying(
 
     snapshots_dir = tmp_path / "snapshots"
     version = "2026-08-10-v1"
-    names_dir = corpus_root / "data" / "vault" / "names"
-    landing_dir = snapshots_dir / version / "vault" / "names"
+    prose_dir = corpus_root / "data" / "vault" / "prose"
+    landing_dir = snapshots_dir / version / "vault" / "prose"
 
     # A filename calibrated to the exact case: it FITS where the vault
     # writer put it, and does not fit where the snapshot would land it. The
@@ -172,8 +172,8 @@ def test_a_note_that_would_not_fit_under_the_snapshot_refuses_before_copying(
     # One character past the longest name that would fit at the landing site.
     length = len("x") - path_overage(landing_dir, "x") + 1
     long_name = "L" + "o" * (length - 4) + ".md"
-    assert path_overage(names_dir, long_name) <= 0 < path_overage(landing_dir, long_name)
-    (names_dir / long_name).write_text("---\nname: Long\n---\n", encoding="utf-8")
+    assert path_overage(prose_dir, long_name) <= 0 < path_overage(landing_dir, long_name)
+    (prose_dir / long_name).write_text("---\nchunk_id: long\n---\n", encoding="utf-8")
 
     with pytest.raises(SnapshotPathTooLongError) as caught:
         publish(version, snapshots_dir=snapshots_dir)
