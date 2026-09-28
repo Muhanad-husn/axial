@@ -311,8 +311,12 @@ gate is paid for, and each can be dropped without touching the others.
 
 Decided 2026-09-28 (DEC-75): steps 1 to 5 proceed as written above, step 1
 in its every-page form, and step 6's two levers are approved as structural
-experiments, not as a rebuild. Each step is a GitHub issue; the issue is the
-record from here.
+experiments, not as a rebuild. Each step is a GitHub issue, and the issue is
+the record from here: #853 (retire the pages, Gather and the `name` arm, code
+included), #854 (render the map as the vault), #855 (relation kinds), #856
+(Wikidata QIDs), #857 (`about`, `move`, SKOS, ELSST), #858 (vocabulary-directed
+relation pairs), #859 (frontier extraction model, same bags), #860
+(opposition-seeded bagging). The docs PR is #852.
 
 Still open: whether a public export (AIF, SKOS, CiTO) is wanted at all, or
 whether the vocabularies are adopted purely as internal naming discipline. The
