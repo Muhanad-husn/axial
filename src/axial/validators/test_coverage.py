@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 import yaml
 
+from axial.query import store as note_store
 from axial.validators.coverage import (
     NOT_MEASURED_BAND,
     REASON_CONFIDENCE_EXCEEDS_COVERAGE,
@@ -61,19 +62,44 @@ def _write_chunk(root: Path, chunk_id: str) -> None:
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
 
-def _write_name_page(root: Path, name: str, *, member_ids: list[str], member_count: int) -> None:
-    """One name page carrying the `member_count` `coverage_count` reads and
-    the member list `evidence_note_count` intersects with (§7.17). The two
-    are deliberately separable here: the real corpus's page for a dense name
-    carries a `member_count` far larger than any evidence set."""
-    names_dir = root / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {"name": name, "kind": "person", "aliases": [], "member_count": member_count}
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1978): A claim." for chunk_id in member_ids]
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
+def _build_store(
+    vault_dir: Path, *, tilly_member_ids: list[str], tilly_total: int, bayat_total: int
+) -> None:
+    """A `notes.db` carrying `tilly_total`/`bayat_total` REAL member notes
+    for TILLY/BAYAT (DEC-75, issue #853: `coverage_count`/`get_name` now
+    derive `member_count` from real `note_names` rows over the store, never
+    a name page's own declared frontmatter number, so the corpus-wide total
+    a test wants -- 240 on Tilly, of which the fixture's own grounds notes
+    are a couple -- has to be that many real synthetic rows, not a number
+    written down independent of the members list)."""
+    sources = [
+        ("tilly-1978", "Author", "Title", "1978", 1978),
+        ("bayat-2017", "Author", "Title", "2017", 2017),
+    ]
+    notes: list[tuple] = []
+    note_names: list[tuple] = []
+    for chunk_id in tilly_member_ids:
+        notes.append((chunk_id, "tilly-1978", "Section", None, "A claim.", None))
+        note_names.append((chunk_id, "tilly-1978", TILLY, "person"))
+    for i in range(len(tilly_member_ids), tilly_total):
+        chunk_id = f"tilly-1978_filler-{i:03d}_intro_001"
+        notes.append((chunk_id, "tilly-1978", "Section", None, "A claim.", None))
+        note_names.append((chunk_id, "tilly-1978", TILLY, "person"))
+    if bayat_total > 0:
+        notes.append((BAYAT_CHUNK, "bayat-2017", "Section", None, "A claim.", None))
+        note_names.append((BAYAT_CHUNK, "bayat-2017", BAYAT, "person"))
+    for i in range(1, bayat_total):
+        chunk_id = f"bayat-2017_filler-{i:03d}_intro_001"
+        notes.append((chunk_id, "bayat-2017", "Section", None, "A claim.", None))
+        note_names.append((chunk_id, "bayat-2017", BAYAT, "person"))
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=sources,
+        notes=notes,
+        names=[(TILLY, "person", "tilly"), (BAYAT, "person", "bayat")],
+        note_names=note_names,
+        note_arguing_against=[],
+        note_citations=[],
     )
 
 
@@ -82,9 +108,14 @@ def vault_dir(tmp_path: Path) -> Path:
     _write_chunk(tmp_path, TILLY_CHUNK_1)
     _write_chunk(tmp_path, TILLY_CHUNK_2)
     _write_chunk(tmp_path, BAYAT_CHUNK)
-    # 240 corpus notes on Tilly, of which this fixture holds two; 6 on Bayat.
-    _write_name_page(tmp_path, TILLY, member_ids=[TILLY_CHUNK_1, TILLY_CHUNK_2], member_count=240)
-    _write_name_page(tmp_path, BAYAT, member_ids=[BAYAT_CHUNK], member_count=6)
+    # 240 corpus notes on Tilly, of which this fixture's grounds notes are
+    # two; 6 on Bayat.
+    _build_store(
+        tmp_path / "vault",
+        tilly_member_ids=[TILLY_CHUNK_1, TILLY_CHUNK_2],
+        tilly_total=240,
+        bayat_total=6,
+    )
     return tmp_path / "vault"
 
 
@@ -358,8 +389,8 @@ def test_evidence_note_count_sees_a_member_past_get_names_own_cap(tmp_path: Path
     member_ids = [f"tilly-1978_{i:03d}_intro_001" for i in range(1, 13)]
     for chunk_id in member_ids:
         _write_chunk(tmp_path, chunk_id)
-    _write_name_page(tmp_path, TILLY, member_ids=member_ids, member_count=len(member_ids))
     vault = tmp_path / "vault"
+    _build_store(vault, tilly_member_ids=member_ids, tilly_total=len(member_ids), bayat_total=0)
 
     eleventh = member_ids[10]
     claims = [_claim("c-1", names_touched=[TILLY], grounds=_chunk_grounds(eleventh))]

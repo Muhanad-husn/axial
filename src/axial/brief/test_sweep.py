@@ -292,9 +292,10 @@ def test_run_one_draw_forwards_arm_map_to_run_brief(tmp_path, monkeypatch):
     assert captured["arm"] == "map"
 
 
-def test_run_one_draw_default_arm_is_name_layer(tmp_path, monkeypatch):
-    """No `arm` given is byte-identical in behaviour to today's default:
-    the name-layer loop."""
+def test_run_one_draw_default_arm_is_map(tmp_path, monkeypatch):
+    """No `arm` given is byte-identical in behaviour to today's default: the
+    map walk (DEC-75, issue #853 retired the name-layer loop it used to
+    be)."""
     brief = Brief(brief_id="abc123", case="c", request="r", lens=None)
     captured = {}
 
@@ -309,7 +310,7 @@ def test_run_one_draw_default_arm_is_name_layer(tmp_path, monkeypatch):
         "briefstem.yaml", brief, 0, **_draw_kwargs(tmp_path / "sweep", lambda: object())
     )
 
-    assert captured["arm"] == "name"
+    assert captured["arm"] == "map"
 
 
 def test_run_one_draw_records_the_arm_on_the_draw_outcome(tmp_path, monkeypatch):
@@ -548,7 +549,7 @@ def test_run_sweep_runs_every_brief_draws_times_and_scopes_gates_per_brief(tmp_p
     for result in summary.briefs:
         assert len(result.draws) == 3
         assert all(outcome.status == sweep_mod.OK_STATUS for outcome in result.draws)
-        assert all(outcome.arm == "name" for outcome in result.draws)
+        assert all(outcome.arm == "map" for outcome in result.draws)
         assert result.quorum.n_draws == 3
 
     # 4 gates x 2 briefs, each scored over exactly that brief's own 3 draws
@@ -557,9 +558,10 @@ def test_run_sweep_runs_every_brief_draws_times_and_scopes_gates_per_brief(tmp_p
     assert all(count == 3 for _gate_name, count in gate_calls)
 
     # issue #808: a plain sweep with neither `arm` nor `use_map` given runs
-    # the (default) "name" arm, and the sweep's own summary records it plus
-    # the commit `run_sweep` ran at.
-    assert summary.arm == "name"
+    # the (default) "map" arm (DEC-75, issue #853 retired the name arm this
+    # used to default to), and the sweep's own summary records it plus the
+    # commit `run_sweep` ran at.
+    assert summary.arm == "map"
     assert summary.commit == _FAKE_COMMIT_SHA
 
 
@@ -820,7 +822,7 @@ def test_run_sweep_writes_a_machine_readable_summary_json(tmp_path, monkeypatch)
     assert persisted["ok_count"] == 6
     assert persisted["fail_count"] == 0
     assert persisted["skip_count"] == 0
-    assert persisted["arm"] == summary.arm == "name"
+    assert persisted["arm"] == summary.arm == "map"
     assert persisted["commit"] == summary.commit == _FAKE_COMMIT_SHA
     assert len(persisted["briefs"]) == 2
     for brief_entry in persisted["briefs"]:
@@ -831,7 +833,7 @@ def test_run_sweep_writes_a_machine_readable_summary_json(tmp_path, monkeypatch)
         for outcome in brief_entry["draws"]:
             assert outcome["status"] == sweep_mod.OK_STATUS
             assert outcome["latency_seconds"] is not None
-            assert outcome["arm"] == "name"
+            assert outcome["arm"] == "map"
 
 
 def test_run_sweep_summary_json_carries_none_latency_for_a_resumed_draw(tmp_path, monkeypatch):
@@ -867,7 +869,7 @@ def test_write_sweep_summary_returns_the_written_path_and_creates_the_sweep_dir(
         "ok_count": 0,
         "fail_count": 0,
         "skip_count": 0,
-        "arm": "name",
+        "arm": "map",
         "commit": None,
     }
 

@@ -96,9 +96,9 @@ def test_a_weight_of_one_for_every_source_is_the_same_as_the_implicit_default():
 
 def test_assemble_evidence_ids_default_call_is_unaffected_by_the_weights_parameter_existing():
     trajectory = [
-        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002"]),
-        _entry("get_name", ["bbb_1_a_001", "bbb_1_a_002"]),
-        _entry("where_names_meet", ["ccc_1_a_001"]),
+        _entry("find_notes", ["aaa_1_a_001", "aaa_1_a_002"]),
+        _entry("find_notes", ["bbb_1_a_001", "bbb_1_a_002"]),
+        _entry("find_notes", ["ccc_1_a_001"]),
     ]
     assert assemble_evidence_ids(trajectory) == [
         "aaa_1_a_001",

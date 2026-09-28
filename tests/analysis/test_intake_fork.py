@@ -48,7 +48,6 @@ from axial.llm import (
     SYNTHESIZE_PASS_NAME,
     StubLLMClient,
 )
-from axial.paths import name_page_path
 from axial.query import store as note_store
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -178,23 +177,6 @@ def _write_fixture_root(root: Path) -> None:
         ],
         note_arguing_against=[],
         note_citations=[],
-    )
-
-    # `get_name` still resolves the rendered page for its Gather section and
-    # its own `NameNotFoundError` meaning (`axial.query.names.
-    # _name_page_from_store`'s own docstring) even though its MEMBER data
-    # comes from the store above -- so a real page must exist too.
-    names_dir = vault_dir / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    member_lines = "\n".join(
-        f"- [[{chunk_id}]] — {author} ({year}): Synthetic claim from {chunk_id}."
-        for chunk_id, _source_id, author, year in notes
-    )
-    page_body = f"# Syria\n\n**Member notes:**\n{member_lines}\n"
-    page_path = name_page_path(vault_dir, "Syria")
-    page_path.write_text(
-        _render({"name": "Syria", "kind": "place", "member_count": 4}, page_body),
-        encoding="utf-8",
     )
 
     evals_dir = root / "evals" / "corpus_pin"

@@ -3,9 +3,10 @@ and #490, specs/PHASE-B.md §7.8, §7.9). Co-located under src/axial/validators/
 per the repo's existing test layout (mirrors src/axial/validators/
 test_attribution.py).
 
-Covers the contested predicate's two D3 signals (`opposed_positions` from
-what the notes say, `gather_disagreement` from a name the answer rests on),
-the literal-naming rule that makes the first one worth anything, the
+Covers the contested predicate's surviving D3 signals (`opposed_positions`/
+`names_opponent`, from what the notes themselves say -- `gather_disagreement`
+is retired along with Gather, DEC-75, issue #853), the literal-naming rule
+that makes the first one worth anything, the
 abstention and `[]` rules that keep it from manufacturing a disagreement,
 signal persistence, the presence-or-disclosure check's four combinations,
 release blocking, and the steelman-quality check's present-only/
@@ -23,17 +24,14 @@ import pytest
 import yaml
 
 from axial.llm import ExplodingLLMClient
-from axial.query.names import DISAGREEMENT_HEADING
 from axial.validators.counter_position import (
     REASON_CONTESTED_WITHOUT_COUNTER_POSITION,
-    SIGNAL_GATHER_DISAGREEMENT,
     SIGNAL_NAMES_OPPONENT,
     SIGNAL_OPPOSED_POSITIONS,
     SIGNAL_SOURCE_RECORD_CONTESTED,
     VERDICT_STRAWMAN,
     CounterPositionCheckFailedError,
     SamePassModelError,
-    detect_contested,
     detect_paper_contested,
     source_record_contested,
     validate_counter_position,
@@ -113,27 +111,6 @@ def _write_skocpol(vault_dir: Path, chunk_id: str = SKOCPOL_CHUNK, **overrides: 
     }
     kwargs.update(overrides)
     _write_chunk(vault_dir, chunk_id, **kwargs)
-
-
-def _write_name_page(
-    vault_dir: Path, name: str, *, member_ids: list[str], disagreement: str | None = None
-) -> None:
-    names_dir = vault_dir / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {
-        "name": name,
-        "kind": "person",
-        "aliases": [],
-        "member_count": len(member_ids),
-    }
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1979): A claim." for chunk_id in member_ids]
-    if disagreement:
-        lines += ["", DISAGREEMENT_HEADING, "", disagreement]
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
-    )
 
 
 @pytest.fixture
@@ -407,85 +384,11 @@ def test_zero_evidence_is_not_contested(vault_dir: Path, names_dir: Path):
     assert report.contested.signal is None
 
 
-# -- contested predicate: a Gather disagreement at a name the answer rests on
-
-
-def test_a_gather_disagreement_at_a_retrieved_name_is_contested(vault_dir: Path, names_dir: Path):
-    """§7.8 path 2. The run retrieved on `Theda Skocpol`, a claim's grounds
-    note is a member of it, and its page carries a Gather section."""
-    _write_tilly(vault_dir, arguing_against=[], names=[])
-    _write_skocpol(vault_dir, arguing_against=[], names=[])
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=[SKOCPOL_CHUNK],
-        disagreement="These authors disagree about whether organization is required.",
-    )
-    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "get_name",
-            "args": {"canonical": SKOCPOL_AUTHOR},
-            "result_ids": [SKOCPOL_CHUNK],
-            "result_count": 1,
-        }
-    ]
-    report = validate_counter_position(
-        _record(claims, _disclosed_one_sided(), trajectory),
-        client=ExplodingLLMClient(),
-        vault_dir=vault_dir,
-        names_dir=names_dir,
-    )
-    assert report.contested.contested is True
-    assert report.contested.signal == SIGNAL_GATHER_DISAGREEMENT
-
-
-def test_a_gather_disagreement_at_a_name_the_run_never_retrieved_is_not_contested(
-    vault_dir: Path, names_dir: Path
-):
-    """A finding at a name the answer merely brushed past says nothing about
-    whether the answer is contested -- a real evidence set's notes name 423
-    distinct canonicals on average."""
-    _write_tilly(vault_dir, arguing_against=[], names=[])
-    _write_skocpol(vault_dir, arguing_against=[], names=[])
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=[SKOCPOL_CHUNK],
-        disagreement="These authors disagree about whether organization is required.",
-    )
-    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-    report = validate_counter_position(
-        _record(claims, _no_counter_position(), trajectory=[]),
-        client=ExplodingLLMClient(),
-        vault_dir=vault_dir,
-        names_dir=names_dir,
-    )
-    assert report.contested.contested is False
-
-
-def test_a_name_page_with_no_gather_section_is_not_contested(vault_dir: Path, names_dir: Path):
-    _write_tilly(vault_dir, arguing_against=[], names=[])
-    _write_skocpol(vault_dir, arguing_against=[], names=[])
-    _write_name_page(vault_dir, SKOCPOL_AUTHOR, member_ids=[SKOCPOL_CHUNK])
-    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "get_name",
-            "args": {"canonical": SKOCPOL_AUTHOR},
-            "result_ids": [SKOCPOL_CHUNK],
-            "result_count": 1,
-        }
-    ]
-    report = validate_counter_position(
-        _record(claims, _no_counter_position(), trajectory),
-        client=ExplodingLLMClient(),
-        vault_dir=vault_dir,
-        names_dir=names_dir,
-    )
-    assert report.contested.contested is False
+# The Gather disagreement contested-signal tests that used to live here
+# (`gather_disagreement`, three cases) are retired along with Gather itself
+# (DEC-75, issue #853): `NamePage.disagreement` is always `None` now, so
+# `_gather_disagreement_at` can never again return `True`, and there is no
+# scenario left to construct that fires it.
 
 
 # -- presence-or-disclosure check --------------------------------------------
@@ -715,64 +618,13 @@ def test_never_mutates_the_input_record(vault_dir: Path, names_dir: Path):
     assert json.dumps(record, sort_keys=True) == before
 
 
-# -- detect_contested's `scope` parameter (specs/PHASE-C.md §7.14, issue #608)
-
-
-def test_scope_param_is_used_directly_instead_of_deriving_from_trajectory(
-    vault_dir: Path, names_dir: Path
-):
-    """A paper record has no trajectory (§7.3); `scope` stands in for
-    `coverage_scope(claims, trajectory)` directly. An EMPTY trajectory would
-    normally derive an empty scope and never see the Gather disagreement --
-    passing `scope` explicitly must reach it anyway."""
-    _write_tilly(vault_dir, arguing_against=[], names=[])
-    _write_skocpol(vault_dir, arguing_against=[], names=[])
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=[SKOCPOL_CHUNK],
-        disagreement="These authors disagree about whether organization is required.",
-    )
-    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-
-    without_scope = detect_contested(claims, [], vault_dir=vault_dir, names_dir=names_dir)
-    assert without_scope.contested is False, "an empty trajectory derives an empty scope"
-
-    with_scope = detect_contested(
-        claims, [], vault_dir=vault_dir, names_dir=names_dir, scope=[SKOCPOL_AUTHOR]
-    )
-    assert with_scope.contested is True
-    assert with_scope.signal == SIGNAL_GATHER_DISAGREEMENT
-
-
-def test_scope_none_leaves_existing_trajectory_derivation_unchanged(
-    vault_dir: Path, names_dir: Path
-):
-    """The default (`scope=None`) must reproduce the pre-existing
-    trajectory-derived behavior exactly -- no existing caller of
-    `detect_contested` (this validator's own `validate_counter_position`,
-    `axial.analyze.synthesis`) passes `scope`."""
-    _write_tilly(vault_dir, arguing_against=[], names=[])
-    _write_skocpol(vault_dir, arguing_against=[], names=[])
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=[SKOCPOL_CHUNK],
-        disagreement="These authors disagree about whether organization is required.",
-    )
-    claims = [_claim("c-1", TILLY_CHUNK, SKOCPOL_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "get_name",
-            "args": {"canonical": SKOCPOL_AUTHOR},
-            "result_ids": [SKOCPOL_CHUNK],
-            "result_count": 1,
-        }
-    ]
-    result = detect_contested(claims, trajectory, vault_dir=vault_dir, names_dir=names_dir)
-    assert result.contested is True
-    assert result.signal == SIGNAL_GATHER_DISAGREEMENT
+# The `scope` parameter tests that used to live here (specs/PHASE-C.md
+# §7.14, issue #608) both proved `scope` reaching the `gather_disagreement`
+# signal a derived-from-trajectory call would have missed; retired alongside
+# that signal (DEC-75, issue #853). `scope`'s OTHER two signals
+# (`opposed_positions`/`names_opponent`) never depended on it in the first
+# place -- they read `claims`/`trajectory` directly -- so nothing here needs
+# a replacement case.
 
 
 # -- source_record_contested, §7.14's fourth arm (issue #608) ---------------

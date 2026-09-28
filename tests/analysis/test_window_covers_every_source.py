@@ -12,10 +12,12 @@ appearances in `source_usage.sources` across all 19 analysis records.
 It did not fix selection when the source count exceeds the limit, and there
 the rotation degenerates to "the alphabetically first `limit` books".
 
-The fixture is a real note store and real name pages over twelve sources
-named `aaa-2001` .. `lll-2012`, all members of one page, queried at the
-default limit of ten. `lll-2012` -- the source that sorts last -- stands in
-for `tilly-1978`.
+The fixture is a real note store over twelve sources named `aaa-2001` ..
+`lll-2012`, all members of one door, queried at the default limit of ten.
+`lll-2012` -- the source that sorts last -- stands in for `tilly-1978`.
+
+DEC-75 (issue #853): `get_name` answers from the store alone now, so the
+page-fallback fixture/tests this file used to also carry are retired.
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from typing import Any
 
 import pytest
 
-from axial.paths import name_page_path
 from axial.query import store as note_store
 from axial.query.names import DEFAULT_LIMIT, get_name
 from axial.query.relations import find_notes
@@ -67,27 +68,6 @@ def _notes() -> list[dict[str, Any]]:
 NOTES = _notes()
 
 
-def _render(frontmatter: dict[str, Any], body: str) -> str:
-    lines = "\n".join(f"{key}: {value}" for key, value in frontmatter.items())
-    return f"---\n{lines}\n---\n\n{body}"
-
-
-def _write_name_pages(vault_dir: Path) -> None:
-    for canonical in (CROWDED, QUIET):
-        members = [note for note in NOTES if canonical in note["names"]]
-        member_lines = "\n".join(
-            f"- [[{note['chunk_id']}]] — {note['author']} ({note['year']}): {note['claim']}"
-            for note in members
-        )
-        page = f"# {canonical}\n\n**Member notes:**\n{member_lines}\n"
-        path = name_page_path(vault_dir, canonical)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            _render({"name": canonical, "kind": "concept", "member_count": len(members)}, page),
-            encoding="utf-8",
-        )
-
-
 def _write_store(vault_dir: Path) -> None:
     note_store.write_store(
         note_store.store_path(vault_dir),
@@ -121,18 +101,7 @@ def _write_store(vault_dir: Path) -> None:
 def vault(tmp_path: Path) -> Path:
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
-    _write_name_pages(vault_dir)
     _write_store(vault_dir)
-    return vault_dir
-
-
-@pytest.fixture
-def vault_without_store(tmp_path: Path) -> Path:
-    """A vault materialized before the note store existed. `get_name` falls
-    back to parsing the rendered page, which truncates by the same rule."""
-    vault_dir = tmp_path / "pages-only"
-    vault_dir.mkdir()
-    _write_name_pages(vault_dir)
     return vault_dir
 
 
@@ -192,14 +161,6 @@ def test_get_name_covers_every_source_from_the_store(vault: Path):
 
     assert {member.source_id for member in page.members} == set(SOURCES)
     assert page.member_count == len(NOTES)
-
-
-def test_get_name_covers_every_source_from_the_rendered_page(vault_without_store: Path):
-    """The fallback path, for a vault materialized before the store existed.
-    It truncates by the same rule and must gain the same floor."""
-    page = get_name(CROWDED, vault_dir=vault_without_store, names_dir=vault_without_store)
-
-    assert {member.source_id for member in page.members} == set(SOURCES)
 
 
 def test_get_name_leaves_a_page_inside_the_limit_alone(vault: Path):
