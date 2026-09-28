@@ -1,8 +1,13 @@
 """Outer acceptance test for issue #411 (Phase A v1 slice 06 -- Materialize:
 the vault writer, spec §7.17, P0-8).
 
-Locked behavioural contract, read off `specs/PRODUCT.md` §7.17/§7.2/Appendix H
-and D11 (`docs/DECISIONS.md`, `plans/phase-a-v1/README.md`):
+**The name pages this file used to also lock down are retired outright
+(DEC-75, issue #853).** Everything below about a name page -- one per
+surviving canonical, its frontmatter, its member links, the figure/table
+artifact join, the door index (`names.jsonl`) and its atomic-write
+guarantees, and the selective-rewrite-on-a-changed-alias-map behaviour --
+is gone along with the pages: the final output never read one. What
+survives is the locked contract below.
 
 Given slice 02's per-note interrogation answers on disk
       (`data/answers/<source_id>.jsonl`) and slice 05's reversible alias map
@@ -11,24 +16,16 @@ When  the operator runs `axial names materialize`
 Then  every chunk that has an interrogation answer record gets a prose note
       carrying that answer record as frontmatter -- in place of the retired
       tag/xref axis block -- with NO outbound links anywhere in the note
-      (D11: link direction is name-page -> note only)
-And   one name page exists per surviving canonical name, at the expected
-      path, carrying `name`/`kind`/`aliases`/`member_count` in frontmatter
-      and every member note as an `[[chunk_id]]` link in the body, with
-      author, year and one-sentence claim
-And   a name whose members span two different sources still gets ONE page
-      whose member links cover both books (the whole point of the graph)
-And   a name whose `kind` is `figure`/`table` additionally links to the
-      artifact note its surface names, resolved from the artifacts pass's
-      own persisted captions (`data/artifacts/<source_id>.jsonl`) -- the
-      honest replacement for the deleted table-reference hunt (D5), and the
-      join this spec leaves as an Open Question for this slice to confirm
 And   every persisted artifacts-pass record gets an artifact note under
       `data/vault/artifacts/`, via the existing, untouched
       `axial.vault.write_artifact_note` (issue #429's shape)
+And   the relational store (`data/vault/notes.db`, DEC-62) carries
+      `note_names` rows for every member a surviving canonical's alias-map
+      node reaches, spanning however many sources actually name it
+And   Materialize writes **no** `data/vault/names/` directory and no
+      `data/vault/names.jsonl` door index (DEC-75, issue #853)
 And   re-running against an unchanged alias map reproduces byte-identical
-      output and rewrites nothing; a changed alias map rewrites only the
-      name pages a merge decision actually touched, never a prose note
+      prose and artifact notes
 And   zero LLM (text-generation) calls happen anywhere in this pass --
       Materialize is LLM-free by construction (D11)
 
@@ -50,21 +47,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import threading
-import time
 from pathlib import Path
 
 import pytest
 import yaml
 
-from axial.materialize import (
-    MissingAliasMapError,
-    find_artifact_links,
-    load_alias_map,
-    load_inventory,
-    member_chunk_ids_for_node,
-    run_materialize,
-)
+from axial.query import store as note_store
+
+from axial.materialize import MissingAliasMapError, load_alias_map, load_inventory, run_materialize
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
@@ -281,45 +271,9 @@ def _read_note(path: Path) -> tuple[dict, str]:
 
 # -- inner unit tests: the small, pure joins ----------------------------------
 
-
-def test_member_chunk_ids_for_node_unions_canonical_and_alias_chunk_ids():
-    inventory = {
-        "A": {"kind": "person", "count": 1, "chunk_ids": ["c1", "c2"]},
-        "B": {"kind": "person", "count": 1, "chunk_ids": ["c2", "c3"]},
-    }
-    node = {"canonical": "A", "aliases": ["B"]}
-    assert member_chunk_ids_for_node(node, inventory) == ["c1", "c2", "c3"]
-
-
-def test_find_artifact_links_matches_caption_substring_within_the_same_source_only():
-    artifacts_by_source = {
-        "src1": [{"artifact_id": "a1", "caption": "Table 3.1: Employment rates"}],
-        "src2": [{"artifact_id": "a2", "caption": "Table 3.1: A different book's own table"}],
-    }
-    # Only src1's member chunk names Table 3.1 -- src2's own same-captioned
-    # table must never be pulled in.
-    matches = find_artifact_links(
-        ["Table 3.1"], ["c_src1"], {"c_src1": "src1"}, artifacts_by_source
-    )
-    assert matches == ["a1"]
-
-
-def test_find_artifact_links_refuses_a_numeric_prefix_collision():
-    """Real-corpus regression (2026-07-28): a plain substring match let
-    "Figure 9.1" match inside "Figure 9.10"'s caption -- 10 of 292 real
-    figure/table links (3.4%) were exactly this. The fix is a boundary rule
-    (the character right after the match must not be another digit), not a
-    threshold, and it must not touch a genuine, non-colliding match."""
-    artifacts_by_source = {
-        "src1": [
-            {"artifact_id": "a_prefix", "caption": "Figure 9.10: A completely different figure"},
-            {"artifact_id": "a_exact", "caption": "Figure 9.1: The actual figure this name means"},
-        ],
-    }
-    matches = find_artifact_links(
-        ["Figure 9.1"], ["c_src1"], {"c_src1": "src1"}, artifacts_by_source
-    )
-    assert matches == ["a_exact"]
+# `member_chunk_ids_for_node` and `find_artifact_links` -- the figure/table
+# artifact join, and the name-page member union it fed -- are retired along
+# with the name pages they served (DEC-75, issue #853).
 
 
 def test_load_alias_map_raises_when_absent(tmp_path):
@@ -402,368 +356,77 @@ def test_materialize_writes_one_artifact_note_per_persisted_record(tmp_path):
     assert "cited_by" not in frontmatter
 
 
-def test_name_page_carries_cross_book_members_as_links_with_author_year_claim(tmp_path):
+def test_materialize_writes_no_names_directory_or_door_index(tmp_path):
+    """DEC-75 (issue #853): the name pages, and the door index
+    (`data/vault/names.jsonl`) that used to sit beside them, are retired
+    outright. Materialize must leave no trace of either, even for a corpus
+    whose alias map carries cross-book, figure/table-kind names that used to
+    produce plenty of both."""
     _build_fixture(tmp_path)
-    run_materialize(**_dirs(tmp_path))
-
-    path = tmp_path / "data" / "vault" / "names" / "Kevin Attell.md"
-    assert path.is_file(), f"expected a name page at {path}"
-    frontmatter, body = _read_note(path)
-
-    assert frontmatter == {
-        "name": "Kevin Attell",
-        "kind": "person",
-        "aliases": [],
-        "member_count": 2,
-    }
-    assert "[[src1_000_intro_001]]" in body
-    assert "[[src2_000_intro_001]]" in body
-    assert "Author One" in body and "2001" in body
-    assert "Author Two" in body and "2002" in body
-    assert "State formation through war." in body
-    assert "Bellicist state building." in body
-
-
-def test_materialize_writes_a_door_index_with_source_count(tmp_path):
-    """Issue #634: Materialize writes `<vault_dir>/names.jsonl`, a sibling of
-    `names/` (never a member of it), one row per surviving name page,
-    carrying `source_count` -- the number of distinct sources the page's
-    members span, which the frontmatter alone does not carry."""
-    _build_fixture(tmp_path)
-    run_materialize(**_dirs(tmp_path))
-
-    vault_dir = tmp_path / "data" / "vault"
-    index_path = vault_dir / "names.jsonl"
-    assert index_path.is_file()
-    assert index_path.parent == vault_dir, "the index is a sibling of names/, not inside it"
-
-    rows = {
-        row["name"]: row
-        for row in (
-            json.loads(line) for line in index_path.read_text(encoding="utf-8").splitlines()
-        )
-    }
-
-    # "Kevin Attell" is named in src1 AND src2 -- two distinct sources.
-    assert rows["Kevin Attell"]["member_count"] == 2
-    assert rows["Kevin Attell"]["source_count"] == 2
-    assert rows["Kevin Attell"]["kind"] == "person"
-    assert rows["Kevin Attell"]["filename"] == "Kevin Attell.md"
-
-    # "Table 3.1" is named only in src1 -- one source.
-    assert rows["Table 3.1"]["member_count"] == 1
-    assert rows["Table 3.1"]["source_count"] == 1
-
-
-def test_write_name_page_index_is_atomic_never_exposes_a_partial_write(tmp_path, monkeypatch):
-    """Issue #637: a concurrent reader of `names.jsonl` -- the live scenario
-    is `axial ask` reading it while a Materialize run rewrites it -- must
-    never observe a truncated or partial file, only the complete prior
-    content or the complete new content.
-
-    `Path.write_text`'s "w" mode truncates the file the instant it opens,
-    before a single byte of the new content is written, so a writer that
-    calls `path.write_text(...)` directly exposes an empty file for that
-    whole window. This is demonstrated by spying on every direct `open()`
-    of the real index path in write mode: this test fails for the right
-    reason against the pre-fix code (which opens `path` itself for writing)
-    and passes once the write goes through a temp-file-plus-`os.replace`
-    swap, which never opens the real path for writing at all."""
-    from axial.materialize import NAME_PAGE_INDEX_FILENAME, _write_name_page_index
-
-    vault_dir = tmp_path / "vault"
-    vault_dir.mkdir()
-    index_path = vault_dir / NAME_PAGE_INDEX_FILENAME
-
-    old_rows = [
-        {
-            "name": "Old Name",
-            "filename": "Old Name.md",
-            "kind": "person",
-            "member_count": 1,
-            "source_count": 1,
-        }
-    ]
-    _write_name_page_index(vault_dir, old_rows)
-    old_bytes = index_path.read_bytes()
-    assert old_bytes, "fixture setup: the first write must actually land"
-
-    new_rows = [
-        {
-            "name": "New Name",
-            "filename": "New Name.md",
-            "kind": "concept",
-            "member_count": 5,
-            "source_count": 3,
-        }
-    ]
-
-    observed_mid_write: list[bytes] = []
-    real_open = Path.open
-
-    def spying_open(self, mode="r", *args, **kwargs):
-        handle = real_open(self, mode, *args, **kwargs)
-        if self == index_path and "w" in mode:
-            # `real_open` above already ran -- if this is a direct write
-            # open of the real path, it has already truncated it.
-            observed_mid_write.append(index_path.read_bytes())
-        return handle
-
-    monkeypatch.setattr(Path, "open", spying_open)
-
-    _write_name_page_index(vault_dir, new_rows)
-
-    assert observed_mid_write == [], (
-        "the real index path was opened directly for writing -- a concurrent "
-        f"reader would have observed a truncated file: {observed_mid_write!r}"
-    )
-    new_bytes = index_path.read_bytes()
-    assert b"New Name" in new_bytes
-
-
-def test_write_name_page_index_survives_a_concurrent_reader_holding_it_open(tmp_path):
-    """Issue #653: #637 made the write atomic (`atomic_write_text`'s temp-
-    file-plus-`os.replace` swap, tested above) so a reader never sees a
-    truncated file, but it did not make the WRITER survive a reader.
-    `os.replace` swaps beneath an open handle on POSIX; on Windows it raises
-    `PermissionError: [WinError 5] Access is denied` while ANY process has
-    the destination open -- exactly what happened live on 2026-08-04, when a
-    concurrent `axial ask` query rebuilding its door-index cache (#636) held
-    `names.jsonl` open across the final rename of a full Materialize run
-    that had already written all 49,555 pages correctly, and the run still
-    exited 1.
-
-    A reader's handle lives milliseconds (open, read, close) -- not for the
-    write's whole duration -- so a background thread opens the destination,
-    signals it is holding it, briefly sleeps, then closes, while the main
-    thread calls `_write_name_page_index` the moment the signal fires. That
-    ordering reproduces the live race (confirmed to raise `PermissionError`
-    on this platform absent the #653 retry when the two overlap) without
-    depending on exact scheduling: the write's own retry budget (~1s) easily
-    outlasts the reader's brief hold. The assertion holds on every platform
-    either way: on Windows this exercises the retry path for real; on POSIX
-    `os.replace` simply succeeds under the open handle. Either way the write
-    must complete and the destination must hold the new content, never a
-    truncated or stale one."""
-    from axial.materialize import NAME_PAGE_INDEX_FILENAME, _write_name_page_index
-
-    vault_dir = tmp_path / "vault"
-    vault_dir.mkdir()
-    index_path = vault_dir / NAME_PAGE_INDEX_FILENAME
-
-    old_rows = [
-        {
-            "name": "Old Name",
-            "filename": "Old Name.md",
-            "kind": "person",
-            "member_count": 1,
-            "source_count": 1,
-        }
-    ]
-    _write_name_page_index(vault_dir, old_rows)
-    assert index_path.is_file(), "fixture setup: the first write must actually land"
-
-    new_rows = [
-        {
-            "name": "New Name",
-            "filename": "New Name.md",
-            "kind": "concept",
-            "member_count": 5,
-            "source_count": 3,
-        }
-    ]
-
-    reader_holding = threading.Event()
-
-    def hold_a_brief_reader_open():
-        with open(index_path, "r", encoding="utf-8") as reader_handle:
-            reader_handle.read()
-            reader_holding.set()
-            time.sleep(0.3)
-
-    reader_thread = threading.Thread(target=hold_a_brief_reader_open)
-    reader_thread.start()
-    assert reader_holding.wait(timeout=5), "fixture setup: the reader thread never opened the file"
-
-    _write_name_page_index(vault_dir, new_rows)
-    reader_thread.join(timeout=5)
-
-    new_bytes = index_path.read_bytes()
-    assert b"New Name" in new_bytes
-    assert b"Old Name" not in new_bytes
-    leftover_tmp_files = [p for p in vault_dir.iterdir() if p.name != NAME_PAGE_INDEX_FILENAME]
-    assert leftover_tmp_files == [], f"temp file(s) left behind: {leftover_tmp_files!r}"
-    assert b"Old Name" not in new_bytes
-
-
-def test_figure_table_name_page_links_the_matching_artifact_note(tmp_path):
-    _build_fixture(tmp_path)
-    run_materialize(**_dirs(tmp_path))
-
-    path = tmp_path / "data" / "vault" / "names" / "Table 3.1.md"
-    frontmatter, body = _read_note(path)
-
-    assert frontmatter["kind"] == "table"
-    assert frontmatter["member_count"] == 1
-    assert "[[src1_art_3.1]]" in body
-    assert "[[src1_000_intro_001]]" in body
-
-
-def _build_cross_source_locator_fixture(root: Path) -> None:
-    """Issue #445: "Table 4.1" named in TWO unrelated books -- the actual
-    bug (identical locator surface strings collapsing across sources) and
-    the fix under test (each book's own "Table 4.1" gets its own name page,
-    linking only its own book's own artifact note)."""
-    for source_id, artifact_caption in (
-        ("src_a", "Table 4.1: A's own employment data"),
-        ("src_b", "Table 4.1: B's own displacement figures"),
-    ):
-        chunk_id = f"{source_id}_000_intro_001"
-        _write_jsonl(
-            root / "data" / "chunks" / f"{source_id}.jsonl",
-            [{"chunk_id": chunk_id, "section": "Introduction", "section_order": "0", "text": "x"}],
-        )
-        _write_json(
-            root / "data" / "envelopes" / f"{source_id}.json",
-            {
-                "source_id": source_id,
-                "thesis": "x",
-                "toc": [{"title": "Chapter 1", "children": ["Introduction"]}],
-                "scope": "x",
-                "stated_argument": "x",
-            },
-        )
-        _write_json(
-            root / "data" / "source_meta" / f"{source_id}.json",
-            {
-                "author": {"value": f"Author {source_id}", "provenance": "title page"},
-                "title": {"value": f"Book {source_id}", "provenance": "embedded metadata"},
-                "date": {"value": 2020, "provenance": "embedded metadata"},
-            },
-        )
-        _write_jsonl(
-            root / "data" / "answers" / f"{source_id}.jsonl",
-            [
-                _answer_record(
-                    chunk_id,
-                    source_id,
-                    "Introduction",
-                    claim="A claim.",
-                    names=[{"name": "Table 4.1", "kind": "table"}],
-                )
-            ],
-        )
-        _write_jsonl(
-            root / "data" / "artifacts" / f"{source_id}.jsonl",
-            [
-                {
-                    "artifact_id": f"{source_id}_art_4.1",
-                    "source_id": source_id,
-                    "section": "Chapter 1",
-                    "caption": artifact_caption,
-                }
-            ],
-        )
-
-    # What `axial names build` + `axial names merge` now produce for this
-    # corpus (issue #445): "Table 4.1" spans two sources, so each source
-    # gets its own scoped inventory entry and its own un-aliased node --
-    # never one node fused across both books.
-    _write_jsonl(
-        root / "data" / "names" / "inventory.jsonl",
-        [
-            {
-                "surface": "Table 4.1 (src_a)",
-                "kind": "table",
-                "count": 1,
-                "chunk_ids": ["src_a_000_intro_001"],
-            },
-            {
-                "surface": "Table 4.1 (src_b)",
-                "kind": "table",
-                "count": 1,
-                "chunk_ids": ["src_b_000_intro_001"],
-            },
-        ],
-    )
-    _write_json(
-        root / "data" / "names" / "alias_map.json",
-        {
-            "version": 1,
-            "generated_at": "2026-01-01T00:00:00Z",
-            "nodes": [
-                {"canonical": "Table 4.1 (src_a)", "kind": "table", "aliases": []},
-                {"canonical": "Table 4.1 (src_b)", "kind": "table", "aliases": []},
-            ],
-        },
-    )
-
-
-def test_source_scoped_locator_names_each_link_only_their_own_artifact(tmp_path):
-    _build_cross_source_locator_fixture(tmp_path)
-
     result = run_materialize(**_dirs(tmp_path))
 
-    assert result["name_pages"] == 2
-    names_dir = tmp_path / "data" / "vault" / "names"
-    page_a = names_dir / "Table 4.1 (src_a).md"
-    page_b = names_dir / "Table 4.1 (src_b).md"
-    assert page_a.is_file(), sorted(p.name for p in names_dir.glob("*.md"))
-    assert page_b.is_file(), sorted(p.name for p in names_dir.glob("*.md"))
-
-    frontmatter_a, body_a = _read_note(page_a)
-    frontmatter_b, body_b = _read_note(page_b)
-
-    assert frontmatter_a["member_count"] == 1
-    assert frontmatter_b["member_count"] == 1
-    # Each book's own name page links its own artifact note, never the
-    # other book's identically-numbered one -- the whole point of scoping.
-    assert "[[src_a_art_4.1]]" in body_a
-    assert "[[src_b_art_4.1]]" not in body_a
-    assert "[[src_b_art_4.1]]" in body_b
-    assert "[[src_a_art_4.1]]" not in body_b
+    vault_dir = tmp_path / "data" / "vault"
+    assert not (vault_dir / "names").exists()
+    assert not (vault_dir / "names.jsonl").exists()
+    for retired_key in ("name_pages", "name_pages_written", "name_pages_unchanged", "name_pages_deleted"):
+        assert retired_key not in result
 
 
-def test_rerun_over_unchanged_input_is_byte_identical_and_rewrites_nothing(tmp_path):
+def test_note_names_carries_cross_book_membership_in_the_store(tmp_path):
+    """The replacement for the retired name page's own cross-book member
+    links (DEC-75, issue #853): `note_names` carries one row per (chunk,
+    canonical) pair, so "Kevin Attell" -- named in both src1 and src2 --
+    resolves to a door spanning two distinct sources through the store
+    alone, with no page ever written."""
     _build_fixture(tmp_path)
     run_materialize(**_dirs(tmp_path))
 
-    names_dir = tmp_path / "data" / "vault" / "names"
-    before = {path.name: path.read_bytes() for path in sorted(names_dir.glob("*.md"))}
+    connection = note_store.connect(tmp_path / "data" / "vault")
+    try:
+        doors = note_store.doors(connection, ["Kevin Attell", "Table 3.1"])
+    finally:
+        connection.close()
 
-    second = run_materialize(**_dirs(tmp_path))
+    assert doors["Kevin Attell"].member_count == 2
+    assert doors["Kevin Attell"].source_count == 2
+    assert doors["Kevin Attell"].kind == "person"
+    # "Table 3.1" is named only in src1 -- one source.
+    assert doors["Table 3.1"].member_count == 1
+    assert doors["Table 3.1"].source_count == 1
 
-    after = {path.name: path.read_bytes() for path in sorted(names_dir.glob("*.md"))}
+
+def test_rerun_over_unchanged_input_leaves_prose_and_artifact_notes_byte_identical(tmp_path):
+    _build_fixture(tmp_path)
+    run_materialize(**_dirs(tmp_path))
+
+    def _snapshot() -> dict[str, bytes]:
+        vault_dir = tmp_path / "data" / "vault"
+        return {
+            str(path.relative_to(vault_dir)): path.read_bytes()
+            for directory in ("prose", "artifacts")
+            for path in sorted((vault_dir / directory).glob("*.md"))
+        }
+
+    before = _snapshot()
+    run_materialize(**_dirs(tmp_path))
+    after = _snapshot()
+
     assert before == after
-    assert second["name_pages_written"] == 0
-    assert second["name_pages_unchanged"] == 2
-    assert second["name_pages_deleted"] == 0
+    assert before, "fixture setup: there must be at least one note to compare"
 
 
-def test_a_changed_alias_map_rewrites_only_the_affected_name_page_never_a_note(tmp_path):
+def test_a_changed_alias_map_never_touches_a_prose_note(tmp_path):
+    """The one part of the retired selective-rewrite test (DEC-75, issue
+    #853) that still applies without a name page to selectively rewrite:
+    prose notes never depended on the alias map at all, and still don't --
+    only the store's own `note_names`/`names` tables move."""
     _build_fixture(tmp_path)
-    run_materialize(**_dirs(tmp_path))
-
-    # A third, wholly unrelated node -- present from the start of the
-    # "changed" state below, so it is the control: present in both runs,
-    # touched by neither edit, and must come out byte-identical.
-    alias_map_path = tmp_path / "data" / "names" / "alias_map.json"
-    alias_map = json.loads(alias_map_path.read_text(encoding="utf-8"))
-    alias_map["nodes"].append(
-        {"canonical": "Institution X", "kind": "institution/group", "aliases": []}
-    )
-    alias_map_path.write_text(json.dumps(alias_map), encoding="utf-8")
     run_materialize(**_dirs(tmp_path))
 
     prose_path = tmp_path / "data" / "vault" / "prose" / "src1_000_intro_001.md"
     prose_before = prose_path.read_bytes()
-    table_page = tmp_path / "data" / "vault" / "names" / "Table 3.1.md"
-    control_page = tmp_path / "data" / "vault" / "names" / "Institution X.md"
-    control_before = control_page.read_bytes()
 
-    # Merge "Table 3.1" as an alias of "Kevin Attell" -- an arbitrary but
-    # valid alias-map edit that changes exactly one node's membership and
-    # removes another's canonical; "Institution X" is untouched by it.
+    alias_map_path = tmp_path / "data" / "names" / "alias_map.json"
     alias_map = json.loads(alias_map_path.read_text(encoding="utf-8"))
     for node in alias_map["nodes"]:
         if node["canonical"] == "Kevin Attell":
@@ -771,26 +434,9 @@ def test_a_changed_alias_map_rewrites_only_the_affected_name_page_never_a_note(t
     alias_map["nodes"] = [n for n in alias_map["nodes"] if n["canonical"] != "Table 3.1"]
     alias_map_path.write_text(json.dumps(alias_map), encoding="utf-8")
 
-    result = run_materialize(**_dirs(tmp_path))
+    run_materialize(**_dirs(tmp_path))
 
-    # The prose note never depends on the alias map at all.
     assert prose_path.read_bytes() == prose_before
-    # The old "Table 3.1" page is gone; its name is now an alias.
-    assert not table_page.is_file()
-    # The untouched control node's page is byte-identical -- it was not
-    # rewritten by an edit to a different node.
-    assert control_page.read_bytes() == control_before
-    assert result["name_pages_deleted"] == 1
-    assert result["name_pages_written"] == 1  # only "Kevin Attell" actually changed
-    assert result["name_pages_unchanged"] == 1  # "Institution X"
-
-    kevin_page = tmp_path / "data" / "vault" / "names" / "Kevin Attell.md"
-    frontmatter, body = _read_note(kevin_page)
-    assert frontmatter["aliases"] == ["Table 3.1"]
-    # Still 2: src1's chunk already named "Kevin Attell" directly, so folding
-    # in "Table 3.1" (whose only mention is that SAME chunk) adds no new
-    # member -- the union, not the sum.
-    assert frontmatter["member_count"] == 2
 
 
 def test_materialize_raises_a_clear_error_when_the_alias_map_is_missing(tmp_path):
@@ -831,6 +477,7 @@ def test_names_materialize_cli_subcommand_is_wired(isolated_vault_root):
         f"expected exit 0, got {result.returncode}\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
-    assert "name_pages_written: 2" in result.stdout
-    assert (root / "data" / "vault" / "names" / "Kevin Attell.md").is_file()
+    assert "store_note_names:" in result.stdout
+    assert not (root / "data" / "vault" / "names").exists()
     assert (root / "data" / "vault" / "prose" / "src1_000_intro_001.md").is_file()
+    assert (root / "data" / "vault" / "notes.db").is_file()

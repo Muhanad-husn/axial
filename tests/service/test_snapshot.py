@@ -21,7 +21,7 @@ from axial.service.snapshot import (
     SnapshotPathTooLongError,
     publish,
 )
-from _corpus import CANONICAL, CHUNK_ID, PIN_NAME, build_corpus_root, write_map
+from _corpus import CHUNK_ID, PIN_NAME, build_corpus_root, write_map
 
 
 @pytest.fixture
@@ -43,8 +43,10 @@ def test_publish_writes_every_read_side_artifact_and_no_raw_sources(
 ):
     """The corrected third "done when" (see the issue's own read-side
     inventory comment): the vault markdown IS the query surface --
-    `assemble_evidence` quotes `prose/*.md` and `get_name` reads the Gather
-    section off `names/*.md` -- so it ships. The raw books do not."""
+    `assemble_evidence` quotes `prose/*.md` -- so it ships. The raw books do
+    not. `vault/names/` and `vault/names.jsonl` are gone from this
+    inventory (DEC-75, issue #853): `find_names`/`get_name` answer from
+    `notes.db` alone, and there is no page or door index left to publish."""
     snapshots_dir = tmp_path / "snapshots"
 
     snapshot = publish("v1", snapshots_dir=snapshots_dir)
@@ -52,8 +54,8 @@ def test_publish_writes_every_read_side_artifact_and_no_raw_sources(
     root = snapshot.root
     assert root == snapshots_dir / "v1"
     assert (root / "vault" / "prose" / f"{CHUNK_ID}.md").is_file()
-    assert (root / "vault" / "names" / f"{CANONICAL}.md").is_file()
-    assert (root / "vault" / "names.jsonl").is_file()
+    assert not (root / "vault" / "names").exists()
+    assert not (root / "vault" / "names.jsonl").exists()
     assert (root / "vault" / "artifacts").is_dir()
     assert (root / "vault" / "notes.db").is_file()
     assert (root / "names" / "index.json").is_file()

@@ -49,7 +49,7 @@ def _isolate_runlog_root(tmp_path_factory, monkeypatch):
     """Set `AXIAL_LOGS_ROOT` to a fresh temp directory for every test in this
     suite. `run_context(name, root=None, ...)` -- the shape every CLI
     subcommand's own call site uses (`_extract`, `_envelope`, `_interrogate`
-    when `--data-dir` is absent, `_gather_eval_score`, `_eval`) -- resolves
+    when `--data-dir` is absent, `_eval`) -- resolves
     this env var when `root` is not given (`axial.runlog._resolve_logs_root`,
     mirroring `axial.llm`'s own `AXIAL_SECRETS_PATH` seam), so a test that
     drives the CLI through `main()` with no injected root (e.g.

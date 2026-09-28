@@ -25,7 +25,7 @@ from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
 from axial.analyze import run_examine
 from axial.analyze.synthesis import SynthesisError
-from axial.answer import KNOWN_ARMS, MAP_ARM, MAP_VOCAB_ARM, NAME_ARM, AnswerError, run_brief
+from axial.answer import KNOWN_ARMS, MAP_ARM, MAP_VOCAB_ARM, AnswerError, run_brief
 from axial.answer.render import render_analyst_answer
 from axial.answer.run_report import format_run_report
 from axial.answer.usage_report import build_usage_report, format_usage_report, load_analysis_records
@@ -90,14 +90,6 @@ from axial.llm import (
     check_key,
     get_client,
     write_api_key,
-)
-from axial.gather import DEFAULT_WORKERS as GATHER_DEFAULT_WORKERS, GatherError, run_gather
-from axial.gather_eval import CALIBRATION_SAMPLE_SIZE, NULL_SAMPLE_SIZE
-from axial.gather_eval import DEFAULT_SEED as GATHER_EVAL_DEFAULT_SEED
-from axial.gather_eval import (
-    GatherEvalError,
-    run_gather_eval_score,
-    run_gather_eval_sheet,
 )
 from axial.materialize import MaterializeError, run_materialize
 from axial.merge_names import DEFAULT_WORKERS as MERGE_DEFAULT_WORKERS
@@ -573,12 +565,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Phase A v1 slice 06 (issue #411): Materialize -- write the vault "
             "with zero model calls (D11, spec §7.17). (Re)writes one prose note "
             "per interrogated chunk (interrogation-answer frontmatter, Appendix "
-            "H), one artifact note per data/artifacts/ record, and one name "
-            "page per data/names/alias_map.json node (name, kind, aliases, and "
-            "its member notes as [[chunk_id]] links -- link direction is "
-            "name-page -> note only). Re-running against an unchanged alias map "
-            "rewrites nothing; a changed one rewrites only the affected name "
-            "pages, never a prose note"
+            "H), one artifact note per data/artifacts/ record, and the "
+            "relational store (notes.db) over the same records -- the name "
+            "pages this used to also write were retired (DEC-75, issue #853)"
         ),
     )
     names_materialize_parser.add_argument(
@@ -591,42 +580,6 @@ def build_parser() -> argparse.ArgumentParser:
             "note_opposed_position table. positions.jsonl is read from the "
             "same directory as this file. Omitted (default): that table is "
             "left empty, exactly as before this table existed"
-        ),
-    )
-
-    names_gather_parser = names_subparsers.add_parser(
-        "gather",
-        help=(
-            "Phase A v1 slice 07 (issue #412): Gather -- ask the model what "
-            "the authors gathered at each name actually disagree about, from a "
-            "packet code assembles per member note (author, year, the "
-            "one-sentence claim, whose position it is, who it argues against) "
-            "under a hard character budget in code (D12; a name over it is "
-            "split into batches and a short final call merges the findings). "
-            "Writes the disagreement plus name-to-name links onto each "
-            "data/vault/names/ page, and a per-name provenance record to "
-            "data/names/disagreements.jsonl, so a re-run reproduces the same "
-            "text and resumes where it stopped. Never reads a note's full "
-            "text (D13)"
-        ),
-    )
-    names_gather_parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help=(
-            "stop after this many names this run, still writing every page a "
-            "record already exists for -- a bounded, cheap first look before "
-            "committing to a full pass"
-        ),
-    )
-    names_gather_parser.add_argument(
-        "--workers",
-        type=int,
-        default=GATHER_DEFAULT_WORKERS,
-        help=(
-            "bounded concurrent per-name workers (this pass is I/O-bound, like "
-            f"`names merge`) (default: {GATHER_DEFAULT_WORKERS})"
         ),
     )
 
@@ -916,91 +869,10 @@ def build_parser() -> argparse.ArgumentParser:
             "a sweep directory ('axial brief sweep --sweep-dir'), one per arm; "
             "repeat the flag once per arm being compared. ORDER SETS THE "
             "COMPARISONS: the table pairs consecutive arms in the order the "
-            "flags were given, so '--arm-dir <name> --arm-dir <map> --arm-dir "
-            "<map+vocab>' reads 'name vs map; map vs map+vocab', which is the "
-            "two questions issue #809 asks. Passing map first instead reads "
-            "'map vs name; name vs map+vocab', and that second pair moves two "
-            "things at once and answers neither question"
+            "flags were given, so '--arm-dir <map> --arm-dir <map+vocab>' "
+            "reads 'map vs map+vocab', which is the question issue #809 asks. "
+            "A third arm-dir would read as two more pairings, not one"
         ),
-    )
-
-    gather_eval_parser = subparsers.add_parser(
-        "gather-eval",
-        help=(
-            "issue #478: score Gather's disagreement entries "
-            "(data/names/disagreements.jsonl) on grounding -- attribution "
-            "(is each attributed position actually present in a cited note) "
-            "and conflict (do the attributed positions actually oppose each "
-            "other) -- calibrated against the founder"
-        ),
-    )
-    gather_eval_subparsers = gather_eval_parser.add_subparsers(dest="gather_eval_command")
-
-    gather_eval_sheet_parser = gather_eval_subparsers.add_parser(
-        "sheet",
-        help=(
-            "emit a real seeded, stratified sample of disagreement entries "
-            "across the member-count bands (10-20, 20-50, 50-100, 100-300, "
-            "300+) for the founder to mark grounded/not grounded, to "
-            "data/gather_eval/label_sheet.xlsx. Each row's full evidence is "
-            "written to data/gather_eval/evidence/ -- the sheet's own "
-            "evidence cell is a short preview plus a pointer to that file, "
-            "since large names' evidence clears Excel's per-cell limit. "
-            "Mark it and return the same file, unrenamed, under "
-            "data/gather_eval/labels/. Offline -- no LLM call"
-        ),
-    )
-    gather_eval_sheet_parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=CALIBRATION_SAMPLE_SIZE,
-        help=f"target calibration sample size (default: {CALIBRATION_SAMPLE_SIZE})",
-    )
-    gather_eval_sheet_parser.add_argument(
-        "--seed",
-        type=int,
-        default=GATHER_EVAL_DEFAULT_SEED,
-        help=f"seed for deterministic, replayable sampling (default: {GATHER_EVAL_DEFAULT_SEED})",
-    )
-
-    gather_eval_score_parser = gather_eval_subparsers.add_parser(
-        "score",
-        help=(
-            "judge every disagreement entry not already recorded in "
-            "data/names/gather_eval.jsonl, score the founder-marked "
-            "calibration sheet under data/gather_eval/labels/ if one has "
-            "been returned, and re-ask a seeded sample of null entries "
-            "bypassing Gather's own checkpoint to report a flip rate"
-        ),
-    )
-    gather_eval_score_parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help=(
-            "stop the main judge loop after this many entries this run -- a "
-            "cheap smoke flag, never the sampling mechanism (DEC-53): the "
-            "calibration join and the null re-ask always use their own "
-            "seeded samples"
-        ),
-    )
-    gather_eval_score_parser.add_argument(
-        "--null-sample-size",
-        type=int,
-        default=NULL_SAMPLE_SIZE,
-        help=f"how many null entries to re-ask (default: {NULL_SAMPLE_SIZE})",
-    )
-    gather_eval_score_parser.add_argument(
-        "--seed",
-        type=int,
-        default=GATHER_EVAL_DEFAULT_SEED,
-        help=f"seed for the null re-ask sample (default: {GATHER_EVAL_DEFAULT_SEED})",
-    )
-    gather_eval_score_parser.add_argument(
-        "--workers",
-        type=int,
-        default=GATHER_DEFAULT_WORKERS,
-        help=f"bounded concurrent judge workers (default: {GATHER_DEFAULT_WORKERS})",
     )
 
     vault_parser = subparsers.add_parser("vault", help="vault operations")
@@ -1270,13 +1142,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="use_map",
         help=(
-            "retrieve through the argument map (issue #572) instead of the "
-            "name-layer loop: the door states the arguments the brief is "
-            "about, lands them on the map's positions, follows every "
-            "relation into the corridor, and assembles evidence round-robin "
-            "across positions and sources -- opt-in, off by default; "
-            "synthesis and everything after it is unchanged. Superseded by "
-            "--arm when both are given; kept so no existing invocation breaks"
+            "retrieve through the argument map (issue #572): the door states "
+            "the arguments the brief is about, lands them on the map's "
+            "positions, follows every relation into the corridor, and "
+            "assembles evidence round-robin across positions and sources -- "
+            "the only retrieval path since the name-layer loop was retired "
+            "(DEC-75, issue #853); kept so no existing invocation breaks"
         ),
     )
     brief_run_parser.add_argument(
@@ -1284,13 +1155,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=KNOWN_ARMS,
         default=None,
         help=(
-            "named retrieval arm to run (issue #807): 'name' (default) is "
-            "the existing name-layer loop, 'map' is the argument-map path "
-            "(issue #572) with no vocabulary step, 'map+vocab' adds the "
-            "vocabulary step -- passages that share a derived-vocabulary "
+            "named retrieval arm to run (issue #807): 'map' (default) is "
+            "the argument-map path with no vocabulary step, 'map+vocab' adds "
+            "the vocabulary step -- passages that share a derived-vocabulary "
             "category (issue #806) join the map's own walk between the "
-            "corridor and assembly. Takes precedence over --map when both "
-            "are given."
+            "corridor and assembly. The retired name-layer loop's own "
+            "'name' arm (DEC-75, issue #853) is no longer a valid choice."
         ),
     )
 
@@ -1414,16 +1284,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     brief_sweep_parser.add_argument(
         "--arm",
-        default="name",
+        default="map",
         help=(
             "named retrieval arm every draw runs through (issue #808): "
-            "'name' (default) is the existing name-layer loop, 'map' is "
-            "the argument-map path (issue #572), 'map+vocab' the same walk "
-            "with the vocabulary step (issue #807) -- forwarded verbatim, "
-            "with no fixed list of valid names here, so an arm added "
-            "elsewhere is usable with no edit to this command; resuming "
-            "--sweep-dir under a different arm than the one already "
-            "recorded there is refused"
+            "'map' (default) is the argument-map path (issue #572), "
+            "'map+vocab' the same walk with the vocabulary step (issue "
+            "#807) -- forwarded verbatim, with no fixed list of valid names "
+            "here, so an arm added elsewhere is usable with no edit to this "
+            "command. The retired name-layer loop's own 'name' arm (DEC-75, "
+            "issue #853) is no longer valid. Resuming --sweep-dir under a "
+            "different arm than the one already recorded there is refused"
         ),
     )
     brief_sweep_parser.add_argument(
@@ -1436,7 +1306,7 @@ def build_parser() -> argparse.ArgumentParser:
         # sweep` runs: argparse seeds a dest from the FIRST action that
         # declares it, so a `None` here would become the no-flag default
         # if the two calls were ever swapped.
-        default="name",
+        default="map",
         help="alias for --arm map (issue #572), kept so no existing invocation breaks",
     )
 
@@ -1517,25 +1387,23 @@ def build_parser() -> argparse.ArgumentParser:
         dest="use_map",
         help=(
             "run the whole smoke set through the argument-map retrieval "
-            "path instead of the name-layer loop (issue #572) -- the "
-            "coverage-map check adapts itself to whichever path ran"
+            "path (issue #572) -- the only retrieval path since the "
+            "name-layer loop was retired (DEC-75, issue #853); kept so no "
+            "existing invocation breaks"
         ),
     )
     brief_smoke_parser.add_argument(
         "--arm",
-        # `None`, never "name" (issue #822): a "name" default would override
-        # --map and silently run the name layer. `run_sweep` resolves the
-        # pair -- `arm` wins when given, `--map` alone still reads as "map".
         default=None,
         help=(
             "named retrieval arm the whole smoke set runs through (issue "
-            "#822): 'name' is the name-layer loop, 'map' the argument-map "
-            "path (issue #572), 'map+vocab' the same walk with the "
-            "vocabulary step (issue #807) -- forwarded verbatim, with no "
-            "fixed list of valid names here, so an arm added elsewhere is "
-            "usable with no edit to this command. Unset by default, so "
-            "--map still decides; takes precedence over --map when both "
-            "are given"
+            "#822): 'map' is the argument-map path (issue #572), "
+            "'map+vocab' the same walk with the vocabulary step (issue "
+            "#807) -- forwarded verbatim, with no fixed list of valid names "
+            "here, so an arm added elsewhere is usable with no edit to this "
+            "command. The retired name-layer loop's own 'name' arm (DEC-75, "
+            "issue #853) is no longer valid. Unset by default, so --map "
+            "still decides; takes precedence over --map when both are given"
         ),
     )
 
@@ -2172,57 +2040,6 @@ def _artifacts(source_path: str) -> int:
     return 0
 
 
-def _gather_eval_sheet(sample_size: int, seed: int) -> int:
-    try:
-        path = run_gather_eval_sheet(sample_size=sample_size, seed=seed)
-    except GatherEvalError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    print(json.dumps(str(path)))
-    return 0
-
-
-def _gather_eval_score(
-    *,
-    limit: int | None,
-    null_sample_size: int,
-    seed: int,
-    workers: int,
-    root: Path | None = None,
-    clock: Callable[[], str] | None = None,
-) -> int:
-    with run_context("gather-eval-score", root=root, clock=clock) as run:
-        start = time.monotonic()
-        try:
-            result = run_gather_eval_score(
-                limit=limit, null_sample_size=null_sample_size, seed=seed, workers=workers
-            )
-        except (GatherEvalError, LLMError) as exc:
-            run.record(
-                source_id="",
-                pass_name="gather_eval",
-                model=None,
-                status="error",
-                duration_sec=time.monotonic() - start,
-                error=str(exc),
-            )
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
-
-        run.record(
-            source_id="",
-            pass_name="gather_eval",
-            model=None,
-            status="ok",
-            duration_sec=time.monotonic() - start,
-            error=None,
-        )
-
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
-
-
 def _vault_write(source_path: str) -> int:
     try:
         written = run_vault_write(source_path)
@@ -2563,7 +2380,6 @@ def _print_event(message: str, _detail: dict[str, Any]) -> None:
 
 
 _ARM_DISPLAY = {
-    NAME_ARM: "name layer",
     MAP_ARM: "argument map",
     MAP_VOCAB_ARM: "argument map + vocabulary",
 }
@@ -2619,10 +2435,9 @@ def _brief_run(
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    # `arm`, given, wins over `--map` (`run_brief`'s own precedence, issue
-    # #807) -- this is display-only, mirrored from that same rule so the
-    # printed line never disagrees with what actually ran.
-    resolved_arm = arm if arm is not None else (MAP_ARM if use_map else NAME_ARM)
+    # Retrieval is always the argument map now (DEC-75, issue #853); `arm`,
+    # when given, only decides whether the vocabulary join ran.
+    resolved_arm = arm if arm is not None else MAP_ARM
     print(f"retrieval: {_ARM_DISPLAY.get(resolved_arm, resolved_arm)}")
     print(f"brief_id: {brief.brief_id}")
     print(f"disposition: {result.record['interrogation']['disposition']}")
@@ -3024,7 +2839,7 @@ def _brief_sweep(
     sweep_dir: str,
     workers: int,
     *,
-    arm: str = "name",
+    arm: str = "map",
     vocabulary_column: str = DEFAULT_VOCABULARY_COLUMN,
     vocabulary_level: int | None = None,
     vocabulary_dir: str | None = None,
@@ -3385,47 +3200,12 @@ def _names_materialize(residue_decisions_path: str | None = None) -> int:
         "notes_skipped_no_answer",
         "artifact_sources",
         "artifact_notes_written",
-        "name_pages",
-        "name_pages_written",
-        "name_pages_unchanged",
-        "name_pages_deleted",
         "store_notes",
         "store_notes_back_matter",
         "store_note_names",
         "store_note_arguing_against",
         "store_note_citations",
         "store_note_opposed_position",
-    ):
-        print(f"{key}: {result[key]}")
-    return 0
-
-
-def _names_gather(limit: int | None, workers: int) -> int:
-    try:
-        result = run_gather(limit=limit, workers=workers)
-    except (MaterializeError, GatherError, LLMError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-    for key in (
-        "names",
-        "names_skipped_single_member",
-        "names_skipped_below_min_members",
-        "min_gather_members",
-        "names_gathered",
-        "asked",
-        "reused",
-        "failed",
-        "units_total",
-        "units_reused",
-        "units_asked",
-        "units_asked_touching_new",
-        "batch_calls",
-        "merge_calls",
-        "pages_written",
-        "workers",
-        "vault_dir",
-        "disagreements_path",
     ):
         print(f"{key}: {result[key]}")
     return 0
@@ -3970,9 +3750,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "names" and args.names_command == "materialize":
         return _names_materialize(args.residue_decisions_path)
 
-    if args.command == "names" and args.names_command == "gather":
-        return _names_gather(args.limit, args.workers)
-
     if args.command == "names" and args.names_command == "escalations":
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
 
@@ -3987,17 +3764,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)
-
-    if args.command == "gather-eval" and args.gather_eval_command == "sheet":
-        return _gather_eval_sheet(sample_size=args.sample_size, seed=args.seed)
-
-    if args.command == "gather-eval" and args.gather_eval_command == "score":
-        return _gather_eval_score(
-            limit=args.limit,
-            null_sample_size=args.null_sample_size,
-            seed=args.seed,
-            workers=args.workers,
-        )
 
     if args.command == "eval" and args.eval_command == "coherence":
         return _eval_coherence(args.sample, reviewers=args.reviewers, out_path=args.out)

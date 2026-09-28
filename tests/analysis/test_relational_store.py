@@ -1,29 +1,29 @@
 """The relational store over the notes and their typed relations (DEC-62,
 issue #648).
 
-Two contracts, both acceptance-level:
+**The store holds the graph the interrogation produced** -- notes, the
+names each note carries, the free-text `arguing_against` target with the
+canonical it resolves to (conservative, >=2-token phrase containment),
+citations, and the sources with their publication year -- so a caller can
+chain two relations in one query, which no tool over a flat per-name layer
+could ever have done.
 
-1. **The store holds the graph the interrogation produced** -- notes, the
-   names each note carries, the free-text `arguing_against` target with the
-   canonical it resolves to (conservative, >=2-token phrase containment),
-   citations, and the sources with their publication year -- so a caller can
-   chain two relations in one query, which no tool over the flat name-page
-   layer can do.
-2. **`find_names` and `get_name` answered from the store are byte-identical
-   to the same calls answered from the name pages.** The store subsumes the
-   door layer; it does not change what it says.
+**`find_names`/`get_name` answer from this store alone (DEC-75, issue
+#853).** The name pages this file used to also build and compare against --
+proving the store said the same thing a page did -- are retired: there is
+no page left to compare to, so this file now only proves the store's own
+answer directly.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from axial.materialize import build_note_store, materialize_names
+from axial.materialize import build_note_store
 from axial.query import store as store_module
 from axial.query.names import find_names, get_name
 
@@ -225,11 +225,11 @@ def _envelopes_dir(root: Path) -> Path:
 
 @pytest.fixture
 def corpus(tmp_path: Path) -> dict:
-    """A materialized fixture vault -- name pages, the door index, and the
-    store -- plus its own name layer."""
+    """A materialized fixture vault -- the store alone -- plus its own name
+    layer (the alias map/index `find_names`/`canonical_for_surface` resolve
+    surface forms through, unrelated to the retired name pages)."""
     _build_fixture(tmp_path)
     dirs = _dirs(tmp_path)
-    materialize_names(artifacts_dir=tmp_path / "data" / "artifacts", **dirs)
     build_note_store(envelopes_dir=_envelopes_dir(tmp_path), **dirs)
     return {
         **dirs,
@@ -371,35 +371,30 @@ def test_rebuilding_the_store_replaces_it_and_leaves_no_partial_file(corpus):
 
 
 # ---------------------------------------------------------------------------
-# 2. The store subsumes the door layer without changing what it says
+# 2. find_names/get_name, answered from the store alone (DEC-75)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def pages_only(corpus, tmp_path_factory) -> Path:
-    """The same vault with the store removed, so the same call is answered
-    from the name pages and their door index instead."""
-    destination = tmp_path_factory.mktemp("pages-only") / "vault"
-    shutil.copytree(corpus["vault_dir"], destination)
-    store_module.store_path(destination).unlink()
-    return destination
-
-
 @pytest.mark.parametrize(
-    "query",
+    ("query", "expected"),
     [
-        "Ernest Gellner",  # exact
-        "Gellner",  # alias
-        "ernest  gellner",  # folded
-        "Mandate",  # contains: reaches `French Mandate`
-        "mandate-era institutions Gellner",  # the compound-query fallback
-        "nothing in this corpus at all",  # a real empty answer
+        ("Ernest Gellner", "Ernest Gellner"),  # exact
+        ("Gellner", "Ernest Gellner"),  # alias
+        ("ernest  gellner", "Ernest Gellner"),  # folded
+        ("Mandate", "French Mandate"),  # contains
+        ("mandate-era institutions Gellner", "Ernest Gellner"),  # compound-query fallback
     ],
 )
-def test_find_names_says_the_same_thing_from_the_store_as_from_the_pages(corpus, pages_only, query):
-    from_store = find_names(query, names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"])
-    from_pages = find_names(query, names_dir=corpus["names_dir"], vault_dir=pages_only)
-    assert from_store == from_pages
+def test_find_names_resolves_from_the_store(corpus, query, expected):
+    hits = find_names(query, names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"])
+    assert hits
+    assert hits[0].canonical == expected
+
+
+def test_find_names_returns_an_honest_empty_result(corpus):
+    assert find_names(
+        "nothing in this corpus at all", names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"]
+    ) == []
 
 
 def test_find_names_ranks_the_bigger_door_first_from_the_store(corpus):
@@ -409,41 +404,23 @@ def test_find_names_ranks_the_bigger_door_first_from_the_store(corpus):
     ]
 
 
-@pytest.mark.parametrize("limit", [10, 2])
-def test_get_name_says_the_same_thing_from_the_store_as_from_the_pages(corpus, pages_only, limit):
-    from_store = get_name(
-        "Ernest Gellner", limit, names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"]
+def test_get_name_resolves_from_the_store_uncapped(corpus):
+    page = get_name(
+        "Ernest Gellner", 10, names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"]
     )
-    from_pages = get_name(
-        "Ernest Gellner", limit, names_dir=corpus["names_dir"], vault_dir=pages_only
-    )
-    assert from_store == from_pages
-    assert from_store.member_count == 3
-    assert [member.chunk_id for member in from_store.members] == [
-        member.chunk_id for member in from_pages.members
-    ]
-    claims = {member.chunk_id: member.claim for member in from_store.members}
-    if A_NOTE_2 in claims:
-        assert claims[A_NOTE_2] == "A second passage from the same book."
+    assert page.member_count == 3
+    assert page.disagreement is None
+    assert [member.chunk_id for member in page.members] == [A_NOTE, A_NOTE_2, B_NOTE]
+    claims = {member.chunk_id: member.claim for member in page.members}
+    assert claims[A_NOTE_2] == "A second passage from the same book."
 
 
-def test_get_name_still_carries_the_gather_section_the_page_holds(corpus, pages_only):
-    """Gather appends its finding to the name page after Materialize has
-    already written the store, so the rendered page stays the one place that
-    finding lives."""
-    page = corpus["vault_dir"] / "names" / "Ernest Gellner.md"
-    page.write_text(
-        page.read_text(encoding="utf-8")
-        + "\n## What the authors here disagree about\n\nWhether nations are modern.\n"
-        + "\n**Runs between:** [[Ernest Gellner]]\n",
-        encoding="utf-8",
+def test_get_name_resolves_from_the_store_covers_every_source_when_capped(corpus):
+    """`limit` is a floor, not a ceiling (issue #802): two sources hold
+    Gellner's three notes (ALPHA twice, BETA once), so a `limit` of 2 must
+    still return one member from each, never truncate to a single source."""
+    page = get_name(
+        "Ernest Gellner", 2, names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"]
     )
-    shutil.copy(page, pages_only / "names" / "Ernest Gellner.md")
-
-    from_store = get_name(
-        "Ernest Gellner", names_dir=corpus["names_dir"], vault_dir=corpus["vault_dir"]
-    )
-    from_pages = get_name("Ernest Gellner", names_dir=corpus["names_dir"], vault_dir=pages_only)
-    assert from_store.disagreement is not None
-    assert from_store.disagreement.text == "Whether nations are modern."
-    assert from_store == from_pages
+    assert page.member_count == 3
+    assert {member.source_id for member in page.members} == {ALPHA, BETA}
