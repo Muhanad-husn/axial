@@ -239,6 +239,9 @@ class PopulationEntry:
     chunk_id: str
     source_id: str
     element_index: int = 0
+    # Issue #855: a map relation has no note of its own. Its key is
+    # `(from_position_id, to_position_id, relation)`, and `chunk_id` is "".
+    relation_key: tuple[str, str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -375,6 +378,9 @@ def read_column(
     silently. A record that never answered `column` (the key is absent)
     contributes to neither count: that is `is_abstention`'s own third
     state, a missing key rather than a refusal."""
+    if column == RELATION_COLUMN:
+        return read_relations(records)
+
     population: list[PopulationEntry] = []
     excluded = 0
     is_list_column = column in LIST_VALUED_COLUMNS
@@ -407,6 +413,146 @@ def read_column(
                 population.append(PopulationEntry(text, chunk_id, source_id))
 
     return population, excluded
+
+
+# ---------------------------------------------------------------------------
+# Issue #855: the argument map's relations as a column
+#
+# `relations.jsonl` (`axial.argmap.build`) holds one free-text `relation`
+# label and one `says` sentence per relation between two positions -- 1,472
+# relations under 504 labels on the 2026-09 pin. They are examined and built
+# through exactly the machinery above and below; only where the population
+# comes from, and what key an assignment is filed under, differ.
+# ---------------------------------------------------------------------------
+
+RELATION_COLUMN = "relation"
+RELATIONS_FILENAME = "relations.jsonl"
+POSITIONS_FILENAME = "positions.jsonl"
+
+
+class NoRelationsError(Exception):
+    """Raised when the relation column is asked for and no built map's
+    `relations.jsonl` can be found -- nothing to examine or assign."""
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def load_relation_records(relations_dir: Path) -> list[dict[str, Any]]:
+    """The relations under a built map's pin directory, each carrying a
+    `source_id`: the books on both of its ends, sorted and joined with `+`.
+    A relation has no book of its own, and the examine/build reports count
+    distinct sources per category, so a kind that recurs only between one
+    pair of books reads as one source there. `positions.jsonl` is optional;
+    without it every relation's `source_id` is empty."""
+    relations_path = Path(relations_dir) / RELATIONS_FILENAME
+    if not relations_path.is_file():
+        raise NoRelationsError(
+            f"no {RELATIONS_FILENAME} under {relations_dir} -- the relation column is read "
+            "from a built argument map; pass --relations-dir <data/map/<pin>> or run "
+            "`axial map build` first"
+        )
+    positions_path = Path(relations_dir) / POSITIONS_FILENAME
+    sources_by_id: dict[str, set[str]] = {}
+    if positions_path.is_file():
+        for position in _read_jsonl(positions_path):
+            sources_by_id[str(position.get("position_id"))] = set(position.get("sources") or [])
+
+    records: list[dict[str, Any]] = []
+    for relation in _read_jsonl(relations_path):
+        ends = sources_by_id.get(str(relation.get("from_position_id")), set()) | sources_by_id.get(
+            str(relation.get("to_position_id")), set()
+        )
+        records.append({**relation, "source_id": "+".join(sorted(ends))})
+    return records
+
+
+def read_relations(
+    relations: Sequence[Mapping[str, Any]],
+) -> tuple[list[PopulationEntry], int]:
+    """One `PopulationEntry` per relation, its value the label followed by
+    its `says` sentence (`"<label> -- <says>"`): most of the 504 labels occur
+    once, and the sentence is what lets a reader place them. A relation with
+    no usable label or ends, or one repeating a key already read, is
+    excluded and counted -- the key is what an assignment is filed under,
+    so two relations may not share one."""
+    population: list[PopulationEntry] = []
+    excluded = 0
+    seen: set[tuple[str, str, str]] = set()
+    for relation in relations:
+        src = relation.get("from_position_id")
+        dst = relation.get("to_position_id")
+        label = relation.get("relation")
+        if not all(isinstance(part, str) and part.strip() for part in (src, dst, label)):
+            excluded += 1
+            continue
+        key = (src, dst, label)
+        if key in seen:
+            excluded += 1
+            continue
+        seen.add(key)
+        says = relation.get("says")
+        text = " ".join(label.split())
+        if isinstance(says, str) and says.strip():
+            text = f"{text} -- {' '.join(says.split())}"
+        population.append(
+            PopulationEntry(
+                value=text,
+                chunk_id="",
+                source_id=str(relation.get("source_id", "")),
+                relation_key=key,
+            )
+        )
+    return population, excluded
+
+
+def _default_relations_dir(config_path: Path) -> Path:
+    """The pinned map directory for this corpus, the same one `axial map
+    ask` reads. Imported lazily: `axial.argmap` imports this module."""
+    from axial.argmap.ask import resolve_pinned_map_dir
+
+    resolved = resolve_pinned_map_dir(config_path=config_path)
+    if resolved is None:
+        raise NoRelationsError(
+            "no built argument map for the current corpus pin -- pass --relations-dir "
+            "<data/map/<pin>> or run `axial map build` first"
+        )
+    return resolved
+
+
+def _records_by_column(
+    columns: Sequence[str],
+    answers_dir: Path | None,
+    relations_dir: Path | None,
+    config_path: Path,
+) -> dict[str, list[dict[str, Any]]]:
+    """What each column's population is read from: the answer records for
+    an answer column, the map's relations for `relation`. Each source is
+    loaded only when a column asks for it."""
+    answer_records: list[dict[str, Any]] | None = None
+    relation_records: list[dict[str, Any]] | None = None
+    by_column: dict[str, list[dict[str, Any]]] = {}
+    for column in columns:
+        if column == RELATION_COLUMN:
+            if relation_records is None:
+                relation_records = load_relation_records(
+                    relations_dir
+                    if relations_dir is not None
+                    else _default_relations_dir(config_path)
+                )
+            by_column[column] = relation_records
+        else:
+            if answer_records is None:
+                if answers_dir is None:
+                    answers_dir = _default_answers_dir(config_path)
+                answer_records = load_answer_records(Path(answers_dir))
+            by_column[column] = answer_records
+    return by_column
 
 
 def draw_vocabulary_samples(
@@ -797,6 +943,7 @@ def examine_vocabulary(
     seed: int = 0,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
+    relations_dir: Path | None = None,
 ) -> VocabularyExamineStats:
     """The categorisation pass: for each of `columns`, its whole-column
     answered/distinct/excluded counts, then propose-then-assign-held-out
@@ -813,10 +960,12 @@ def examine_vocabulary(
     `axial.argmap.build.run_map_build` and `axial.gather.run_gather`
     already expose, so a unit test never makes a network call. Raises
     `SelfConsistencyError` before any call is made, for any column, when
-    `CHECK_PASS_NAME` resolves to the same model as `EXAMINE_PASS_NAME`."""
-    if answers_dir is None:
-        answers_dir = _default_answers_dir(config_path)
-    records = load_answer_records(Path(answers_dir))
+    `CHECK_PASS_NAME` resolves to the same model as `EXAMINE_PASS_NAME`.
+
+    The `relation` column (issue #855) reads the map's relations from
+    `relations_dir` (a built `data/map/<pin>/`, default the current pin)
+    instead of `answers_dir`."""
+    records_by_column = _records_by_column(columns, answers_dir, relations_dir, config_path)
 
     if client is None:
         client = get_client(config_path)
@@ -827,7 +976,16 @@ def examine_vocabulary(
         raise SelfConsistencyError(examine_model)
 
     columns_out = [
-        _examine_column(client, column, records, propose_n, assign_n, seed, examine_model, check_model)
+        _examine_column(
+            client,
+            column,
+            records_by_column[column],
+            propose_n,
+            assign_n,
+            seed,
+            examine_model,
+            check_model,
+        )
         for column in columns
     ]
     return VocabularyExamineStats(columns=columns_out)
@@ -1244,7 +1402,10 @@ def compute_answers_pin(population: Sequence[PopulationEntry]) -> str:
     file, which changes nothing about the content, does not move it
     either."""
     rendered = sorted(
-        [entry.chunk_id, entry.element_index, entry.value] for entry in population
+        [*entry.relation_key, entry.value]
+        if entry.relation_key is not None
+        else [entry.chunk_id, entry.element_index, entry.value]
+        for entry in population
     )
     canonical = json.dumps(rendered, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
@@ -1286,12 +1447,25 @@ def _manifest_reusable(
     )
 
 
-def _assignment_key(record: Mapping[str, Any]) -> tuple[str, int, int]:
-    return (
-        str(record.get("chunk_id", "")),
-        int(record.get("element_index", 0)),
-        int(record.get("level", ROOT_LEVEL)),
-    )
+def _assignment_key(record: Mapping[str, Any]) -> tuple[Any, ...]:
+    """What a persisted record is filed under: `(chunk_id, element_index,
+    level)` for an answer, `(from_position_id, to_position_id, relation,
+    level)` for a map relation (issue #855)."""
+    level = int(record.get("level", ROOT_LEVEL))
+    if "from_position_id" in record:
+        return (
+            str(record.get("from_position_id", "")),
+            str(record.get("to_position_id", "")),
+            str(record.get("relation", "")),
+            level,
+        )
+    return (str(record.get("chunk_id", "")), int(record.get("element_index", 0)), level)
+
+
+def _entry_key(entry: PopulationEntry, level: int) -> tuple[Any, ...]:
+    if entry.relation_key is not None:
+        return (*entry.relation_key, level)
+    return (entry.chunk_id, entry.element_index, level)
 
 
 def _read_assignment_records(path: Path) -> list[dict[str, Any]]:
@@ -1348,12 +1522,21 @@ def _record_for(
     `REFUSAL_TOKEN` -- and the key is written ONLY then, so every record
     that was assigned or genuinely refused keeps the bytes it had before
     this key existed and an artifact built earlier still round-trips
-    unchanged."""
+    unchanged.
+
+    A map relation (issue #855) is filed under its own three-part key in
+    place of `chunk_id`/`element_index`, and its free `relation` label stays
+    in the record beside the `category_id` it was filed under."""
+    identity: dict[str, Any]
+    if entry.relation_key is not None:
+        src, dst, label = entry.relation_key
+        identity = {"from_position_id": src, "to_position_id": dst, "relation": label}
+    else:
+        identity = {"chunk_id": entry.chunk_id, "element_index": entry.element_index}
     record: dict[str, Any] = {
-        "chunk_id": entry.chunk_id,
+        **identity,
         "source_id": entry.source_id,
         "column": column,
-        "element_index": entry.element_index,
         "level": level,
         "value": entry.value,
         "category_id": category_id,
@@ -1473,7 +1656,7 @@ def _build_column(
     reused_records: list[dict[str, Any]] = []
     pending: list[PopulationEntry] = []
     for entry in population:
-        prior = existing.get((entry.chunk_id, entry.element_index, ROOT_LEVEL))
+        prior = existing.get(_entry_key(entry, ROOT_LEVEL))
         if prior is not None and prior.get("value") == entry.value:
             reused_records.append(prior)
         else:
@@ -1598,6 +1781,7 @@ def build_vocabulary(
     force: bool = False,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
     client: LLMClient | None = None,
+    relations_dir: Path | None = None,
 ) -> VocabularyBuildStats:
     """Assign every answered value in each of `columns` against that
     column's frozen scheme in `scheme_path`, and persist the assignment
@@ -1629,7 +1813,12 @@ def build_vocabulary(
     `config/pipeline.yaml` to the same tier the examine pass uses: the same
     call against the same kind of scheme, so the tier is right, but its own
     cost line, because a build spends an order of magnitude more than the
-    sample pass it borrows its path from."""
+    sample pass it borrows its path from.
+
+    The `relation` column (issue #855) is read from `relations_dir` (a
+    built `data/map/<pin>/`, default the current pin) and filed under
+    `vocabulary_dir/relation/`, one record per relation keyed by
+    `(from_position_id, to_position_id, relation)`."""
     if columns is None:
         columns = scheme_columns(scheme_path)
 
@@ -1643,11 +1832,9 @@ def build_vocabulary(
                 "silently drop the rest of the committed scheme"
             )
 
-    if answers_dir is None:
-        answers_dir = _default_answers_dir(config_path)
     if vocabulary_dir is None:
         vocabulary_dir = VOCABULARY_DIR
-    records = load_answer_records(Path(answers_dir))
+    records_by_column = _records_by_column(columns, answers_dir, relations_dir, config_path)
 
     if client is None:
         client = get_client(config_path)
@@ -1655,11 +1842,34 @@ def build_vocabulary(
     return VocabularyBuildStats(
         columns=[
             _build_column(
-                client, column, schemes[column], records, Path(vocabulary_dir), workers, force
+                client,
+                column,
+                schemes[column],
+                records_by_column[column],
+                Path(vocabulary_dir),
+                workers,
+                force,
             )
             for column in columns
         ]
     )
+
+
+def relation_kind_examples(
+    scheme_path: Path = DEFAULT_VOCABULARY_SCHEME_PATH,
+) -> list[SchemeCategory]:
+    """The committed relation kinds the map build's relate prompt may offer
+    as examples (issue #855): every category BELOW the top level. The top
+    level is the Argument Interchange Format's three genera, which are the
+    standard's classes, not labels a reader of two arguments would coin --
+    offering "conflict" as an example label is DEC-47's D8 collapse risk in
+    its plainest form. No scheme file, no `relation` column, or a genera-
+    only scheme offers nothing, and the prompt stays as it was."""
+    try:
+        scheme = load_vocabulary_scheme(RELATION_COLUMN, scheme_path)
+    except VocabularySchemeError:
+        return []
+    return [category for category in scheme.categories if category.level > ROOT_LEVEL]
 
 
 def format_vocabulary_build_report(stats: VocabularyBuildStats) -> str:

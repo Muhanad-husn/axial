@@ -160,6 +160,7 @@ from axial.model_json import ModelJsonError, parse_model_json
 from axial.names import load_answer_records, load_back_matter_sections
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.pidguard import claim_single_instance
+from axial.vocabulary import SchemeCategory, relation_kind_examples
 
 # ---------------------------------------------------------------------------
 # Constants -- one block, each carrying the measurement that set it (issue
@@ -1072,6 +1073,28 @@ Rules:
 - **Most pairs have no relationship, and saying so costs nothing.** These arguments were grouped by wording, so many merely share a subject. Two arguments about the state are unrelated unless one bears on the other. Omit those pairs entirely -- do not invent a relation to fill the list.
 - Only relate arguments listed here, by their handles. Do not invent handles."""
 
+# Issue #855: the committed relation kinds reach the prompt as EXAMPLES of
+# labels readers of this corpus have coined before, never as a menu -- the
+# D8 rule (DEC-47) the interrogation frame follows. The "There is no list of
+# allowed relations" rule above stays and is restated here.
+RELATE_EXAMPLES_BLOCK = """
+
+For orientation only, some shapes that have recurred between arguments in this body of work are listed below. They are examples, not a menu: label what is actually there in your own words, and most relations will fit none of them.
+{examples}"""
+
+
+def render_relate_prompt(
+    listing: str, examples: Sequence[SchemeCategory] = ()
+) -> str:
+    """`RELATE_PROMPT` for one neighbourhood's `listing`, with the committed
+    relation kinds appended as examples when there are any. With none, the
+    prompt is byte-identical to what every earlier build sent."""
+    prompt = RELATE_PROMPT.format(positions=listing)
+    if examples:
+        lines = "\n".join(f"- {kind.name}: {kind.gloss}" for kind in examples)
+        prompt += RELATE_EXAMPLES_BLOCK.format(examples=lines)
+    return prompt
+
 
 def render_positions_blind(
     neighbourhood: Neighbourhood, by_id: dict[str, dict[str, Any]]
@@ -1091,6 +1114,7 @@ def relate_neighbourhood(
     by_id: dict[str, dict[str, Any]],
     client: LLMClient,
     pass_name: str = RELATE_PASS_NAME,
+    examples: Sequence[SchemeCategory] = (),
 ) -> dict[str, Any]:
     """One model call for `neighbourhood`. Returns a read record:
     `neighbourhood` (its own key), `positions` (members offered),
@@ -1114,7 +1138,7 @@ def relate_neighbourhood(
     dropped = 0
     try:
         parsed = parse_model_json(
-            client.complete(RELATE_PROMPT.format(positions=listing), pass_name=pass_name)
+            client.complete(render_relate_prompt(listing, examples), pass_name=pass_name)
         )
         for entry in parsed.get("relations") or []:
             src, dst = entry.get("from"), entry.get("to")
@@ -1144,6 +1168,7 @@ def run_relations(
     pass_name: str = RELATE_PASS_NAME,
     workers: int = WORKERS,
     log: Callable[[str], None] = print,
+    examples: Sequence[SchemeCategory] = (),
 ) -> list[dict[str, Any]]:
     """Run every neighbourhood in `neighbourhoods` through one relate call
     each, resumable by `Neighbourhood.key` via `reads_path` -- the same
@@ -1166,7 +1191,8 @@ def run_relations(
     if pending:
         with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
             futures = {
-                pool.submit(relate_neighbourhood, n, by_id, client, pass_name): n for n in pending
+                pool.submit(relate_neighbourhood, n, by_id, client, pass_name, examples): n
+                for n in pending
             }
             completed = 0
             for future in as_completed(futures):
@@ -1581,6 +1607,7 @@ def run_map_build(
         reads_path=relation_reads_path,
         workers=workers,
         log=log,
+        examples=relation_kind_examples(),
     )
 
     flat_relations = [relation for read in relation_reads for relation in read["relations"]]

@@ -188,7 +188,9 @@ from axial.vocabulary import (
     DEFAULT_ASSIGN_WORKERS,
     DEFAULT_PROPOSE_N,
     DEFAULT_VOCABULARY_SCHEME_PATH,
+    RELATION_COLUMN,
     VOCABULARY_COLUMNS,
+    NoRelationsError,
     SchemeVersionMismatchError,
     SelfConsistencyError,
     VocabularySchemeError,
@@ -636,10 +638,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vocabulary_examine_parser.add_argument(
         "--columns",
+        "--column",
+        dest="columns",
         default=None,
         help=(
             "comma-separated column names to examine (default: all twelve, "
-            f"{','.join(VOCABULARY_COLUMNS)})"
+            f"{','.join(VOCABULARY_COLUMNS)}); '{RELATION_COLUMN}' examines "
+            "the argument map's relations instead of an answer column (#855)"
+        ),
+    )
+    vocabulary_examine_parser.add_argument(
+        "--relations-dir",
+        default=None,
+        help=(
+            f"the built map directory the '{RELATION_COLUMN}' column reads "
+            "(data/map/<pin>/, default: the current corpus pin)"
         ),
     )
     vocabulary_examine_parser.add_argument(
@@ -682,11 +695,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vocabulary_build_parser.add_argument(
         "--columns",
+        "--column",
+        dest="columns",
         default=None,
         help=(
             "comma-separated column names to build (default: every column "
             "the frozen scheme file commits a scheme for -- widening the "
             "build is an edit to that file, not a code change)"
+        ),
+    )
+    vocabulary_build_parser.add_argument(
+        "--relations-dir",
+        default=None,
+        help=(
+            f"the built map directory the '{RELATION_COLUMN}' column reads "
+            "(data/map/<pin>/, default: the current corpus pin)"
         ),
     )
     vocabulary_build_parser.add_argument(
@@ -3083,7 +3106,11 @@ def _parse_vocabulary_columns(raw: str | None) -> list[str]:
 
 
 def _vocabulary_examine(
-    columns: str | None, propose_n: int | None, assign_n: int | None, answers_dir: str | None
+    columns: str | None,
+    propose_n: int | None,
+    assign_n: int | None,
+    answers_dir: str | None,
+    relations_dir: str | None = None,
 ) -> int:
     try:
         stats = examine_vocabulary(
@@ -3091,8 +3118,9 @@ def _vocabulary_examine(
             columns=_parse_vocabulary_columns(columns),
             propose_n=propose_n if propose_n is not None else DEFAULT_PROPOSE_N,
             assign_n=assign_n if assign_n is not None else DEFAULT_ASSIGN_N,
+            relations_dir=Path(relations_dir) if relations_dir is not None else None,
         )
-    except SelfConsistencyError as exc:
+    except (SelfConsistencyError, NoRelationsError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     _print_encoding_safe(format_vocabulary_report(stats))
@@ -3106,13 +3134,15 @@ def _vocabulary_build(
     answers_dir: str | None,
     workers: int,
     force: bool = False,
+    relations_dir: str | None = None,
 ) -> int:
     """Exit 1 on a scheme the operator has to fix, on a scheme-version
-    mismatch the operator has to decide about, and on a build that left a
-    value unanswered -- an unanswered value is a failed run, not a
-    result."""
+    mismatch the operator has to decide about, on a relation build with no
+    map to read, and on a build that left a value unanswered -- an
+    unanswered value is a failed run, not a result."""
     try:
         stats = build_vocabulary(
+            relations_dir=Path(relations_dir) if relations_dir is not None else None,
             answers_dir=Path(answers_dir) if answers_dir is not None else None,
             columns=_parse_vocabulary_columns(columns) if columns is not None else None,
             scheme_path=(
@@ -3124,7 +3154,7 @@ def _vocabulary_build(
             workers=workers,
             force=force,
         )
-    except (VocabularySchemeError, SchemeVersionMismatchError) as exc:
+    except (VocabularySchemeError, SchemeVersionMismatchError, NoRelationsError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     _print_encoding_safe(format_vocabulary_build_report(stats))
@@ -3723,7 +3753,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "vocabulary" and args.vocabulary_command == "examine":
         return _vocabulary_examine(
-            args.columns, args.propose_n, args.assign_n, args.answers_dir
+            args.columns, args.propose_n, args.assign_n, args.answers_dir, args.relations_dir
         )
 
     if args.command == "vocabulary" and args.vocabulary_command == "build":
@@ -3734,6 +3764,7 @@ def main(argv: list[str] | None = None) -> int:
             args.answers_dir,
             args.workers,
             args.force,
+            args.relations_dir,
         )
 
     if args.command == "names" and args.names_command == "merge":

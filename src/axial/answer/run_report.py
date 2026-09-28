@@ -645,6 +645,9 @@ def build_run_report(
             "latency_seconds": _latency(latency_by_pass or {}, model_by_pass),
             "trajectory": _trajectory_figures(trajectory),
             "evidence": _evidence_figures(evidence),
+            # Issue #855: which relation kinds the map corridor walked, or
+            # None on a run that did not order by kind.
+            "corridor_kinds": (record.get("map_retrieval") or {}).get("relation_kinds"),
         },
         "accuracy": {
             "attribution_completeness": _attribution_completeness(claims, vault_dir=vault_dir),
@@ -741,6 +744,16 @@ def format_run_report(report: dict[str, Any]) -> str:
         f"composed={evidence.get('composed_count')} "
         f"composed_share={_fmt(evidence.get('composed_share'))}"
     )
+    corridor_kinds = operational.get("corridor_kinds")
+    if corridor_kinds:
+        counts = " ".join(
+            f"{kind}={count}" for kind, count in (corridor_kinds.get("kind_counts") or {}).items()
+        )
+        lines.append(
+            f"  corridor: order={corridor_kinds.get('order')} "
+            f"scheme={corridor_kinds.get('scheme_version')} {counts} "
+            f"unassigned={corridor_kinds.get('unassigned')}"
+        )
 
     lines.append("  accuracy (four measures, never summed -- §10.0):")
     for name in (
