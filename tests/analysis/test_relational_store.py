@@ -98,9 +98,8 @@ def _build_fixture(root: Path) -> None:
             _answer(
                 A_NOTE_2,
                 ALPHA,
-                # Trailing whitespace on purpose: the name page's reader
-                # strips the whole member line, so the store has to say the
-                # same thing (10 real claims carry it).
+                # Trailing whitespace on purpose (10 real claims carry it):
+                # `get_name` must return the store's claim verbatim.
                 claim="A second passage from the same book. ",
                 names=[{"name": "Ernest Gellner", "kind": "person"}],
             ),
@@ -411,8 +410,11 @@ def test_get_name_resolves_from_the_store_uncapped(corpus):
     assert page.member_count == 3
     assert page.disagreement is None
     assert [member.chunk_id for member in page.members] == [A_NOTE, A_NOTE_2, B_NOTE]
+    # DEC-75 (issue #853): `get_name` reads `claim` straight off the store
+    # now, never round-tripped through a rendered-then-reparsed page line, so
+    # a trailing space the corpus actually wrote survives verbatim.
     claims = {member.chunk_id: member.claim for member in page.members}
-    assert claims[A_NOTE_2] == "A second passage from the same book."
+    assert claims[A_NOTE_2] == "A second passage from the same book. "
 
 
 def test_get_name_resolves_from_the_store_covers_every_source_when_capped(corpus):

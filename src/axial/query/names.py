@@ -808,6 +808,11 @@ def _name_page_from_store(
             source_id=source_id or None,
             author=author,
             year=date,
+            # The store's own `claim` column, read straight off `notes.db`
+            # (DEC-75, issue #853) -- never round-tripped through rendering a
+            # page's member line and re-splitting it, so trailing whitespace
+            # the corpus actually wrote survives verbatim instead of being
+            # silently stripped by that now-retired round trip.
             claim=_render_claim(claim),
         )
         for chunk_id, source_id, author, date, claim in note_store.name_members(
