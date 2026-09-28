@@ -316,8 +316,8 @@ def _record(claims: list[dict[str, Any]]) -> dict[str, Any]:
         "trajectory": [
             {
                 "step": 1,
-                "tool": "get_name",
-                "args": {"canonical": TILLY},
+                "tool": "get_chunk",
+                "args": {"chunk_id": TILLY_CHUNK},
                 "result_ids": [TILLY_CHUNK],
                 "result_count": 1,
             },
