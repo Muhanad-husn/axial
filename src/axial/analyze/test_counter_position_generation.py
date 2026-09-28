@@ -9,11 +9,10 @@ Covers issue #399's three acceptance scenarios (a contested brief with
 genuine opposing evidence produces `present: true` with resolvable grounds;
 a contested brief whose evidence is genuinely one-sided produces the
 disclosure; an uncontested brief requires neither and costs zero model
-calls), the anti-fabrication design (a response cannot ground the section in
-a real vault id that was never among the candidates offered), and #490's own
-two additions: the whitelist reaches a Gather finding's own member notes,
-and the empty-candidates disclosure states what is actually true of the path
-that fired rather than a false "nothing resolved".
+calls) and the anti-fabrication design (a response cannot ground the section
+in a real vault id that was never among the candidates offered). #490's own
+Gather-sourced addition (the whitelist reaching a Gather finding's own
+member notes) is retired along with Gather itself (DEC-75, issue #853).
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from axial.analyze.synthesis import (
 )
 from axial.brief.intake import Brief
 from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME
-from axial.query.names import DISAGREEMENT_HEADING
+from axial.query import store as note_store
 
 MAIN_CHUNK = "tilly-1978_001_intro_001"
 COUNTER_CHUNK = "skocpol-1979_001_intro_001"
@@ -111,27 +110,6 @@ def _write_vault(root: Path, chunks: list[dict[str, Any]]) -> Path:
         text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
         (prose_dir / f"{frontmatter['chunk_id']}.md").write_text(text, encoding="utf-8")
     return root / "vault"
-
-
-def _write_name_page(
-    vault_dir: Path, name: str, *, member_ids: list[str], disagreement: str | None = None
-) -> None:
-    names_dir = vault_dir / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {
-        "name": name,
-        "kind": "person",
-        "aliases": [],
-        "member_count": len(member_ids),
-    }
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1979): A claim." for chunk_id in member_ids]
-    if disagreement:
-        lines += ["", DISAGREEMENT_HEADING, "", disagreement]
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
-    )
 
 
 @pytest.fixture
@@ -466,91 +444,14 @@ def test_contested_brief_with_thin_opposing_evidence_produces_one_sided_disclosu
     assert result.section["grounds"] == []
 
 
-# ---------------------------------------------------------------------------
-# #490: the whitelist reaches a Gather finding's own member notes (D4)
-# ---------------------------------------------------------------------------
-
-
-def test_a_gather_finding_puts_its_own_member_notes_on_the_whitelist(
-    tmp_path: Path, names_dir: Path
-):
-    """Contested fires on path 2 alone -- no grounds note states an
-    opposition -- and the finding's page member notes are what the model may
-    cite. The finding's own TEXT is a pointer and is never offered (D4)."""
-    vault_dir = _write_vault(
-        tmp_path,
-        [
-            _tilly(arguing_against=[], names=[]),
-            _skocpol(arguing_against=[], names=[]),
-        ],
-    )
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=[COUNTER_CHUNK],
-        disagreement="SENTINEL_FINDING_TEXT: they disagree about what organization is for.",
-    )
-    claims = [_claim("c1", MAIN_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-    response = json.dumps(
-        {
-            "present": True,
-            "stance": "Skocpol's own note states the opposing account.",
-            "grounds": [{"ref_type": "chunk", "ref_id": COUNTER_CHUNK}],
-            "corpus_one_sided": False,
-            "one_sided_reason": None,
-        }
-    )
-    client = _ScriptedClient(response)
-
-    result = generate_counter_position(
-        claims,
-        _brief(),
-        client=client,
-        trajectory=[_get_name_call(SKOCPOL_AUTHOR)],
-        vault_dir=vault_dir,
-        names_dir=names_dir,
-    )
-
-    assert result.section["present"] is True
-    assert result.section["grounds"] == [{"ref_type": "chunk", "ref_id": COUNTER_CHUNK}]
-    prompt = client.calls[0][0]
-    assert COUNTER_CHUNK in prompt
-    assert "SENTINEL_FINDING_TEXT" not in prompt, (
-        "D4: a Gather finding is a retrieval hint, never quotable material"
-    )
-
-
-def test_the_empty_candidate_disclosure_never_claims_the_grounds_failed_to_resolve(
-    tmp_path: Path, names_dir: Path
-):
-    """The clause #490 owes §7.8. Contested fires on path 2 while the
-    whitelist finds nothing, and the old guard wrote "none of the underlying
-    grounds chunks resolved in the vault" -- which is false: they resolved
-    and simply carry no opposing position."""
-    vault_dir = _write_vault(tmp_path, [_tilly(arguing_against=[], names=[])])
-    # A page carrying a finding but no reachable member note of its own.
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=["not-a-real-chunk-id"],
-        disagreement="They disagree about what organization is for.",
-    )
-    claims = [_claim("c1", MAIN_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
-
-    result = generate_counter_position(
-        claims,
-        _brief(),
-        client=_ForbiddenClient(),
-        trajectory=[_get_name_call(SKOCPOL_AUTHOR)],
-        vault_dir=vault_dir,
-        names_dir=names_dir,
-    )
-
-    assert result.model_called is False
-    assert result.section["corpus_one_sided"] is True
-    reason = result.section["one_sided_reason"]
-    assert "resolved in the vault" not in reason
-    assert "recorded disagreement" in reason
+# Gather -- the only source of a `gather_disagreement` signal or a name's
+# disagreement section -- is retired (DEC-75, issue #853). The two tests
+# that lived here (`test_a_gather_finding_puts_its_own_member_notes_on_the_
+# whitelist`, `test_the_empty_candidate_disclosure_never_claims_the_grounds_
+# failed_to_resolve`) exercised behavior that no longer exists:
+# `NamePage.disagreement` is always `None` now, so `gather_disagreement` can
+# never fire and the whitelist's Gather-sourced fourth candidate source is
+# gone (`_counter_position_candidates`, `axial.analyze.synthesis`).
 
 
 # ---------------------------------------------------------------------------
@@ -693,22 +594,46 @@ def test_present_response_with_empty_grounds_is_rejected(
 
 
 def test_the_candidate_pool_is_capped(tmp_path: Path, names_dir: Path):
-    """A name page's member list is unbounded on the real corpus (`Syria`
-    alone has 962). The cap keeps one prompt bounded; the run's own grounds
-    notes are ordered first, so what it ever drops is the vault-wide tail."""
+    """A name's `arguing_against_notes` is unbounded on the real corpus
+    (`Syria` alone has 962 members). The cap keeps one prompt bounded; the
+    run's own grounds notes are ordered first, so what it ever drops is the
+    vault-wide tail. DEC-75 (issue #853): this used to come from a name
+    page's member list; the store's `note_arguing_against` table is the
+    replacement source, and item 2 (a grounds note naming an unpaired
+    opponent) is what fires `contested` here -- `gather_disagreement`, the
+    signal the old version of this test used, is retired along with Gather."""
     members = [f"skocpol-1979_{index:03d}_body_001" for index in range(40)]
     vault_dir = _write_vault(
         tmp_path,
         [_tilly(arguing_against=[], names=[])]
-        + [_skocpol(chunk_id=member, arguing_against=[], names=[]) for member in members],
+        + [
+            _skocpol(
+                chunk_id=member,
+                arguing_against=["Some Absent Scholar"] if member == members[0] else [],
+                names=[],
+            )
+            for member in members
+        ],
     )
-    _write_name_page(
-        vault_dir,
-        SKOCPOL_AUTHOR,
-        member_ids=members,
-        disagreement="They disagree about what organization is for.",
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=[("skocpol-1979", SKOCPOL_AUTHOR, "States and Social Revolutions", "1979", 1979)],
+        notes=[(member, "skocpol-1979", "Body", None, "A claim.", None, 0) for member in members],
+        names=[(TILLY_AUTHOR, "person", TILLY_AUTHOR.casefold())],
+        note_names=[],
+        # Every member argues against Tilly (`resolved_canonical`), ordered
+        # by chunk_id so the first `MAX_COUNTER_POSITION_CANDIDATES` rows
+        # this store query returns are `members[0:20]`.
+        note_arguing_against=[
+            (member, "skocpol-1979", TILLY_AUTHOR, TILLY_AUTHOR) for member in members
+        ],
+        note_citations=[],
     )
-    claims = [_claim("c1", MAIN_CHUNK, names_touched=[SKOCPOL_AUTHOR])]
+    # `members[0]` is both a grounds note (item 2 fires `names_opponent` on
+    # its own unrelated `arguing_against`) and the first of the 40 the store
+    # query returns for item 3 -- so it occupies one slot, not two, and the
+    # cap still lands on exactly `MAX_COUNTER_POSITION_CANDIDATES` members.
+    claims = [_claim("c1", MAIN_CHUNK, members[0], names_touched=[TILLY_AUTHOR])]
     response = json.dumps(
         {
             "present": True,
@@ -724,7 +649,7 @@ def test_the_candidate_pool_is_capped(tmp_path: Path, names_dir: Path):
         claims,
         _brief(),
         client=client,
-        trajectory=[_get_name_call(SKOCPOL_AUTHOR)],
+        trajectory=[_get_name_call(TILLY_AUTHOR)],
         vault_dir=vault_dir,
         names_dir=names_dir,
     )

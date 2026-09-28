@@ -609,11 +609,9 @@ def test_pass_worker_defaults_are_concurrent_by_default():
     DEFAULT, not only when an operator remembers a flag."""
     import axial.argmap.build as argmap_build
     import axial.argmap.residue as argmap_residue
-    import axial.gather as gather_mod
     import axial.merge_names as merge_mod
 
     assert interrogate_mod.DEFAULT_WORKERS == 12
-    assert gather_mod.DEFAULT_WORKERS == 48
     assert argmap_build.WORKERS == 40
     assert argmap_residue.WORKERS == argmap_build.WORKERS
     assert merge_mod.DEFAULT_WORKERS == 36

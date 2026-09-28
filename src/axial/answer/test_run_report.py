@@ -27,6 +27,7 @@ from axial.answer.run_report import (
     persist_run_report,
 )
 from axial.eval.classification import SourceClassification
+from axial.query import store as note_store
 
 TILLY = "Charles Tilly"
 
@@ -452,6 +453,58 @@ def test_a_claim_whose_grounds_do_not_resolve_fails_attribution_completeness(tmp
     entry = report["accuracy"]["attribution_completeness"]
     assert entry["value"] == 0.0
     assert entry["failing_claim_ids"]
+
+
+# -- name_reach: counted from note_names, not a name page (DEC-75, #853) ---------
+
+
+def test_name_reach_names_touched_counts_distinct_names_not_pages(tmp_path):
+    """DEC-75 (issue #853): `name_reach`'s count key is `names_touched`, not
+    the retired `name_pages_touched` -- it was always just a distinct count
+    of `claims[].names_touched`, never a page read, so the rename is the
+    only change. `disagreement_reuse` (Gather's own figure) no longer
+    exists in the report at all: Gather is retired, so there is no finding
+    left for a run to reach."""
+    _write_chunk(tmp_path / "prose", "tilly_0_a_001")
+    claims = [
+        _claim("a", ["tilly_0_a_001"], names=[TILLY]),
+        _claim("b", ["tilly_0_a_001"], names=[TILLY, "Asef Bayat"]),
+    ]
+    report = build_run_report(_minimal_record(claims), vault_dir=tmp_path)
+
+    quality = report["response_quality"]
+    assert quality["name_reach"]["names_touched"] == 2
+    assert "name_pages_touched" not in quality["name_reach"]
+    assert "disagreement_reuse" not in quality
+
+
+def test_name_reach_grounds_notes_in_a_covered_name_reads_the_store_not_a_page(tmp_path):
+    """The §7.7 coverage-map membership `name_reach` scores grounds notes
+    against is answered from `notes.db` (`axial.query.store.name_members`)
+    now, never a `<vault_dir>/names/*.md` page (DEC-75, issue #853) -- this
+    vault fixture writes no such page at all, only a store, and the count
+    still resolves."""
+    _write_chunk(tmp_path / "prose", "tilly_0_a_001")
+    note_store.write_store(
+        note_store.store_path(tmp_path),
+        sources=[("tilly-1978", "Charles Tilly", "T", "1978", 1978)],
+        notes=[("tilly_0_a_001", "tilly-1978", "A Section", None, "A claim.", None, 0)],
+        names=[(TILLY, "person", TILLY.casefold())],
+        note_names=[("tilly_0_a_001", "tilly-1978", TILLY, "person")],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+    assert not (tmp_path / "names").exists()
+
+    record = _minimal_record([_claim("a", ["tilly_0_a_001"], names=[TILLY])])
+    record["coverage_map"] = {TILLY: {"corpus_note_count": 1, "coverage_band": "thin"}}
+    report = build_run_report(record, vault_dir=tmp_path)
+
+    name_reach = report["response_quality"]["name_reach"]
+    assert name_reach["names_in_coverage_scope"] == 1
+    assert name_reach["grounds_notes_in_a_covered_name"] == 1
+    assert name_reach["grounds_note_count"] == 1
+    assert name_reach["share"] == 1.0
 
 
 # -- persistence + rendering -------------------------------------------------------

@@ -240,9 +240,12 @@ CLAIM_KINDS = ("a", "b", "c")
 
 # The one arm name `run_sweep` gives real meaning to today (module
 # docstring's "named arms" section) -- not a whitelist, since any other
-# string is still accepted and simply runs the name-layer default.
+# string is still accepted and forwarded to `run_brief`, which owns
+# `KNOWN_ARMS` and refuses one it does not recognise. The name-layer arm
+# this used to default to was retired with the vault's name pages (DEC-75,
+# issue #853); the default is now the map walk.
 MAP_ARM = "map"
-DEFAULT_ARM = "name"
+DEFAULT_ARM = "map"
 
 # The mixed-arm-refusal marker's filename, written into `sweep_dir` itself
 # (module docstring).
@@ -746,13 +749,12 @@ def run_sweep(
     `arm` (issue #808, module docstring's "named arms" section) is the
     retrieval arm every draw runs through, recorded verbatim on each
     `DrawOutcome` and on the returned `SweepSummary`. `None` (the default)
-    falls back to `"map"` when `use_map=True` is still given (the legacy
-    knob `axial.brief.smoke.run_smoke` calls this with) or `"name"`
-    otherwise; when `arm` is given, it takes precedence over `use_map`.
-    Only `arm == "map"` changes what actually runs today -- any other
-    string, including one no arm elsewhere has given meaning to yet, runs
-    the name-layer default; this function holds no whitelist of valid arm
-    names and never rejects one. A `sweep_dir` already holding draws from a
+    falls back to `"map"`, whether or not the legacy `use_map` knob
+    (`axial.brief.smoke.run_smoke` still calls this with it) is given --
+    the name-layer arm it used to distinguish from was retired with the
+    vault's name pages (DEC-75, issue #853). This function holds no
+    whitelist of valid arm names itself; `run_brief` (`KNOWN_ARMS`) rejects
+    one it does not recognise. A `sweep_dir` already holding draws from a
     different arm than the one requested here raises `SweepError` naming
     the arm already there, before any draw is attempted.
 

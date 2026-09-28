@@ -1,11 +1,14 @@
 """Inner unit tests for the §7.13 source-usage disclosure (issues #265 and
 #491). The outer acceptance test lives at tests/analysis/test_source_usage.py.
 
-The `filters_observed` half of this contract is **struck** (§7.13, D1): the
-two tools it drew from are deleted with the facets they filtered, so those
-tests pinned a field no trajectory can carry. They are re-pointed at
-`names_queried` and the denominator it now feeds -- same rule (a filter
-travels with its tool), same dedupe key, real substrate.
+**Re-pointed at the store (DEC-75, issue #853).** The trajectory-driven
+`names_queried`/denominator mechanism this file used to test (name-layer
+tool calls, `where_names_meet` pairs, name pages) is retired along with the
+name pages it read: the map arm makes no name-layer tool call, so
+`trajectory` can never again carry a name query. `names_queried` is now the
+union of each claim's own `names_touched` (§7.3), and the denominator is
+read off a `notes.db` store (`axial.query.store.doors`/`concept_sources`)
+built directly in these fixtures, never a name page.
 """
 
 from __future__ import annotations
@@ -15,7 +18,12 @@ import json
 import pytest
 import yaml
 
-from axial.answer.source_usage import compute_source_usage, derive_names_queried
+from axial.answer.source_usage import (
+    NAMES_TOUCHED_LABEL,
+    compute_source_usage,
+    derive_names_queried,
+)
+from axial.query import store as note_store
 
 TILLY = "Charles Tilly"
 BAYAT = "Asef Bayat"
@@ -37,17 +45,6 @@ def _write_chunk_note(prose_dir, chunk_id, **overrides):
     frontmatter.update(overrides)
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
-
-
-def _write_name_page(names_dir, name, member_ids):
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {"name": name, "kind": "person", "aliases": [], "member_count": len(member_ids)}
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1978): A claim." for chunk_id in member_ids]
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\n" + "\n".join(lines) + "\n",
-        encoding="utf-8",
-    )
 
 
 def _write_artifact_note(artifacts_dir, artifact_id, *, source_id, **overrides):
@@ -72,27 +69,10 @@ def _artifact_ground(artifact_id):
     return {"ref_type": "artifact", "ref_id": artifact_id}
 
 
-def _name_call(step, tool, args):
-    return {"step": step, "tool": tool, "args": args, "result_ids": [], "result_count": 0}
-
-
-def _where_names_meet_call(step, canonical, other, *, result_count=0, result_ids=None):
-    """A `where_names_meet` trajectory entry, persisted with whatever the
-    real tool call would have capped `result_count`/`result_ids` to -- the
-    denominator must re-query the true size rather than trust these."""
-    return {
-        "step": step,
-        "tool": "where_names_meet",
-        "args": {"canonical": canonical, "other": other},
-        "result_ids": result_ids or [],
-        "result_count": result_count,
-    }
-
-
-def _record(*, claims, trajectory, disposition="proceed", brief=None):
+def _record(*, claims, disposition="proceed", brief=None):
     record = {
         "claims": claims,
-        "trajectory": trajectory,
+        "trajectory": [],
         "interrogation": {"disposition": disposition},
     }
     if brief is not None:
@@ -100,91 +80,62 @@ def _record(*, claims, trajectory, disposition="proceed", brief=None):
     return record
 
 
-# -- names_queried derivation -------------------------------------------------
+def _write_store(vault_dir, *, member_ids_by_name: dict, source_by_chunk: dict):
+    """A minimal `notes.db` under `vault_dir`: one `names` row per key of
+    `member_ids_by_name`, one `note_names` row per (chunk_id, name) pair, and
+    one `notes`/`sources` row per distinct chunk_id/source_id -- exactly what
+    `axial.query.store.doors`/`concept_sources` join over."""
+    source_ids = sorted(set(source_by_chunk.values()))
+    seen_chunks: set[str] = set()
+    notes_rows = []
+    note_names_rows = []
+    for name, chunk_ids in member_ids_by_name.items():
+        for chunk_id in chunk_ids:
+            source_id = source_by_chunk[chunk_id]
+            if chunk_id not in seen_chunks:
+                notes_rows.append((chunk_id, source_id, "A Section", None, "A claim.", None))
+                seen_chunks.add(chunk_id)
+            note_names_rows.append((chunk_id, source_id, name, "person"))
+    names_rows = [(name, "person", name.casefold()) for name in member_ids_by_name]
+    source_rows = [(source_id, "An Author", "A Title", "1978", 1978) for source_id in source_ids]
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=source_rows,
+        notes=notes_rows,
+        names=names_rows,
+        note_names=note_names_rows,
+        note_arguing_against=[],
+        note_citations=[],
+    )
 
 
-def test_names_queried_is_the_union_of_the_name_layer_calls():
-    trajectory = [
-        _name_call(1, "find_names", {"query": "Tilly"}),
-        _name_call(2, "get_name", {"canonical": TILLY}),
-        _name_call(3, "who_cites", {"canonical": TILLY}),
-    ]
-    assert derive_names_queried(trajectory) == [
-        {"tool": "find_names", "args": {"query": "Tilly"}},
-        {"tool": "get_name", "args": {"canonical": TILLY}},
-        {"tool": "who_cites", "args": {"canonical": TILLY}},
-    ]
+# -- names_queried derivation (DEC-75: read off claims, not trajectory) -------
 
 
-def test_the_same_canonical_under_two_tools_stays_two_entries():
-    """The #265 rule, unchanged: a filter travels with its tool. Reaching a
-    name through `who_argues_against` is a different query from reading its
-    page, so collapsing them would re-run the wrong tool."""
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": TILLY}),
-        _name_call(2, "who_argues_against", {"canonical": TILLY}),
-    ]
-    assert len(derive_names_queried(trajectory)) == 2
-
-
-def test_names_queried_deduplicates_repeated_calls():
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": TILLY}),
-        _name_call(2, "get_name", {"canonical": TILLY}),
-    ]
-    assert derive_names_queried(trajectory) == [{"tool": "get_name", "args": {"canonical": TILLY}}]
-
-
-def test_names_queried_is_deterministic_and_sorts_arg_keys():
-    trajectory = [
-        _name_call(1, "get_name", {"limit": 5, "canonical": TILLY}),
-        _name_call(2, "find_names", {"query": "Bayat"}),
-    ]
-    first = derive_names_queried(trajectory)
-    assert first == derive_names_queried(trajectory)
-    assert list(first[0]["args"]) == ["canonical", "limit"]
-
-
-def test_a_relational_tool_records_the_canonical_it_resolved_not_the_phrase():
-    """Issue #650: `find_notes`/`positions_on` take a phrase the model wrote
-    and resolve it themselves, so the raw argument is not a name. The
-    canonical they landed on is recorded under `canonical`, the key the
-    name-layer entries already use, and the tool still travels with it."""
-    trajectory = [
-        {**_name_call(1, "find_notes", {"about": "the modern state"}), "resolved_name": TILLY},
-        {**_name_call(2, "positions_on", {"name": "Bayat"}), "resolved_name": BAYAT},
-    ]
-    assert derive_names_queried(trajectory) == [
-        {"tool": "find_notes", "args": {"canonical": TILLY}},
-        {"tool": "positions_on", "args": {"canonical": BAYAT}},
+def test_names_queried_is_the_union_of_names_touched():
+    claims = [{"names_touched": [TILLY]}, {"names_touched": [BAYAT]}]
+    assert derive_names_queried(claims) == [
+        {"tool": NAMES_TOUCHED_LABEL, "args": {"canonical": BAYAT}},
+        {"tool": NAMES_TOUCHED_LABEL, "args": {"canonical": TILLY}},
     ]
 
 
-def test_two_phrases_that_reach_the_same_name_are_one_query():
-    """The point of recording the RESOLVED canonical rather than the query
-    string: `names_queried` is what §7.13's cross-run report joins on, and
-    two spellings of the same door are the same query."""
-    trajectory = [
-        {**_name_call(1, "find_notes", {"about": "Tilly"}), "resolved_name": TILLY},
-        {**_name_call(2, "find_notes", {"about": "state making as war"}), "resolved_name": TILLY},
-    ]
-    assert derive_names_queried(trajectory) == [
-        {"tool": "find_notes", "args": {"canonical": TILLY}}
+def test_names_queried_deduplicates_a_name_touched_by_two_claims():
+    claims = [{"names_touched": [TILLY]}, {"names_touched": [TILLY]}]
+    assert derive_names_queried(claims) == [
+        {"tool": NAMES_TOUCHED_LABEL, "args": {"canonical": TILLY}}
     ]
 
 
-def test_a_relational_call_that_resolved_nothing_records_nothing():
-    trajectory = [{**_name_call(1, "find_notes", {"about": "zzqqx"}), "resolved_name": None}]
-    assert derive_names_queried(trajectory) == []
+def test_names_queried_is_deterministic_and_ascending():
+    claims = [{"names_touched": [TILLY, BAYAT]}]
+    first = derive_names_queried(claims)
+    assert first == derive_names_queried(claims)
+    assert [entry["args"]["canonical"] for entry in first] == [BAYAT, TILLY]
 
 
-def test_non_name_tools_contribute_nothing_to_names_queried():
-    trajectory = [
-        _name_call(1, "get_chunk", {"chunk_id": "x_0_a_001"}),
-        _name_call(2, "query_by_source", {"source_id": "x"}),
-        _name_call(3, "get_envelope", {"source_id": "x"}),
-    ]
-    assert derive_names_queried(trajectory) == []
+def test_a_claim_with_no_names_touched_contributes_nothing():
+    assert derive_names_queried([{"names_touched": []}, {}]) == []
 
 
 # -- source_id resolution ------------------------------------------------------
@@ -192,7 +143,7 @@ def test_non_name_tools_contribute_nothing_to_names_queried():
 
 def test_evidence_fold_resolves_chunk_grounds_by_parsing_the_chunk_id(tmp_path):
     _write_chunk_note(tmp_path / "prose", "tilly_0_intro_001")
-    record = _record(claims=[{"grounds": [_chunk_ground("tilly_0_intro_001")]}], trajectory=[])
+    record = _record(claims=[{"grounds": [_chunk_ground("tilly_0_intro_001")]}])
 
     result = compute_source_usage(record, vault_dir=tmp_path)
     assert [s["source_id"] for s in result["sources"]] == ["tilly"]
@@ -200,7 +151,7 @@ def test_evidence_fold_resolves_chunk_grounds_by_parsing_the_chunk_id(tmp_path):
 
 def test_evidence_fold_resolves_artifact_grounds_via_artifact_frontmatter(tmp_path):
     _write_artifact_note(tmp_path / "artifacts", "artifact-001", source_id="gellner")
-    record = _record(claims=[{"grounds": [_artifact_ground("artifact-001")]}], trajectory=[])
+    record = _record(claims=[{"grounds": [_artifact_ground("artifact-001")]}])
 
     result = compute_source_usage(record, vault_dir=tmp_path)
     assert [s["source_id"] for s in result["sources"]] == ["gellner"]
@@ -214,7 +165,7 @@ def test_evidence_fold_counts_a_chunk_cited_by_two_claims_once():
         {"grounds": [_chunk_ground("tilly_0_a_001")]},
         {"grounds": [_chunk_ground("tilly_0_a_001"), _chunk_ground("tilly_0_a_002")]},
     ]
-    result = compute_source_usage(_record(claims=claims, trajectory=[]), vault_dir=None)
+    result = compute_source_usage(_record(claims=claims), vault_dir=None)
     tilly = result["sources"][0]
     assert tilly["evidence_chunk_count"] == 2
     assert tilly["evidence_share"] == 1.0
@@ -230,29 +181,30 @@ def test_evidence_share_sums_to_one_across_sources():
             ]
         }
     ]
-    result = compute_source_usage(_record(claims=claims, trajectory=[]), vault_dir=None)
+    result = compute_source_usage(_record(claims=claims), vault_dir=None)
     assert sum(s["evidence_share"] for s in result["sources"]) == pytest.approx(1.0)
 
 
-# -- the denominator, re-based onto the names queried (#491) -------------------
+# -- the denominator, read off the store (DEC-75) ------------------------------
 
 
-def test_available_count_is_the_union_of_member_notes_across_the_names_queried(tmp_path):
+def test_available_count_is_the_sum_across_the_names_touched(tmp_path):
     """§7.13's stated analogue: a source the run under-drew on still gets an
     honest, non-zero denominator when the corpus held it."""
-    prose = tmp_path / "prose"
-    for chunk_id in ("tilly_0_a_001", "tilly_0_a_002", "bayat_0_a_001"):
-        _write_chunk_note(prose, chunk_id)
-    names = tmp_path / "names"
-    _write_name_page(names, TILLY, ["tilly_0_a_001", "tilly_0_a_002"])
-    _write_name_page(names, BAYAT, ["bayat_0_a_001"])
-
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": TILLY}),
-        _name_call(2, "get_name", {"canonical": BAYAT}),
-    ]
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
+    _write_store(
+        tmp_path,
+        member_ids_by_name={
+            TILLY: ["tilly_0_a_001", "tilly_0_a_002"],
+            BAYAT: ["bayat_0_a_001"],
+        },
+        source_by_chunk={
+            "tilly_0_a_001": "tilly",
+            "tilly_0_a_002": "tilly",
+            "bayat_0_a_001": "bayat",
+        },
+    )
+    claims = [{"names_touched": [TILLY, BAYAT], "grounds": [_chunk_ground("tilly_0_a_001")]}]
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
     assert result["denominator_by_name"] == {TILLY: 2, BAYAT: 1}
     tilly = result["sources"][0]
@@ -263,24 +215,21 @@ def test_available_count_is_the_union_of_member_notes_across_the_names_queried(t
     assert tilly["usage_ratio"] == pytest.approx(1.5)
 
 
-def test_a_note_that_is_a_member_of_two_queried_names_counts_once(tmp_path):
-    prose = tmp_path / "prose"
-    _write_chunk_note(prose, "tilly_0_a_001")
-    names = tmp_path / "names"
-    _write_name_page(names, TILLY, ["tilly_0_a_001"])
-    _write_name_page(names, BAYAT, ["tilly_0_a_001"])
+def test_a_note_that_is_a_member_of_two_touched_names_is_summed_once_per_name(tmp_path):
+    """DEC-75's own disclosed change from the retired chunk-level union
+    (module docstring, `axial.answer.source_usage`): a note naming two
+    touched names is counted once per name, not once overall."""
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: ["tilly_0_a_001"], BAYAT: ["tilly_0_a_001"]},
+        source_by_chunk={"tilly_0_a_001": "tilly"},
+    )
+    claims = [{"names_touched": [TILLY, BAYAT], "grounds": [_chunk_ground("tilly_0_a_001")]}]
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": TILLY}),
-        _name_call(2, "who_cites", {"canonical": BAYAT}),
-    ]
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
-
-    # Both pages contribute the same note; the union holds it once, so the
-    # source's available share is 1.0 rather than a double-counted 0.5.
     assert result["denominator_by_name"] == {TILLY: 1, BAYAT: 1}
-    assert result["sources"][0]["available_chunk_count"] == 1
+    # Summed across both touched names, not de-duplicated to 1.
+    assert result["sources"][0]["available_chunk_count"] == 2
     assert result["sources"][0]["available_share"] == 1.0
 
 
@@ -289,152 +238,48 @@ def test_the_per_name_contribution_is_disclosed_so_a_hub_name_is_visible(tmp_pat
     prose notes). The per-name contribution is recorded so a denominator
     inflated by one name is legible as data, not only in the ratios it
     flattens."""
-    prose = tmp_path / "prose"
     hub_members = [f"hub_0_a_{i:03d}" for i in range(20)]
-    for chunk_id in [*hub_members, "tilly_0_a_001"]:
-        _write_chunk_note(prose, chunk_id)
-    names = tmp_path / "names"
-    _write_name_page(names, "Syria", hub_members)
-    _write_name_page(names, TILLY, ["tilly_0_a_001"])
-
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": "Syria"}),
-        _name_call(2, "get_name", {"canonical": TILLY}),
-    ]
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
+    source_by_chunk = {chunk_id: "hub" for chunk_id in hub_members}
+    source_by_chunk["tilly_0_a_001"] = "tilly"
+    _write_store(
+        tmp_path,
+        member_ids_by_name={"Syria": hub_members, TILLY: ["tilly_0_a_001"]},
+        source_by_chunk=source_by_chunk,
+    )
+    claims = [{"names_touched": ["Syria", TILLY], "grounds": [_chunk_ground("tilly_0_a_001")]}]
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
     assert result["denominator_by_name"] == {"Syria": 20, TILLY: 1}
 
 
-def test_a_page_over_the_default_limit_is_counted_in_full(tmp_path):
-    """`get_name`'s members are capped at `DEFAULT_LIMIT` (10, issue #505),
-    which a denominator cannot accept: a member past the cap would silently
-    shrink the corpus."""
-    prose = tmp_path / "prose"
-    members = [f"tilly_0_a_{i:03d}" for i in range(25)]
-    for chunk_id in members:
-        _write_chunk_note(prose, chunk_id)
-    _write_name_page(tmp_path / "names", TILLY, members)
-
-    trajectory = [_name_call(1, "get_name", {"canonical": TILLY})]
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_000")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
-
-    assert result["denominator_by_name"] == {TILLY: 25}
-    assert result["sources"][0]["available_chunk_count"] == 25
-
-
-# -- where_names_meet: pair-keyed, re-queried, additive (issue #550) ---------
-
-
-def test_an_intersection_alone_credits_only_the_pair_with_its_true_size(tmp_path):
-    """Issue #550's own first acceptance scenario: a trajectory with one
-    `where_names_meet` and no other name query puts the pair's TRUE size in
-    the denominator -- and nothing under either name alone, since neither
-    page was read as a whole here."""
-    prose = tmp_path / "prose"
-    shared = [f"shared_0_a_{i:03d}" for i in range(3)]
-    for chunk_id in shared:
-        _write_chunk_note(prose, chunk_id)
-    names = tmp_path / "names"
-    _write_name_page(names, TILLY, shared)
-    _write_name_page(names, BAYAT, shared)
-
-    trajectory = [_where_names_meet_call(1, TILLY, BAYAT, result_count=3, result_ids=shared)]
-    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
-
-    assert result["denominator_by_name"] == {f"{BAYAT} & {TILLY}": 3}
-
-
-def test_a_directly_queried_name_keeps_its_full_page_and_the_pair_is_added_alongside(tmp_path):
-    """Issue #550's own second acceptance scenario: `get_name('Syria')` plus
-    `where_names_meet('Syria', 'paramilitarism')` keeps Syria's full page
-    count unchanged and adds the pair as an ADDITIONAL entry, never a
-    replacement."""
-    prose = tmp_path / "prose"
-    syria_only = [f"syria_0_a_{i:03d}" for i in range(5)]
-    shared = [f"shared_0_a_{i:03d}" for i in range(2)]
-    for chunk_id in [*syria_only, *shared]:
-        _write_chunk_note(prose, chunk_id)
-    names = tmp_path / "names"
-    _write_name_page(names, "Syria", [*syria_only, *shared])
-    _write_name_page(names, "paramilitarism", shared)
-
-    trajectory = [
-        _name_call(1, "get_name", {"canonical": "Syria"}),
-        _where_names_meet_call(2, "Syria", "paramilitarism", result_count=2, result_ids=shared),
-    ]
-    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
-
-    assert result["denominator_by_name"]["Syria"] == 7
-    assert result["denominator_by_name"]["Syria & paramilitarism"] == 2
-    assert "paramilitarism" not in result["denominator_by_name"], (
-        "the name reached ONLY as the intersection's other half must not get its own "
-        "whole-page entry"
+def test_a_touched_name_with_no_door_contributes_nothing(tmp_path):
+    """A canonical the store carries no door for is simply absent from the
+    denominator, never a fabricated 0 or a raised error."""
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: ["tilly_0_a_001"]},
+        source_by_chunk={"tilly_0_a_001": "tilly"},
     )
-
-
-def test_the_pairs_true_size_is_re_queried_not_the_capped_persisted_result_count(tmp_path):
-    """`result_count` on the persisted step is the capped `limit` (the tool
-    caps at `DEFAULT_LIMIT`, 10), never the true intersection size -- the
-    denominator must re-query it fresh rather than trust the trajectory."""
-    prose = tmp_path / "prose"
-    shared = [f"shared_0_a_{i:03d}" for i in range(12)]  # exceeds DEFAULT_LIMIT (10)
-    for chunk_id in shared:
-        _write_chunk_note(prose, chunk_id)
-    names = tmp_path / "names"
-    _write_name_page(names, TILLY, shared)
-    _write_name_page(names, BAYAT, shared)
-
-    # Mirrors what the real tool call would have persisted: capped at 10.
-    trajectory = [_where_names_meet_call(1, TILLY, BAYAT, result_count=10, result_ids=shared[:10])]
-    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
-
-    key = f"{BAYAT} & {TILLY}"
-    assert result["denominator_by_name"][key] == 12, "must re-query the TRUE size, not result_count"
-
-
-def test_the_same_pair_with_swapped_arguments_is_one_entry(tmp_path):
-    prose = tmp_path / "prose"
-    shared = ["shared_0_a_000"]
-    _write_chunk_note(prose, shared[0])
-    names = tmp_path / "names"
-    _write_name_page(names, TILLY, shared)
-    _write_name_page(names, BAYAT, shared)
-
-    trajectory = [
-        _where_names_meet_call(1, TILLY, BAYAT, result_count=1, result_ids=shared),
-        _where_names_meet_call(2, BAYAT, TILLY, result_count=1, result_ids=shared),
+    claims = [
+        {"names_touched": [TILLY, "Nobody"], "grounds": [_chunk_ground("tilly_0_a_001")]}
     ]
-    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
-    assert len([k for k in result["denominator_by_name"] if "&" in k]) == 1
-
-
-def test_an_intersection_naming_an_absent_page_is_skipped_not_raised(tmp_path):
-    _write_name_page(tmp_path / "names", TILLY, [])
-    trajectory = [
-        _where_names_meet_call(1, TILLY, "Some Absent Name", result_count=0, result_ids=[])
-    ]
-
-    result = compute_source_usage(_record(claims=[], trajectory=trajectory), vault_dir=tmp_path)
-
-    assert not any("&" in k for k in result["denominator_by_name"])
+    assert result["denominator_by_name"] == {TILLY: 1}
 
 
 # -- usage_ratio ----------------------------------------------------------------
 
 
-def test_usage_ratio_and_available_are_null_not_zero_when_the_run_queried_no_name(tmp_path):
-    """A run that never queried a name (issue #584: the argument-map path
-    queries none, but any empty trajectory hits the same branch) has no
-    denominator at all -- `available_chunk_count` and `available_share` are
-    `None`, an unknown, not a measured `0`, and `usage_ratio` is `None` for
-    the same reason it always was."""
+def test_usage_ratio_and_available_are_null_not_zero_when_the_run_touched_no_name(tmp_path):
+    """A run whose claims touch no name at all (issue #584: the map arm's
+    own claims may carry an empty `names_touched`) has no denominator at
+    all -- `available_chunk_count` and `available_share` are `None`, an
+    unknown, not a measured `0`, and `usage_ratio` is `None` for the same
+    reason it always was."""
     _write_chunk_note(tmp_path / "prose", "other_0_a_001")
     claims = [{"grounds": [_chunk_ground("zaum_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=[]), vault_dir=tmp_path)
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
     zaum = result["sources"][0]
     assert zaum["available_chunk_count"] is None
@@ -442,14 +287,19 @@ def test_usage_ratio_and_available_are_null_not_zero_when_the_run_queried_no_nam
     assert zaum["usage_ratio"] is None
 
 
-def test_source_drawn_on_but_absent_from_every_queried_name_has_zero_available(tmp_path):
-    prose = tmp_path / "prose"
-    _write_chunk_note(prose, "known_0_a_001")
-    _write_name_page(tmp_path / "names", TILLY, ["known_0_a_001"])
-
-    trajectory = [_name_call(1, "get_name", {"canonical": TILLY})]
-    claims = [{"grounds": [_chunk_ground("known_0_a_001"), _chunk_ground("unmatched_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
+def test_source_drawn_on_but_absent_from_every_touched_name_has_zero_available(tmp_path):
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: ["known_0_a_001"]},
+        source_by_chunk={"known_0_a_001": "known"},
+    )
+    claims = [
+        {
+            "names_touched": [TILLY],
+            "grounds": [_chunk_ground("known_0_a_001"), _chunk_ground("unmatched_0_a_001")],
+        }
+    ]
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
     by_source = {s["source_id"]: s for s in result["sources"]}
     assert by_source["unmatched"]["available_chunk_count"] == 0
@@ -457,14 +307,13 @@ def test_source_drawn_on_but_absent_from_every_queried_name_has_zero_available(t
 
 
 def test_source_in_the_denominator_but_absent_from_evidence_gets_no_entry(tmp_path):
-    prose = tmp_path / "prose"
-    _write_chunk_note(prose, "cited_0_a_001")
-    _write_chunk_note(prose, "uncited_0_a_001")
-    _write_name_page(tmp_path / "names", TILLY, ["cited_0_a_001", "uncited_0_a_001"])
-
-    trajectory = [_name_call(1, "get_name", {"canonical": TILLY})]
-    claims = [{"grounds": [_chunk_ground("cited_0_a_001")]}]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: ["cited_0_a_001", "uncited_0_a_001"]},
+        source_by_chunk={"cited_0_a_001": "cited", "uncited_0_a_001": "uncited"},
+    )
+    claims = [{"names_touched": [TILLY], "grounds": [_chunk_ground("cited_0_a_001")]}]
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
 
     assert {s["source_id"] for s in result["sources"]} == {"cited"}
 
@@ -473,16 +322,15 @@ def test_source_in_the_denominator_but_absent_from_evidence_gets_no_entry(tmp_pa
 
 
 def test_sources_is_empty_on_refuse_but_names_queried_still_populated():
-    trajectory = [_name_call(1, "find_names", {"query": "Tilly"})]
-    record = _record(claims=[], trajectory=trajectory, disposition="refuse")
+    record = _record(claims=[{"names_touched": [TILLY]}], disposition="refuse")
 
     result = compute_source_usage(record, vault_dir=None)
     assert result["sources"] == []
-    assert result["names_queried"] == [{"tool": "find_names", "args": {"query": "Tilly"}}]
+    assert result["names_queried"] == [{"tool": NAMES_TOUCHED_LABEL, "args": {"canonical": TILLY}}]
 
 
 def test_sources_is_empty_when_claims_carry_no_grounds():
-    record = _record(claims=[{"grounds": []}], trajectory=[], disposition="proceed")
+    record = _record(claims=[{"grounds": []}], disposition="proceed")
     assert compute_source_usage(record, vault_dir=None)["sources"] == []
 
 
@@ -499,7 +347,7 @@ def test_compute_source_usage_makes_zero_llm_calls(tmp_path, monkeypatch):
     assert isinstance(get_client(), ExplodingLLMClient)
 
     _write_chunk_note(tmp_path / "prose", "gellner_0_a_001")
-    record = _record(claims=[{"grounds": [_chunk_ground("gellner_0_a_001")]}], trajectory=[])
+    record = _record(claims=[{"grounds": [_chunk_ground("gellner_0_a_001")]}])
 
     result = compute_source_usage(record, vault_dir=tmp_path)
     assert result["sources"][0]["source_id"] == "gellner"
@@ -509,15 +357,19 @@ def test_compute_source_usage_makes_zero_llm_calls(tmp_path, monkeypatch):
 
 
 def test_source_usage_is_byte_identical_across_repeat_runs(tmp_path):
-    prose = tmp_path / "prose"
     members = [f"tilly_0_a_{i:03d}" for i in range(22)]
-    for chunk_id in [*members, "other_0_a_000"]:
-        _write_chunk_note(prose, chunk_id)
-    _write_name_page(tmp_path / "names", TILLY, members)
-
-    trajectory = [_name_call(1, "get_name", {"canonical": TILLY})]
-    claims = [{"grounds": [_chunk_ground("tilly_0_a_000"), _chunk_ground("other_0_a_000")]}]
-    record = _record(claims=claims, trajectory=trajectory)
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: members},
+        source_by_chunk={chunk_id: "tilly" for chunk_id in members},
+    )
+    claims = [
+        {
+            "names_touched": [TILLY],
+            "grounds": [_chunk_ground("tilly_0_a_000"), _chunk_ground("other_0_a_000")],
+        }
+    ]
+    record = _record(claims=claims)
 
     first = compute_source_usage(record, vault_dir=tmp_path)
     second = compute_source_usage(record, vault_dir=tmp_path)
@@ -528,17 +380,16 @@ def test_source_usage_is_byte_identical_across_repeat_runs(tmp_path):
 
 
 def test_full_concentration_on_one_source_produces_no_failure(tmp_path):
-    prose = tmp_path / "prose"
-    _write_chunk_note(prose, "gellner_0_a_001")
-    _write_chunk_note(prose, "gellner_0_a_002")
-    _write_name_page(tmp_path / "names", TILLY, ["gellner_0_a_001", "gellner_0_a_002"])
-
-    trajectory = [_name_call(1, "get_name", {"canonical": TILLY})]
+    _write_store(
+        tmp_path,
+        member_ids_by_name={TILLY: ["gellner_0_a_001", "gellner_0_a_002"]},
+        source_by_chunk={"gellner_0_a_001": "gellner", "gellner_0_a_002": "gellner"},
+    )
     claims = [
-        {"grounds": [_chunk_ground("gellner_0_a_001")]},
-        {"grounds": [_chunk_ground("gellner_0_a_002")]},
+        {"names_touched": [TILLY], "grounds": [_chunk_ground("gellner_0_a_001")]},
+        {"names_touched": [TILLY], "grounds": [_chunk_ground("gellner_0_a_002")]},
     ]
-    result = compute_source_usage(_record(claims=claims, trajectory=trajectory), vault_dir=tmp_path)
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
     assert result["sources"][0]["evidence_share"] == 1.0
     assert result["sources"][0]["usage_ratio"] == pytest.approx(1.0)
 
@@ -547,27 +398,23 @@ def test_full_concentration_on_one_source_produces_no_failure(tmp_path):
 
 
 def test_weights_defaults_to_empty_when_the_record_carries_no_brief():
-    record = _record(claims=[], trajectory=[])
+    record = _record(claims=[])
     assert compute_source_usage(record, vault_dir=None)["weights"] == {}
 
 
 def test_weights_defaults_to_empty_when_the_brief_supplied_none():
-    record = _record(claims=[], trajectory=[], brief={"case": "Syria", "weights": {}})
+    record = _record(claims=[], brief={"case": "Syria", "weights": {}})
     assert compute_source_usage(record, vault_dir=None)["weights"] == {}
 
 
 def test_weights_are_disclosed_verbatim_from_the_brief():
-    record = _record(
-        claims=[], trajectory=[], brief={"case": "Syria", "weights": {"beshara-2011": 0.1}}
-    )
+    record = _record(claims=[], brief={"case": "Syria", "weights": {"beshara-2011": 0.1}})
     assert compute_source_usage(record, vault_dir=None)["weights"] == {"beshara-2011": 0.1}
 
 
 def test_weights_are_disclosed_even_on_refuse():
-    trajectory = [_name_call(1, "find_names", {"query": "Tilly"})]
     record = _record(
-        claims=[],
-        trajectory=trajectory,
+        claims=[{"names_touched": [TILLY]}],
         disposition="refuse",
         brief={"weights": {"beshara-2011": 0.1}},
     )

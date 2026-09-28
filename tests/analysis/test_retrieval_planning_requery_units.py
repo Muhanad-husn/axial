@@ -21,8 +21,9 @@ outer acceptance contract; this file covers the properties underneath it,
 each in isolation.
 
 The scripted tool names moved from `query_by_polity` to `query_by_source`
-(issue #487, D1): the former is deleted with the facet it filtered. Every
-property pinned here is about the loop, not about which tool it calls.
+(issue #487, D1) and, later, from `get_name` to `get_chunk` (DEC-75, issue
+#853, when the name-layer tools were retired): every property pinned here
+is about the loop, not about which tool it calls.
 """
 
 from __future__ import annotations
@@ -333,9 +334,9 @@ def test_single_source_entries_produce_a_source_round_robin_assembly():
     let the first entry's one book own the head of the set; round-robin
     interleaves by source from the first id on."""
     trajectory = [
-        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002"]),
-        _entry("get_name", ["bbb_1_a_001", "bbb_1_a_002"]),
-        _entry("where_names_meet", ["ccc_1_a_001"]),
+        _entry("get_chunk", ["aaa_1_a_001", "aaa_1_a_002"]),
+        _entry("get_chunk", ["bbb_1_a_001", "bbb_1_a_002"]),
+        _entry("positions_on", ["ccc_1_a_001"]),
     ]
 
     assert assemble_evidence_ids(trajectory) == [
@@ -353,8 +354,8 @@ def test_dedup_and_first_seen_order_within_a_source_both_survive():
     re-sorted by chunk_id (which would put aaa_1_a_001 ahead of
     aaa_1_a_002 here)."""
     trajectory = [
-        _entry("get_name", ["aaa_1_a_002", "aaa_1_a_001"]),
-        _entry("who_cites", ["aaa_1_a_001", "aaa_1_a_003"]),  # aaa_1_a_001 is a duplicate
+        _entry("get_chunk", ["aaa_1_a_002", "aaa_1_a_001"]),
+        _entry("find_notes", ["aaa_1_a_001", "aaa_1_a_003"]),  # aaa_1_a_001 is a duplicate
     ]
 
     assert assemble_evidence_ids(trajectory) == ["aaa_1_a_002", "aaa_1_a_001", "aaa_1_a_003"]
@@ -365,18 +366,18 @@ def test_empty_trajectory_assembles_to_an_empty_list():
 
 
 def test_single_source_trajectory_is_unchanged_by_the_round_robin():
-    trajectory = [_entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"])]
+    trajectory = [_entry("get_chunk", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"])]
 
     assert assemble_evidence_ids(trajectory) == ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"]
 
 
 def test_ids_from_non_chunk_valued_tools_are_still_skipped_by_the_round_robin():
     """The round-robin reorders the surviving ids; it must not resurrect an
-    id `find_names` returned (a canonical name, not a chunk id) just because
+    id `get_envelope` returned (a source id, not a chunk id) just because
     that id now sorts into its own source-shaped group."""
     trajectory = [
-        _entry("find_names", ["Charles Tilly"]),
-        _entry("get_name", ["aaa_1_a_001"]),
+        _entry("get_envelope", ["tilly-1978"]),
+        _entry("get_chunk", ["aaa_1_a_001"]),
     ]
 
     assert assemble_evidence_ids(trajectory) == ["aaa_1_a_001"]
@@ -386,7 +387,7 @@ def test_a_chunk_id_that_does_not_parse_groups_under_empty_source_and_sorts_firs
     """Same fallback `where_names_meet` uses for its own round-robin: an id
     that fails to parse groups under `""`, which sorts before any real
     source_id -- no second convention for "which source is this"."""
-    trajectory = [_entry("get_name", ["not-a-real-chunk-id", "zzz_1_a_001"])]
+    trajectory = [_entry("get_chunk", ["not-a-real-chunk-id", "zzz_1_a_001"])]
 
     assert assemble_evidence_ids(trajectory) == ["not-a-real-chunk-id", "zzz_1_a_001"]
 
@@ -399,9 +400,9 @@ def test_fork_constraint_drops_one_source_the_other_sources_stay_reachable():
     five reachable" at a smaller, hand-built scale (one dropped, three
     kept)."""
     trajectory = [
-        _entry("get_name", ["dropped_1_a_001", "dropped_1_a_002"]),
-        _entry("get_name", ["kept-a_1_a_001"]),
-        _entry("where_names_meet", ["kept-b_1_a_001", "kept-c_1_a_001"]),
+        _entry("get_chunk", ["dropped_1_a_001", "dropped_1_a_002"]),
+        _entry("get_chunk", ["kept-a_1_a_001"]),
+        _entry("positions_on", ["kept-b_1_a_001", "kept-c_1_a_001"]),
     ]
     constraint = ForkConstraint(drop_source_ids=frozenset({"dropped"}))
 
@@ -413,7 +414,7 @@ def test_fork_constraint_drops_one_source_the_other_sources_stay_reachable():
 
 
 def test_fork_constraint_none_leaves_assembly_unaffected():
-    trajectory = [_entry("get_name", ["aaa_1_a_001", "bbb_1_a_001"])]
+    trajectory = [_entry("get_chunk", ["aaa_1_a_001", "bbb_1_a_001"])]
 
     assert assemble_evidence_ids(trajectory, fork_constraint=None) == assemble_evidence_ids(
         trajectory
@@ -445,9 +446,9 @@ def test_assemble_evidence_ids_is_a_permutation_of_first_seen_dedup():
     of this reduction; if a count changes, the cause is downstream of
     assembly, never here."""
     trajectory = [
-        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"]),
-        _entry("who_cites", ["bbb_1_a_001", "aaa_1_a_002"]),  # aaa_1_a_002 is a duplicate
-        _entry("where_names_meet", ["ccc_1_a_001", "bbb_1_a_002"]),
+        _entry("get_chunk", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003"]),
+        _entry("find_notes", ["bbb_1_a_001", "aaa_1_a_002"]),  # aaa_1_a_002 is a duplicate
+        _entry("positions_on", ["ccc_1_a_001", "bbb_1_a_002"]),
     ]
 
     first_seen = _first_seen_dedup(trajectory)

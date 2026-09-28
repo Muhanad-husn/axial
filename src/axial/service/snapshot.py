@@ -5,16 +5,17 @@ binds exactly one of them for its whole life.
 **A snapshot is a whole corpus root, not one file.** The issue's own third
 "done when" said the vault markdown is the human view rather than the query
 surface; it is both. `axial.analyze.assembly.assemble_evidence` quotes every
-cited passage out of `<vault>/prose/<chunk_id>.md`, and
-`axial.query.names._name_page_from_store` reads the Gather disagreement
-section off `<vault>/names/<name>.md`. `notes.db` is the index; the markdown
-is the text. So a snapshot carries:
+cited passage out of `<vault>/prose/<chunk_id>.md`, and `axial.query.names`
+answers `find_names`/`get_name` from `<vault>/notes.db` alone (DEC-75, issue
+#853 retired the name pages and the Gather disagreement section this used
+to also describe). `notes.db` is the index; the markdown is the text. So a
+snapshot carries:
 
     <version>/manifest.json          the pin, the source list, the build date
     <version>/config/                pipeline.yaml (rewritten), lenses, domains
     <version>/evals/corpus_pin/      the pin manifest `resolve_pin_id` reads
-    <version>/vault/                 prose, names, artifacts, names.jsonl, notes.db
-    <version>/names/                 index, alias map, disagreements, embeddings
+    <version>/vault/                 prose, artifacts, notes.db
+    <version>/names/                 index, alias map, embeddings (Reconcile's own artifacts)
     <version>/envelopes/
     <version>/map/<map_pin>/         the argument map, when one is built
 

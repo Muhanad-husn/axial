@@ -50,7 +50,7 @@ the same for `jobs`), build the real `LLMClient`, and run
 `AXIAL_WORKER_COUNT` claim/run loops concurrently over the same queue --
 `ThreadPoolExecutor`, the same bounded-concurrency idiom every other
 `--workers` pass in this codebase already uses (`axial.interrogate`,
-`axial.gather`, ...), safe here for the identical reason it is safe there:
+`axial.merge_names`, ...), safe here for the identical reason it is safe there:
 `JobStore.claim`'s `SELECT ... FOR UPDATE SKIP LOCKED` is exactly what
 makes two loops racing the same table never claim the same row
 (`axial.service.jobs` module docstring). A slot that finds the queue

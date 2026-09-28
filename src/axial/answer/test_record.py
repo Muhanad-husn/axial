@@ -19,7 +19,6 @@ from axial.answer.record import (
     KNOWN_ARMS,
     MAP_ARM,
     MAP_VOCAB_ARM,
-    NAME_ARM,
     UnknownArmError,
     build_record,
 )
@@ -540,104 +539,10 @@ def test_brief_dict_carries_none_fork_answer_when_none_supplied():
     assert record["brief"]["fork_answer"] is None
 
 
-# --- issue #750: the declared decline policy's own walk disclosure ----------
-
-
-def _hinnebusch_fork():
-    from axial.brief.fork import ForkCheckResult, ForkOption
-
-    return ForkCheckResult(
-        is_fork=True,
-        concept="Ba'th Party",
-        kind="temporal_role",
-        question=(
-            "Should retrieval treat Hinnebusch (1990) as a witness to pre-coup roots "
-            "and later sources as witnesses to consequences, reading both eras as "
-            "complementary evidence of change, or would you prefer to cap "
-            "Hinnebusch's notes to prevent its dominant voice from overshadowing the "
-            "later witnesses?"
-        ),
-        options=(
-            ForkOption(label="keep all, assign temporal roles"),
-            ForkOption(label="cap the dominant 1990 source", per_source_cap=80),
-            ForkOption(
-                label="exclude the dominant 1990 source", drop_source_ids=("hinnebusch-1990-x",)
-            ),
-        ),
-    )
-
-
-def test_fork_declined_message_never_ends_in_a_question():
-    from axial.answer.record import _fork_declined_message
-
-    message = _fork_declined_message(_hinnebusch_fork())
-
-    assert not message.rstrip().endswith("?")
-
-
-def test_fork_declined_message_discloses_concept_options_and_policy():
-    from axial.answer.record import _fork_declined_message
-
-    message = _fork_declined_message(_hinnebusch_fork())
-
-    # The imbalance measured: which concept, and its shape.
-    assert "Ba'th Party" in message
-    assert "period" in message
-    # The options that were available, by label.
-    assert "keep all, assign temporal roles" in message
-    assert "cap the dominant 1990 source" in message
-    assert "exclude the dominant 1990 source" in message
-    # That the service declined under its declared policy, and the run
-    # proceeded unconstrained.
-    assert "declines" in message
-    assert "unconstrained" in message
-
-
-def test_fork_declined_message_never_quotes_the_models_own_question_text():
-    from axial.answer.record import _fork_declined_message
-
-    message = _fork_declined_message(_hinnebusch_fork())
-
-    assert "or would you prefer" not in message
-
-
-def test_fork_disclosure_message_declines_with_no_answering_mechanism():
-    """The service worker, and every batch caller with no pre-supplied
-    `brief.fork_answer` (`axial brief run`/`smoke`/`sweep`), have neither
-    an `on_fork` callback nor an answer on file -- the declared policy's
-    disclosure applies."""
-    from axial.answer.record import _fork_declined_message, _fork_disclosure_message
-
-    fork = _hinnebusch_fork()
-
-    message = _fork_disclosure_message(fork, fork_answer_supplied=False, has_on_fork=False)
-
-    assert message == _fork_declined_message(fork)
-
-
-def test_fork_disclosure_message_unchanged_when_axial_ask_can_prompt():
-    """`axial ask` passes `on_fork` -- its interactive path is unchanged by
-    this issue: the walk still shows the model's own question, which
-    `_fork_prompt` (src/axial/cli.py) then asks live."""
-    from axial.answer.record import _fork_disclosure_message
-
-    fork = _hinnebusch_fork()
-
-    message = _fork_disclosure_message(fork, fork_answer_supplied=False, has_on_fork=True)
-
-    assert message == f"a clarifying question was found: {fork.question}"
-
-
-def test_fork_disclosure_message_unchanged_when_a_batch_answer_is_on_file():
-    """A batch run with `brief.fork_answer` already supplied (§7.1) is a
-    real, pre-known answer, not a decline -- unchanged by this issue."""
-    from axial.answer.record import _fork_disclosure_message
-
-    fork = _hinnebusch_fork()
-
-    message = _fork_disclosure_message(fork, fork_answer_supplied=True, has_on_fork=False)
-
-    assert message == f"a clarifying question was found: {fork.question}"
+# Issue #750's decline-policy walk disclosure (`_fork_declined_message`/
+# `_fork_disclosure_message`) was retired with the name-layer path that was
+# its only caller (DEC-75, issue #853): the fork-check no longer runs in
+# `run_brief` at all, on any arm, so there is no disclosure left to compose.
 
 
 # ---------------------------------------------------------------------------
@@ -906,57 +811,22 @@ def test_run_brief_unknown_arm_is_refused_before_any_call(tmp_path: Path, monkey
         assert arm_name in str(exc_info.value)
 
 
-def test_run_brief_arm_name_wins_over_use_map_true(tmp_path: Path, monkeypatch):
-    """`arm=NAME_ARM` with `use_map=True` also given must still run the
-    name layer -- `arm`, when given, decides, the same precedence
-    `axial.brief.sweep._run_one_draw` already gives its own pair (module
-    comment above)."""
-    from axial.retrieve.loop import RetrievalResult
+def test_run_brief_arm_name_is_refused_the_same_as_any_other_unknown_arm(tmp_path: Path):
+    """DEC-75 (issue #853): the name-layer arm this test used to prove
+    `arm` won precedence for is retired along with the name pages it
+    walked. `arm="name"` now names none of `KNOWN_ARMS` and is refused
+    exactly like any other unrecognised string, before any call is made."""
 
-    chunk_ids = ["fixprec-2021-a_1_s_001"]
-    vault_dir = _write_vault(tmp_path, chunk_ids)
+    class _ExplodingClient(StubLLMClient):
+        def complete(self, prompt: str, pass_name: str | None = None) -> str:
+            raise AssertionError("interrogation must never run for an unknown arm")
 
-    def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("the map path must not run when arm=name wins precedence")
+    with pytest.raises(UnknownArmError) as exc_info:
+        record_module.run_brief(_vocab_brief(), client=_ExplodingClient(), arm="name")
 
-    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _fail_if_called)
-
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "get_name",
-            "args": {"canonical": "Fixture Name"},
-            "result_ids": chunk_ids,
-            "result_count": 1,
-        }
-    ]
-
-    def _fake_run_planned_retrieval(*_args, **_kwargs):
-        return RetrievalResult(trajectory=trajectory, evidence_ids=list(chunk_ids))
-
-    monkeypatch.setattr(record_module, "run_planned_retrieval", _fake_run_planned_retrieval)
-
-    synthesize_response = json.dumps(
-        {
-            "claims": [
-                {
-                    "text": "The corpus states a fixture claim.",
-                    "kind": "a",
-                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
-                    "confidence": "medium",
-                }
-            ]
-        }
-    )
-    client = _ArmScriptedClient(synthesize_response)
-
-    result = record_module.run_brief(
-        _vocab_brief(), client=client, vault_dir=vault_dir, use_map=True, arm=NAME_ARM
-    )
-
-    record = result.record
-    assert record["map_retrieval"] is None
-    assert record["trajectory"] == trajectory
+    assert "name" in str(exc_info.value)
+    for arm_name in KNOWN_ARMS:
+        assert arm_name in str(exc_info.value)
 
 
 def test_run_brief_forwards_all_four_vocabulary_knobs_verbatim(tmp_path: Path, monkeypatch):

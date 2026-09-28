@@ -54,12 +54,13 @@ from typing import Any, Iterator
 
 from axial.answer.dismissal import DismissalJudgeError, judge_instant_dismissal
 from axial.answer.render import render_markdown
-from axial.answer.source_usage import full_name_page, source_ids_for_grounds
+from axial.answer.source_usage import source_ids_for_grounds
 from axial.eval.cases import load_case
 from axial.eval.classification import SourceClassification, load_classification
 from axial.gates.grounding import GroundingGateError, run_grounding_gate
 from axial.llm import LLMClient
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_runs_dir
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_runs_dir, default_vault_dir
+from axial.query import store as note_store
 from axial.query.reader import source_id_from_chunk_id
 from axial.retrieve.tools import TOOL_REGISTRY
 from axial.validators.attribution import _check_grounds, _check_kind, _claim_id_of
@@ -527,7 +528,12 @@ def _retrieval_precision(cited_ids: set[str], evidence: dict[str, Any]) -> dict[
     }
 
 
-def _name_pages_touched(claims: list[dict[str, Any]]) -> int:
+def _names_touched(claims: list[dict[str, Any]]) -> int:
+    """The number of distinct canonicals the claims touch (`names_touched`,
+    §7.3) -- on the real corpus that was ~423 per evidence set, and that
+    size is itself the signal. DEC-75 (issue #853) renamed this from
+    `name_pages_touched`: it never read a page, only the claim graph's own
+    field, and now that the pages are gone the old name would be a lie."""
     names: set[str] = set()
     for claim in claims:
         for name in claim.get("names_touched") or []:
@@ -536,56 +542,47 @@ def _name_pages_touched(claims: list[dict[str, Any]]) -> int:
     return len(names)
 
 
-def _name_reach_and_disagreement_reuse(
+def _name_reach(
     record: dict[str, Any], grounds_chunk_ids: set[str], *, vault_dir: Path | None
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Two figures off one pass over the §7.7 coverage-map names, since both
-    need the same whole name pages.
+) -> dict[str, Any]:
+    """The share of the run's grounds notes that are members of a name the
+    answer is ABOUT (the §7.7 coverage-map names), plus the raw count of
+    distinct names touched.
 
-    **name reach.** The number of distinct name pages the claims touch
-    (`names_touched`, disclosed raw -- on the real corpus that is ~423 per
-    evidence set, and that size is itself the signal), plus the share of the
-    run's grounds notes that are members of a name the answer is ABOUT. The
-    membership denominator is the §7.7 coverage scope rather than every
-    mentioned name on purpose: 67.2% of live name pages touch exactly one
-    note and 64.3% of the note-to-note joins come from twenty mostly-country
-    names, so "a member of some name page" is true of nearly every note and
-    would read high for trivial reasons.
+    The membership denominator is the §7.7 coverage scope rather than every
+    mentioned name on purpose: 67.2% of live names (measured when they were
+    still pages) touch exactly one note and 64.3% of the note-to-note joins
+    come from twenty mostly-country names, so "a member of some name" is
+    true of nearly every note and would read high for trivial reasons.
 
-    **disagreement reuse (D4).** Whether the run REACHED a note a Gather
-    finding also cites -- never whether it repeated the finding, and never a
-    quality verdict on the finding, which has never been scored."""
+    **Answered from the store (DEC-75, issue #853):** membership is
+    `axial.query.store.name_members`, the same join `get_name` answers from
+    -- there is no page left to read. Gather's disagreement-reuse figure,
+    which used to sit alongside this, is retired with Gather itself; there
+    is no finding left for a run to reach."""
     coverage_map = record.get("coverage_map") or {}
     covered_members: set[str] = set()
-    names_with_findings = 0
-    finding_names_reached = 0
 
-    for canonical in sorted(coverage_map):
-        page = full_name_page(canonical, vault_dir=vault_dir)
-        if page is None:
-            continue
-        members = {member.chunk_id for member in page.members}
-        covered_members |= members
-        if page.disagreement is not None:
-            names_with_findings += 1
-            if members & grounds_chunk_ids:
-                finding_names_reached += 1
+    vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    connection = note_store.connect(vault)
+    if connection is not None:
+        try:
+            for canonical in sorted(coverage_map):
+                covered_members.update(
+                    row[0] for row in note_store.name_members(connection, canonical)
+                )
+        finally:
+            connection.close()
 
     in_scope = len(covered_members & grounds_chunk_ids)
     total_grounds = len(grounds_chunk_ids)
-    name_reach = {
-        "name_pages_touched": _name_pages_touched(record.get("claims") or []),
+    return {
+        "names_touched": _names_touched(record.get("claims") or []),
         "names_in_coverage_scope": len(coverage_map),
         "grounds_notes_in_a_covered_name": in_scope,
         "grounds_note_count": total_grounds,
         "share": (in_scope / total_grounds) if total_grounds else None,
     }
-    disagreement_reuse = {
-        "names_with_findings": names_with_findings,
-        "names_whose_notes_were_reached": finding_names_reached,
-        "reached": finding_names_reached > 0,
-    }
-    return name_reach, disagreement_reuse
 
 
 def _coverage_bands(coverage_map: dict[str, Any]) -> dict[str, int]:
@@ -634,9 +631,7 @@ def build_run_report(
 
     cited_ids, grounds_chunk_ids = _grounds_ref_ids(claims)
     grounds_source_ids = {source_id_from_chunk_id(cid) for cid in grounds_chunk_ids}
-    name_reach, disagreement_reuse = _name_reach_and_disagreement_reuse(
-        record, grounds_chunk_ids, vault_dir=vault_dir
-    )
+    name_reach = _name_reach(record, grounds_chunk_ids, vault_dir=vault_dir)
     sources = source_usage.get("sources") or []
 
     return {
@@ -674,7 +669,6 @@ def build_run_report(
             "grounds_per_claim": _grounds_per_claim(claims),
             "retrieval_precision": _retrieval_precision(cited_ids, evidence),
             "name_reach": name_reach,
-            "disagreement_reuse": disagreement_reuse,
             "coverage_bands": _coverage_bands(coverage_map),
             "answer_size": {
                 "claim_count": len(claims),

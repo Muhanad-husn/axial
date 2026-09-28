@@ -1056,7 +1056,10 @@ def test_main_vocabulary_build_without_a_scheme_for_the_column_fails_naming_it(
 # ---------------------------------------------------------------------------
 
 
-def test_build_parser_brief_sweep_defaults_arm_to_name(tmp_path):
+def test_build_parser_brief_sweep_defaults_arm_to_map(tmp_path):
+    """DEC-75 (issue #853): the name-layer arm this used to default to is
+    retired along with the vault's name pages; the map walk is now the
+    universal default."""
     from axial.cli import build_parser
 
     parser = build_parser()
@@ -1066,7 +1069,7 @@ def test_build_parser_brief_sweep_defaults_arm_to_name(tmp_path):
 
     assert args.command == "brief"
     assert args.brief_command == "sweep"
-    assert args.arm == "name"
+    assert args.arm == "map"
 
 
 def test_build_parser_brief_sweep_recognises_arm_flag(tmp_path):
@@ -1261,7 +1264,9 @@ def test_build_parser_brief_run_refuses_an_unknown_arm(capsys):
 
     assert exc_info.value.code != 0
     captured = capsys.readouterr()
-    assert "name" in captured.err
+    # DEC-75 (issue #853): the retired name-layer arm is no longer one of
+    # the choices argparse offers here.
+    assert "map" in captured.err
     assert "map+vocab" in captured.err
 
 

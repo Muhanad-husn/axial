@@ -15,8 +15,7 @@ from axial.query import relations as relations_module
 def _isolate_default_names_dir(tmp_path_factory, monkeypatch):
     """Redirect `axial.query.names`'s own default `names_dir` resolution to a
     fresh, empty per-test directory, so a name-layer call (`find_names`,
-    `get_name`, `name_neighbors`, `who_cites`, `who_argues_against`,
-    `where_names_meet`) that omits `names_dir=` reads nothing rather than the
+    `get_name`) that omits `names_dir=` reads nothing rather than the
     operator's live `data/names/` (issue #538: a test that built its own
     fixture layer, where `Israel-Palestine` is its own canonical, forgot to
     pass `names_dir=` on two `get_name` calls; on a machine with a real
@@ -38,18 +37,17 @@ def _isolate_default_names_dir(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_default_vault_dir(tmp_path_factory, monkeypatch):
     """The same fix as `_isolate_default_names_dir` above, for `vault_dir`:
-    every name-layer function in `axial.query.names` (the same six listed
-    above, plus the door lookups `find_names`/`where_names_meet` route
-    through) and every reader function in `axial.query.reader` (`get_chunk`,
-    `get_artifact`, `query_by_source`, `find_chunk_ids_ending_with`, etc.)
-    falls back to `axial.paths.default_vault_dir()` -- `data/vault` relative
-    to the process's cwd -- when a caller omits `vault_dir=`.
+    every name-layer function in `axial.query.names` (`find_names`/
+    `get_name`, both answered from `notes.db` since DEC-75) and every
+    reader function in `axial.query.reader` (`get_chunk`, `get_artifact`,
+    `query_by_source`, `find_chunk_ids_ending_with`, etc.) falls back to
+    `axial.paths.default_vault_dir()` -- `data/vault` relative to the
+    process's cwd -- when a caller omits `vault_dir=`.
 
-    Measured, not hypothetical: five `test_where_names_meet_*` tests failed
-    exactly this way for a session that had the operator's live 6,148-note
-    vault (and its 54 MB relational store) reachable from its cwd, and
-    passed again once it was not -- invisible in this repo's own worktrees
-    and CI, where `data/` never exists, for the same reason
+    Measured, not hypothetical: a session that had the operator's live
+    6,148-note vault (and its 54 MB relational store) reachable from its
+    cwd hit exactly this leak, invisible in this repo's own worktrees and
+    CI, where `data/` never exists, for the same reason
     `_isolate_default_names_dir` above was invisible until #538.
 
     Patched on both modules directly (each imports `default_vault_dir` from

@@ -68,9 +68,8 @@ evidence as contested. It never asks the model to invent an opposing
 position from nothing: the candidate pool it offers is a whitelist of real
 vault notes already in hand (`_counter_position_candidates`, issue #490) --
 this run's own grounds notes whose stated position differs from the majority
-among that evidence, the notes `who_argues_against` returns for a name the
-run touched, and the member notes of a Gather finding at such a name -- never
-a fresh retrieval. A `present: true`
+among that evidence, and the notes `axial.query.store.arguing_against_notes`
+returns for a name the run touched -- never a fresh retrieval. A `present: true`
 response may only cite grounds from that whitelist (checked mechanically
 after resolution, `CounterPositionGroundNotOfferedError` otherwise); the
 model is told plainly that disclosing the corpus as one-sided is the
@@ -99,9 +98,9 @@ from axial.analyze.assembly import EvidenceSet, name_surfaces
 from axial.brief.intake import Brief
 from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
-from axial.query.names import NameNotFoundError, canonical_name_for_surface, get_name
-from axial.query.names import who_argues_against as who_argues_against_name
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
+from axial.query import store as note_store
+from axial.query.names import canonical_name_for_surface
 from axial.query.reader import (
     ArtifactNotFoundError,
     ChunkNotFoundError,
@@ -1192,13 +1191,13 @@ def failed_counter_position_section(reason: str) -> dict[str, Any]:
 
 
 # The most candidate notes one counter-position prompt ever carries. A
-# whitelist that reaches beyond this run's own grounds (`who_argues_against`
-# over a dense name, a Gather finding's member list) is unbounded on the real
-# corpus -- `Syria` alone has 962 member notes -- and the first real
-# `brief examine` already blew a prompt to 72,000 characters by re-sending one
-# such list (issue #505). This is a bound on prompt size, not a quality knob:
-# the ordering below puts the run's OWN grounds notes first, so what a cap
-# ever drops is the vault-wide tail, never evidence the answer already cites.
+# whitelist that reaches beyond this run's own grounds (a dense name's own
+# opposing notes) is unbounded on the real corpus -- `Syria` alone has 962
+# member notes -- and the first real `brief examine` already blew a prompt
+# to 72,000 characters by re-sending one such list (issue #505). This is a
+# bound on prompt size, not a quality knob: the ordering below puts the
+# run's OWN grounds notes first, so what a cap ever drops is the vault-wide
+# tail, never evidence the answer already cites.
 MAX_COUNTER_POSITION_CANDIDATES = 20
 
 
@@ -1210,7 +1209,7 @@ def _counter_position_candidates(
     names_dir: Path | None = None,
 ) -> list[ChunkNote]:
     """The whitelist of real, resolvable vault notes (`ChunkNote`) offered as
-    candidate counter-position grounds (§7.8, issues #490 and #550). Four
+    candidate counter-position grounds (§7.8, issues #490 and #550). Three
     sources, in this order, deduplicated on `chunk_id` and truncated at
     `MAX_COUNTER_POSITION_CANDIDATES` -- the run's own cited evidence
     outranks name-layer material, and a paired opposition outranks a note
@@ -1228,20 +1227,16 @@ def _counter_position_candidates(
        run's own cited opposition and belongs ahead of name-layer material.
        A note source 1 already added is not re-added here (`opposed_grounds_
        notes`'s own arguing side is a strict subset of this wider pool).
-    3. **The notes `who_argues_against` returns** for a name the run touched
-       (the §7.7 coverage scope) -- real vault ids reached deterministically
-       from the name layer, never a fresh model-driven retrieval. Called with
-       `limit=MAX_COUNTER_POSITION_CANDIDATES` (issue #505): this whitelist
-       never keeps more than that many candidates in total, so it never needs
-       more than that many from any one name either, and no new constant is
-       introduced to state that.
-    4. **The member notes of a Gather finding** at such a name (D4). The
-       finding itself is a pointer and is never offered, quoted or cited; its
-       page's own member notes are, because they are the passages the finding
-       is about. Without this clause a brief that fires contested on the
-       `gather_disagreement` path alone can reach the empty-candidates guard,
-       whose disclosure would then say the grounds chunks did not resolve --
-       which is false: they resolved and simply carry no opposing position.
+    3. **The notes `axial.query.store.arguing_against_notes` returns** for a
+       name the run touched (the §7.7 coverage scope) -- real vault ids
+       reached deterministically from the store, never a fresh model-driven
+       retrieval. Called with `limit=MAX_COUNTER_POSITION_CANDIDATES` (issue
+       #505): this whitelist never keeps more than that many candidates in
+       total, so it never needs more than that many from any one name
+       either, and no new constant is introduced to state that.
+
+    Gather's own finding-member-notes source (D4) is retired along with
+    Gather (DEC-75, issue #853): there is no finding left to reach.
 
     Not guaranteed non-empty even on a contested brief, which is why the
     caller still guards that case: a grounds id can fail to resolve here
@@ -1256,33 +1251,23 @@ def _counter_position_candidates(
         candidates.setdefault(note.chunk_id, note)
 
     scope = coverage_scope([c for c in claims if isinstance(c, dict)], trajectory or [])
-    for canonical in scope:
-        edges, _total = who_argues_against_name(
-            canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir, names_dir=names_dir
-        )
-        for edge in edges:
-            if edge.chunk_id in candidates:
-                continue
-            try:
-                candidates[edge.chunk_id] = get_chunk(edge.chunk_id, vault_dir=vault_dir)
-            except ChunkNotFoundError:
-                continue
-    for canonical in scope:
+    vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    connection = note_store.connect(vault)
+    if connection is not None:
         try:
-            page = get_name(
-                canonical, MAX_COUNTER_POSITION_CANDIDATES, vault_dir=vault_dir, names_dir=names_dir
-            )
-        except NameNotFoundError:
-            continue
-        if page.disagreement is None:
-            continue
-        for member in page.members:
-            if member.chunk_id in candidates:
-                continue
-            try:
-                candidates[member.chunk_id] = get_chunk(member.chunk_id, vault_dir=vault_dir)
-            except ChunkNotFoundError:
-                continue
+            for canonical in scope:
+                rows = note_store.arguing_against_notes(
+                    connection, canonical, MAX_COUNTER_POSITION_CANDIDATES
+                )
+                for chunk_id, _source_id, _position, _claim in rows:
+                    if chunk_id in candidates:
+                        continue
+                    try:
+                        candidates[chunk_id] = get_chunk(chunk_id, vault_dir=vault_dir)
+                    except ChunkNotFoundError:
+                        continue
+        finally:
+            connection.close()
 
     return list(candidates.values())[:MAX_COUNTER_POSITION_CANDIDATES]
 

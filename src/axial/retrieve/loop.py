@@ -222,27 +222,8 @@ def _looking_for_phrase(tool_name: str | None, args: dict[str, Any]) -> str:
         if args.get("published_before") is not None:
             looking += f", written before {args['published_before']}"
         return looking
-    if tool_name == "opposition_pairs":
-        return f"looking for who disputes whom over {args.get('canonical', '')!r}"
-    if tool_name == "names_arguing_against":
-        return f"looking for what the critics of {args.get('target', '')!r} also discuss"
     if tool_name == "positions_on":
         return f"looking for the arguments the corpus makes about {args.get('name', '')!r}"
-    if tool_name == "find_names":
-        return f"looking for the name {args.get('query', '')!r}"
-    if tool_name == "get_name":
-        return f"looking at what the corpus says about {args.get('canonical', '')!r}"
-    if tool_name == "name_neighbors":
-        return f"looking for names that appear alongside {args.get('canonical', '')!r}"
-    if tool_name == "who_cites":
-        return f"looking for who cites {args.get('canonical', '')!r}"
-    if tool_name == "who_argues_against":
-        return f"looking for who argues against {args.get('canonical', '')!r}"
-    if tool_name == "where_names_meet":
-        return (
-            f"looking for where {args.get('canonical', '')!r} and "
-            f"{args.get('other', '')!r} are discussed together"
-        )
     if tool_name == "query_by_source":
         return f"looking through {args.get('source_id', '')!r}"
     if tool_name == "get_envelope":
@@ -557,14 +538,12 @@ Premises found during interrogation:
 Bounds applied:
 {bounds_lines}
 
-What you retrieve is notes, arguments and disagreements. Names, publication years and sources are FILTERS on those -- a way of narrowing what you ask for, never the thing you are looking for. You do not need to resolve a name before using it: every tool below resolves the phrase you write through the corpus's own aliases and spellings itself. A good plan:
+What you retrieve is notes and arguments. Names, publication years and sources are FILTERS on those -- a way of narrowing what you ask for, never the thing you are looking for. You do not need to resolve a name before using it: every tool below resolves the phrase you write through the corpus's own aliases and spellings itself. A good plan:
 1. Start with find_notes(about=...): the notes about a concept, scholar, work, place or period the brief is actually about. Narrow it with the filters when the question calls for them -- opposing=<name> keeps only the sources that argue against that name somewhere, which is how you ask for positions on X held by authors who disagree with Y; published_after/published_before keep only sources from a period, which is how you ask what changed after an event or a date.
 2. positions_on(name=...) reads the argument map: each result is one contestable argument the corpus makes, stated as a sentence, with the passages from every book that make it. Where a note says what one author wrote, a position says what is being argued and by how many books at once. Reach for it early on a conceptual question.
-3. For disagreement itself, call opposition_pairs(canonical=...): pairs of real notes where one argues against something another book's passage is about. Both ends are citable. names_arguing_against(target=...) says what the critics of a name conduct their disagreement in terms of -- follow those names back into find_notes.
-4. Every chunk-valued result's detail states how many sources it spans (e.g. "24 notes across 2 sources"). A result drawn from one source cannot support a comparison, so check that number rather than assuming it from how specific your query felt. Narrowing feels like precision but produces a one-book answer.
-5. find_names and get_name are still there, for when a phrase does not resolve and you want to see what the corpus calls things (find_names returns a slate of doors with their sizes), or when you want one name's whole page. They are a fallback, not a first step -- a page groups notes by a name they happen to mention and can say nothing about who argues with whom. where_names_meet, who_argues_against, who_cites and name_neighbors each walk exactly one relation from a name, and remain available for that.
+3. Every chunk-valued result's detail states how many sources it spans (e.g. "24 notes across 2 sources"). A result drawn from one source cannot support a comparison, so check that number rather than assuming it from how specific your query felt. Narrowing feels like precision but produces a one-book answer.
 
-get_name may also return a disagreement section another model wrote while reading this corpus (Gather). That text is a POINTER, never evidence: read it only to decide where to look next, then follow that page's own member chunk_ids to the real notes and retrieve those. Nothing you cite may be a disagreement, a name page, or a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
+Nothing you cite may be a name string itself -- only a chunk_id or artifact_id resolves as a real ground.
 
 Call the vault-query tools to retrieve corpus evidence. When a tool result is flagged THIN (its result_count is below the configured floor), decide whether to broaden your next query before concluding -- a non-thin result does not require a further call.{guidance_block}"""
 

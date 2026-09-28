@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from axial.materialize import build_note_store, materialize_names
+from axial.materialize import build_note_store
 from axial.query import reader
 from axial.query import store as store_module
 from axial.query.names import get_name
@@ -188,7 +188,6 @@ def _write_prose_stub(vault_dir: Path, chunk_id: str, section: str) -> None:
 def corpus(tmp_path: Path) -> dict:
     _build_fixture(tmp_path)
     dirs = _dirs(tmp_path)
-    materialize_names(artifacts_dir=tmp_path / "data" / "artifacts", **dirs)
     build_note_store(envelopes_dir=tmp_path / "data" / "envelopes", **dirs)
     vault_dir = dirs["vault_dir"]
     _write_prose_stub(vault_dir, A_BODY, "Introduction")
