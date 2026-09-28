@@ -20,10 +20,11 @@ Covered here:
   - a chunk id reachable from two positions is emitted once;
   - the cap is respected, and a short queue draining does not stall the
     rotation;
-  - `run_brief(use_map=True)` calls the shipped `assemble_evidence`/
-    `synthesize` with the map's own ordered ids, records `map_retrieval`
-    (never a fabricated trajectory) and an empty `trajectory`, and the
-    default (`use_map=False`) path is unchanged and never touches the map;
+  - `run_brief` calls the shipped `assemble_evidence`/`synthesize` with the
+    map's own ordered ids, and records `map_retrieval` (never a fabricated
+    trajectory) and an empty `trajectory`. Since DEC-75 (issue #853) the map
+    is the only retrieval arm `run_brief` has, so there is no longer a
+    separate name-arm default path to keep unchanged;
   - the empty trajectory's downstream effect (issue #584): `coverage_map`
     is empty and `confidence.overall_band` is `not_measured`, never a
     measured `low`, and `source_usage`'s per-source `available_chunk_count`/
@@ -56,7 +57,6 @@ from axial.llm import (
     SYNTHESIZE_PASS_NAME,
     StubLLMClient,
 )
-from axial.retrieve.loop import RetrievalResult
 from axial.validators.coverage import NOT_MEASURED_BAND
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -446,53 +446,8 @@ def test_run_brief_use_map_calls_shipped_assemble_evidence_and_synthesize_with_m
         assert entry["usage_ratio"] is None
 
 
-def test_run_brief_default_path_never_touches_the_map(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    chunk_ids = ["fixdef-2021-a_1_s_001"]
-    vault_dir = _write_vault(tmp_path, chunk_ids)
-
-    def _explode_if_called(*_args: Any, **_kwargs: Any) -> AskResult:
-        raise AssertionError("the default path must never call the map")
-
-    monkeypatch.setattr(record_module, "run_map_ask_for_brief", _explode_if_called)
-
-    trajectory = [
-        {
-            "step": 1,
-            "tool": "get_name",
-            "args": {"canonical": "Fixture Name"},
-            "result_ids": chunk_ids,
-            "result_count": 1,
-        }
-    ]
-
-    def _fake_run_planned_retrieval(*_args: Any, **_kwargs: Any) -> RetrievalResult:
-        return RetrievalResult(trajectory=trajectory, evidence_ids=list(chunk_ids))
-
-    monkeypatch.setattr(record_module, "run_planned_retrieval", _fake_run_planned_retrieval)
-
-    synthesize_response = json.dumps(
-        {
-            "claims": [
-                {
-                    "text": "The corpus states a fixture claim.",
-                    "kind": "a",
-                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
-                    "confidence": "medium",
-                }
-            ]
-        }
-    )
-    client = _ScriptedClient(synthesize_response)
-
-    result = record_module.run_brief(
-        _brief(), client=client, vault_dir=vault_dir, lenses_dir=LENSES_DIR
-    )
-
-    record = result.record
-    assert record["map_retrieval"] is None
-    assert record["trajectory"] == trajectory
-    assert record["claims"][0]["grounds"][0]["ref_id"] == chunk_ids[0]
-    assert RETRIEVE_PASS_NAME in record["model_by_pass"]
-    assert DECOMPOSE_PASS_NAME not in record["model_by_pass"]
+# A "default path never touches the map" test lived here before DEC-75
+# (issue #853): `run_brief` had a name-arm default distinct from
+# `use_map=True`. Retiring the name arm removed that other path -- `run_brief`
+# now always retrieves through the map, so the invariant this test pinned no
+# longer holds and there is nothing left to assert in its place.

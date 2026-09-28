@@ -3,24 +3,34 @@
 contribution, disclosed alongside the denominator it should be read
 against.
 
-Computed deterministically, with zero model calls, from data the record
-already holds plus deterministic re-reads of the pinned vault:
+**Re-pointed at the store (DEC-75, issue #853).** The map arm -- the only
+retrieval path left -- makes no name-layer tool call, so it writes no §7.6
+trajectory this disclosure used to read `names_queried`/the denominator off
+of. What a run's answer is ABOUT is still knowable: every claim already
+carries `names_touched` (§7.3), the canonicals its own grounds resolved to.
+This module reads that instead, and answers the denominator from
+`axial.query.store` (`doors`/`concept_sources`) rather than from a name
+page or a `where_names_meet` pair -- there is no page left to re-query.
 
-- `names_queried` -- the union of the name queries this run's trajectory
-  (§7.6) recorded, each entry `{tool, args}`. It replaces `filters_observed`,
-  which drew from `query_by_tag`/`query_by_polity`; both tools are deleted
-  with the facets they filtered (D1), so no trajectory can carry one. A
-  relational tool (issue #650) contributes the canonical it RESOLVED, since
-  its own argument is a phrase the model wrote rather than a name.
-- `denominator_by_name` -- per canonical name this run reached, how many
-  member notes that name's page holds. Disclosed as data because one hub
-  name can be most of the corpus: `Syria` alone carries 962 of the live
-  vault's 6,148 prose notes (15.6%), so a denominator inflated by one place
-  name is visible here rather than only in the ratios it flattens.
+Computed deterministically, with zero model calls, from data the record
+already holds plus deterministic re-reads of the pinned vault's store:
+
+- `names_queried` -- the union of every claim's `names_touched` (§7.3),
+  each entry `{tool: "names_touched", args: {canonical}}` -- the same
+  `{tool, args}` shape §7.13 always used, so `axial.answer.usage_report`'s
+  cross-run join and `axial.brief.smoke`'s console rendering need no second
+  convention, with a tool label that says plainly this is read off the
+  claims, not off a retrieval call.
+- `denominator_by_name` -- per touched canonical, its door's own
+  `member_count` (`axial.query.store.doors`) -- the whole corpus's count,
+  not a union. Disclosed as data because one hub name can be most of the
+  corpus: `Syria` alone carries 962 of the live vault's 6,148 prose notes
+  (15.6%), so a denominator inflated by one place name is visible here
+  rather than only in the ratios it flattens.
 - `sources` -- one entry per distinct `source_id` appearing in the claim
   grounds (never a source that only appears in the denominator query but
   was never actually drawn on): its evidence share, plus its available
-  share across the names queried.
+  share across the names touched.
 - `weights` -- the analyst's own `Brief.weights` (issue #639), `{}` when
   none were supplied, read straight off `record["brief"]["weights"]`
   (§7.1's verbatim brief). Recorded here, beside the contribution figures
@@ -30,34 +40,17 @@ already holds plus deterministic re-reads of the pinned vault:
   or one with no grounds, exactly like `names_queried`/`denominator_by_
   name` below.
 
-**The denominator is the plain union of member notes across the names
-queried**, a note that is a member of two queried names counting once,
-re-queried over the pinned vault through `get_name`, never derived from
-this run's own evidence -- exactly the analogue §7.13 states. No `kind`
-exclusion and no per-name cap is applied: both would be constants fitted
-before any measurement exists, and §7.13 makes proving the denominator on
-the smoke set a separate, evidence-led step. `denominator_by_name` is what
-that step reads.
-
-**`where_names_meet` gets its own, pair-keyed entry (issue #550).** Before
-this, the tool contributed nothing here at all: it is called through a
-different trajectory shape (`canonical` AND `other`, not the single-name
-`NAME_ARG_TOOLS` this module's per-name loop reads), so a run that
-intersected a hub three times and read that hub's whole page once still
-disclosed a denominator that was 88.4% that one hub (measured, P3-04:
-962 of 1,088). Each distinct pair the trajectory calls `where_names_meet`
-on gets ONE entry, keyed under `"<name> & <name>"` (sorted, so the same pair
-called with its two arguments swapped is one entry, not two) -- **never
-under either name alone**, which would misrepresent a name's own page size
-as the (usually much smaller) intersection. The value is the TRUE
-intersection size, re-queried over the pinned vault through
-`axial.query.names.where_names_meet`, never taken from the persisted
-trajectory step: `result_count` there is the capped `limit` (20), not the
-size. A name independently queried too (`get_name("Syria")` alongside
-`where_names_meet("Syria", "paramilitarism")`) keeps its own whole-page
-entry exactly as before, unaffected -- the pair is an ADDITIONAL entry, not
-a replacement. No cap and no kind exclusion here either, for the same
-reason as the rest of this module.
+**The per-source availability is now a SUM across touched names, not a
+chunk-level union (a real, disclosed change from the retired mechanism).**
+`axial.query.store.concept_sources` gives each touched name's own per-source
+note count directly; getting the true cross-name union would need each
+name's member `chunk_id`s, which `where_names_meet`/a name page were the
+only way to read without a per-name join this module has no reason to grow.
+A note naming two touched names is counted once per name here, not once
+overall -- inflating the denominator for a source contributing to several
+touched names, in the same direction the union always erred anyway (a
+larger, more forgiving denominator, never a smaller one that would overstate
+a `usage_ratio`).
 
 This module never imports `axial.llm` or constructs any LLM client --
 mirroring `axial.query.reader`'s own model-free-by-construction discipline
@@ -69,172 +62,62 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from axial.query.names import NameNotFoundError, NamePage, get_name
-from axial.query.names import where_names_meet as query_where_names_meet
+from axial.paths import default_vault_dir
+from axial.query import store as note_store
 from axial.query.reader import get_artifact, source_id_from_chunk_id
-from axial.validators.coverage import (
-    NAME_ARG_TOOLS,
-    NAME_RESULT_TOOLS,
-    WHERE_NAMES_MEET_TOOL,
-    _directly_queried_names,
-)
 
-# The §7.5 tools whose calls ARE name queries -- the four that take a
-# canonical name plus `find_names`, which resolves one. Exactly the tools
-# §7.7's coverage scope reads, imported rather than restated so the two
-# never drift.
-NAME_QUERY_TOOLS = NAME_ARG_TOOLS | NAME_RESULT_TOOLS
+# The synthetic `tool` label `names_queried` entries carry (DEC-75, issue
+# #853): there is no retrieval tool to name any more, only the claims'
+# own `names_touched`, so this says plainly where the entry came from
+# rather than naming a tool that was never called.
+NAMES_TOUCHED_LABEL = "names_touched"
 
 
-def derive_names_queried(trajectory: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The union of the name queries this run actually made (§7.13),
-    deduplicated and deterministically ordered: first-seen order over
-    `trajectory`'s own call order, so the same trajectory always yields the
-    same list. Each entry is `{tool, args}` -- `tool` is kept alongside
-    `args` (the #265 rule, unchanged) because `get_name`, `name_neighbors`,
-    `who_cites` and `who_argues_against` all take a canonical name under the
-    same arg key and are different queries; collapsing them would re-run the
-    wrong tool when the denominator is counted.
-
-    **A relational tool contributes its RESOLVED canonical, not its raw
-    argument (issue #650).** `find_notes`, `positions_on`,
-    `opposition_pairs` and `names_arguing_against` take a phrase the model
-    wrote and resolve it themselves, so their arguments are not names and
-    this field saw none of them. Each such call's own `resolved_name`
-    (persisted by `axial.retrieve.loop`) is recorded under the `canonical`
-    key -- the key four of the five name-layer tools already use, so
-    `axial.answer.usage_report`'s cross-run join and `axial.brief.smoke`'s
-    console rendering both read it with no second convention. The tool still
-    travels with it, so `find_notes` on a name and `get_name` on the same
-    name stay two queries. A call that resolved nothing records nothing: an
-    unresolved phrase is not a queried name."""
-    seen: set[tuple[str, tuple[tuple[str, Any], ...]]] = set()
-    names_queried: list[dict[str, Any]] = []
-    for entry in trajectory:
-        if not isinstance(entry, dict):
-            continue
-        tool = entry.get("tool")
-        resolved = entry.get("resolved_name")
-        if isinstance(resolved, str) and resolved.strip():
-            args: dict[str, Any] = {"canonical": resolved}
-        elif tool in NAME_QUERY_TOOLS:
-            args = dict(entry.get("args") or {})
-        else:
-            continue
-        key = (tool, tuple(sorted((str(k), str(v)) for k, v in args.items())))
-        if key in seen:
-            continue
-        seen.add(key)
-        names_queried.append({"tool": tool, "args": dict(sorted(args.items()))})
-    return names_queried
+def _touched_names(claims: list[dict[str, Any]]) -> list[str]:
+    """Every canonical this run's claims name (`Claim.names_touched`, §7.3),
+    deduplicated, ascending -- the query-agnostic replacement for the
+    retired name-layer trajectory (DEC-75, issue #853)."""
+    touched: set[str] = set()
+    for claim in claims:
+        for name in claim.get("names_touched") or []:
+            if isinstance(name, str) and name:
+                touched.add(name)
+    return sorted(touched)
 
 
-def full_name_page(canonical: str, *, vault_dir: Path | None) -> NamePage | None:
-    """`canonical`'s page with its member list UNCAPPED, or `None` when the
-    vault holds no page for it. `get_name`'s `members` is truncated at its
-    own `limit` (issue #505), which a denominator cannot accept -- a member
-    past the cap would silently shrink the corpus. A first call at the
-    default cap is used only when it already proves uncapped; a page over it
-    pays one extra call at its own true `member_count`. Same rule
-    `axial.validators.coverage._evidence_note_count` follows, for the same
-    reason. Shared with §7.15's name-reach and disagreement-reuse figures,
-    which need the same whole page."""
-    try:
-        page = get_name(canonical, vault_dir=vault_dir)
-    except NameNotFoundError:
-        return None
-    if page.member_count > len(page.members):
-        page = get_name(canonical, page.member_count, vault_dir=vault_dir)
-    return page
-
-
-def _all_member_chunk_ids(canonical: str, *, vault_dir: Path | None) -> set[str]:
-    page = full_name_page(canonical, vault_dir=vault_dir)
-    if page is None:
-        return set()
-    return {member.chunk_id for member in page.members}
-
-
-def _pair_key(canonical: str, other: str) -> str:
-    """The denominator key for one `where_names_meet` pair (issue #550):
-    both names, sorted so the same pair called with its arguments swapped
-    is one key, joined so it can never collide with a real canonical name
-    (no name in the index contains `" & "` -- names are surface forms from
-    author prose, not delimited strings)."""
-    first, second = sorted((canonical, other))
-    return f"{first} & {second}"
-
-
-def _intersected_name_pairs(trajectory: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """Every distinct `where_names_meet` pair this run called (issue #550),
-    each pair sorted and deduplicated so a call and its argument-swapped
-    twin are the same pair, not two."""
-    seen: set[tuple[str, str]] = set()
-    pairs: list[tuple[str, str]] = []
-    for entry in trajectory:
-        if not isinstance(entry, dict) or entry.get("tool") != WHERE_NAMES_MEET_TOOL:
-            continue
-        args = entry.get("args") or {}
-        canonical, other = args.get("canonical"), args.get("other")
-        if not (isinstance(canonical, str) and canonical.strip()):
-            continue
-        if not (isinstance(other, str) and other.strip()):
-            continue
-        pair = tuple(sorted((canonical, other)))
-        if pair in seen:
-            continue
-        seen.add(pair)
-        pairs.append(pair)
-    return pairs
+def derive_names_queried(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The union of the names this run's claims are about (§7.13), as the
+    `{tool, args}` shape this field always carried -- `tool` is always
+    `NAMES_TOUCHED_LABEL` now (DEC-75, issue #853: there is no retrieval
+    tool left to distinguish; every touched name is one query)."""
+    return [{"tool": NAMES_TOUCHED_LABEL, "args": {"canonical": name}} for name in _touched_names(claims)]
 
 
 def compute_available_notes(
-    trajectory: list[dict[str, Any]], *, vault_dir: Path | None = None
+    names_touched: list[str], *, vault_dir: Path | None = None
 ) -> tuple[dict[str, int], dict[str, int]]:
-    """The §7.13 denominator: `(per-name member counts, per-source counts of
-    the union)`.
+    """The §7.13 denominator: `(per-name member counts, per-source counts)`,
+    read off the store (DEC-75, issue #853).
 
-    The names are the canonicals this run reached DIRECTLY -- the
-    `canonical` argument of every name-layer traversal, every canonical
-    `find_names` resolved, and every canonical a relational tool's own
-    phrase resolved to (issue #650; every note such a call returns is a
-    member of that canonical's page, so the whole page is the honest
-    denominator for it) (`axial.validators.coverage._directly_queried_
-    names`; deliberately narrower than that module's own `retrieved_names`,
-    which also carries `where_names_meet`'s two names for the §7.7 coverage
-    scope -- a name reached only as one half of an intersection did not have
-    its own page read, so it must not be credited that page's full size
-    here). The union counts a note once however many queried names it is a
-    member of; the per-name map is NOT that union de-duplicated, it is each
-    name's own page size, so a hub name's contribution to the denominator is
-    legible on its own.
-
-    **Each distinct `where_names_meet` pair gets one additional entry**
-    (issue #550), keyed under the pair (`_pair_key`, never either name
-    alone) at the TRUE intersection size, re-queried over the pinned vault
-    (`axial.query.names.where_names_meet`) rather than read off the
-    trajectory's own `result_count`, which is the capped `limit` (20). A
-    name independently queried too keeps its own whole-page entry from the
-    loop above, unaffected -- the pair is additive, never a replacement."""
-    per_name: dict[str, int] = {}
-    union: set[str] = set()
-    for canonical in sorted(_directly_queried_names(trajectory)):
-        member_ids = _all_member_chunk_ids(canonical, vault_dir=vault_dir)
-        per_name[canonical] = len(member_ids)
-        union |= member_ids
-
-    for canonical, other in _intersected_name_pairs(trajectory):
-        try:
-            _members, total = query_where_names_meet(canonical, other, vault_dir=vault_dir)
-        except NameNotFoundError:
-            continue
-        per_name[_pair_key(canonical, other)] = total
-
-    by_source: dict[str, int] = {}
-    for chunk_id in union:
-        source_id = source_id_from_chunk_id(chunk_id)
-        by_source[source_id] = by_source.get(source_id, 0) + 1
-    return per_name, by_source
+    `per_name` is each touched name's own door `member_count`
+    (`axial.query.store.doors`) -- the corpus-wide total. `by_source` sums
+    `axial.query.store.concept_sources`' own per-source `note_count` across
+    every touched name (see module docstring for why this is a sum, not a
+    chunk-level union). A vault with no store answers `({}, {})`."""
+    vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
+    connection = note_store.connect(vault)
+    if connection is None:
+        return {}, {}
+    try:
+        doors = note_store.doors(connection, names_touched)
+        per_name = {name: doors[name].member_count for name in names_touched if name in doors}
+        by_source: dict[str, int] = {}
+        for name in names_touched:
+            for share in note_store.concept_sources(connection, name):
+                by_source[share.source_id] = by_source.get(share.source_id, 0) + share.note_count
+        return per_name, by_source
+    finally:
+        connection.close()
 
 
 def source_ids_for_grounds(claim: dict[str, Any], *, vault_dir: Path | None) -> set[str]:
@@ -282,8 +165,8 @@ def compute_source_usage(
     record: dict[str, Any], *, vault_dir: Path | None = None
 ) -> dict[str, Any]:
     """Compute the §7.13 `source_usage` field for an analysis record
-    (§7.3's shape: `claims`, `trajectory`, `interrogation.disposition`,
-    `brief.weights`). Zero model calls -- pure vault reads plus arithmetic.
+    (§7.3's shape: `claims`, `interrogation.disposition`, `brief.weights`).
+    Zero model calls -- pure vault reads plus arithmetic.
 
     `weights` (issue #639) is read straight off `record["brief"]["weights"]`
     -- `{}` for a record with none, never absent -- so the analyst's own
@@ -292,31 +175,30 @@ def compute_source_usage(
 
     `sources` is empty on disposition `refuse` and on any run whose claims
     carry no grounds (§7.13), `names_queried` and `denominator_by_name`
-    still populated in both -- what the run looked at is a fact about the
-    run whether or not it then cited anything. `usage_ratio` is
+    still populated in both -- what the run's answer is about is a fact
+    about the run whether or not it then cited anything. `usage_ratio` is
     `evidence_share / available_share`, and is `None` (never 0, never an
     error) when `available_share` is 0: the run drew on a source whose notes
-    are members of none of the names it queried, so there is no
+    are members of none of the names its claims touch, so there is no
     availability to divide by.
 
     **`available_chunk_count`/`available_share` are `None`, not `0`, when
-    this run queried no name at all (issue #584)** -- `denominator_by_name`
-    empty is that signal: neither a direct single-name traversal nor a
-    `where_names_meet` pair contributed an entry, which is exactly what the
-    argument-map retrieval path (§7.17) produces on every run, since it
-    makes no name-layer tool call. A genuine measured zero -- a source drawn
-    on that is a member of none of the names THIS run actually queried --
-    still reads `0`: the distinction is whether a denominator was ever
-    computed at all, not whether one source's own share of it happens to be
-    empty."""
-    trajectory = record.get("trajectory") or []
-    names_queried = derive_names_queried(trajectory)
-    denominator_by_name, available_counts = compute_available_notes(trajectory, vault_dir=vault_dir)
+    this run's claims touched no name at all (issue #584)** --
+    `denominator_by_name` empty is that signal. A genuine measured zero -- a
+    source drawn on that is a member of none of the names THIS run's claims
+    touch -- still reads `0`: the distinction is whether a denominator was
+    ever computed at all, not whether one source's own share of it happens
+    to be empty."""
+    claims = record.get("claims") or []
+    names_touched = _touched_names(claims)
+    names_queried = derive_names_queried(claims)
+    denominator_by_name, available_counts = compute_available_notes(
+        names_touched, vault_dir=vault_dir
+    )
     available_total = sum(available_counts.values())
     names_were_queried = bool(denominator_by_name)
 
     disposition = (record.get("interrogation") or {}).get("disposition")
-    claims = record.get("claims") or []
     evidence_counts = (
         {} if disposition == "refuse" else _fold_evidence_grounds(claims, vault_dir=vault_dir)
     )

@@ -29,13 +29,13 @@ def _entry(tool: str, result_ids: list[str]) -> dict[str, Any]:
 
 
 def test_no_fork_constraint_is_unaffected():
-    trajectory = [_entry("get_name", ["aaa_1_a_001", "bbb_1_a_001"])]
+    trajectory = [_entry("get_chunk", ["aaa_1_a_001", "bbb_1_a_001"])]
     assert assemble_evidence_ids(trajectory) == assemble_evidence_ids(trajectory, None, None)
 
 
 def test_drop_source_ids_removes_every_id_from_that_source():
     trajectory = [
-        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "bbb_1_a_001"]),
+        _entry("get_chunk", ["aaa_1_a_001", "aaa_1_a_002", "bbb_1_a_001"]),
     ]
     constraint = ForkConstraint(drop_source_ids=frozenset({"aaa"}))
 
@@ -46,7 +46,7 @@ def test_drop_source_ids_removes_every_id_from_that_source():
 
 def test_per_source_cap_limits_how_many_ids_one_source_contributes():
     trajectory = [
-        _entry("get_name", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003", "bbb_1_a_001"]),
+        _entry("get_chunk", ["aaa_1_a_001", "aaa_1_a_002", "aaa_1_a_003", "bbb_1_a_001"]),
     ]
     constraint = ForkConstraint(per_source_cap=1)
 
@@ -58,7 +58,7 @@ def test_per_source_cap_limits_how_many_ids_one_source_contributes():
 def test_drop_and_cap_compose_drop_first_then_cap():
     trajectory = [
         _entry(
-            "get_name",
+            "get_chunk",
             ["aaa_1_a_001", "aaa_1_a_002", "bbb_1_a_001", "bbb_1_a_002", "ccc_1_a_001"],
         ),
     ]
@@ -70,7 +70,7 @@ def test_drop_and_cap_compose_drop_first_then_cap():
 
 
 def test_a_constraint_with_neither_drop_nor_cap_is_a_no_op():
-    trajectory = [_entry("get_name", ["aaa_1_a_001", "bbb_1_a_001"])]
+    trajectory = [_entry("get_chunk", ["aaa_1_a_001", "bbb_1_a_001"])]
     constraint = ForkConstraint(guidance="just guidance, no filtering")
 
     assert assemble_evidence_ids(trajectory, fork_constraint=constraint) == assemble_evidence_ids(

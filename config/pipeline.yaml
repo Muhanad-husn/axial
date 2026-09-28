@@ -98,27 +98,11 @@ llm:
     # advertise only high/xhigh, and OpenRouter's remap-to-nearest measured
     # WORSE than high -- a higher median plus a 10,017-token blowup.
     reconcile: high
-    # Phase A v1 Gather (§7.9/§7.18, issue #412): ON, as §7.9's pass table
-    # states. Reading a page's worth of claims side by side and saying what
-    # their authors disagree about is the same shape of judgment call as the
-    # merge above -- underdetermined, low-volume relative to the per-note
-    # pass, and won by letting the model think rather than by prompt
-    # engineering. An explicit "high" rather than a bare `true` for the same
-    # reason `reconcile` carries one: deepseek/glm advertise only high/xhigh,
-    # so a bool hands the choice to OpenRouter's remap-to-nearest. The MODEL
-    # is deliberately left to `llm_tier` -- unlike `reconcile`, no probe has
-    # compared tiers on this call yet, and pinning one on no evidence would
-    # read as a measured pick.
-    gather: high
-    # Phase A v1 grounding eval (issue #478, D15/D17): ON, same judgment
-    # shape as `gather` above -- reading a disagreement against the passages
-    # it was written from and deciding whether it holds up. Its own pass
-    # name (not `gather`'s) so the model_by_pass entry below can route it to
-    # a different model without moving Gather itself.
-    gather_eval: high
+    # Gather and its grounding eval (`gather`/`gather_eval`) are retired
+    # (DEC-75, issue #853): the pipeline no longer has either pass.
     artifacts: false
     # Argument-map position extraction (issue #572): ON at an explicit
-    # "high" effort, same profile as `reconcile`/`gather` above -- deciding
+    # "high" effort, same profile as `reconcile` above -- deciding
     # how many arguments a bag of similarly-worded passages actually holds,
     # and refusing to fuse contending ones into one sentence, is the same
     # underdetermined judgment call. Measured directly on the scratchpad
@@ -311,13 +295,8 @@ llm:
     # silently move the next time that default changes -- the same reason
     # every other entry in this block exists.
     reconcile: production_low
-    # Phase A v1 grounding eval (issue #478, D15/D17, §10/charter §2 self-
-    # grading guard): production_high (deepseek-v4-pro), the same tier the
-    # envelope pass uses and NOT the tier Gather itself resolves to (Gather
-    # carries no model_by_pass entry of its own, so it stays on whatever
-    # `llm_tier` names) -- the pass that wrote a disagreement must never be
-    # the pass that judges it grounded.
-    gather_eval: production_high
+    # Gather's own grounding eval (`gather_eval`) is retired along with
+    # Gather (DEC-75, issue #853).
     # The derived-vocabulary categorisation pass (issue #805 slice 01,
     # plans/derived-vocabulary/01-the-sentence-columns-are-counted.md): its
     # own tier, on the same one-tier-per-pass rule as every entry above. The
@@ -372,39 +351,8 @@ names:
   merge_min_cluster_size: 2
   merge_min_samples: 1
 
-# Phase A v1 Gather: MINIMUM MEMBER COUNT (§7.18, founder product-scope
-# decision, 2026-07-29, not a tuned heuristic constant): a name below this
-# member count is skipped before Gather assembles it into a packet -- no
-# packet, no model call, counted as `names_skipped_below_min_members` in the
-# run summary. src/axial/gather.py reads this via
-# _resolve_min_gather_members, falling back to its own
-# DEFAULT_MIN_GATHER_MEMBERS when this file or the key is absent. This is
-# separate from gather.py's own `_MIN_MEMBERS = 2` (a disagreement needs two
-# parties -- definitional, never moved into config); this is the movable
-# scope cut, exposed here precisely so it stays visible and changeable
-# without touching src/.
-#
-# Measured on a seeded 100-name stratified sample
-# (data/logs/2026-07-29-gather-stratified-sample/summary.md): the value of
-# asking is concentrated in large names -- 65% of the largest 20 names
-# produced a real disagreement, ~22% of the upper decile (10-41 members),
-# only 5-13% of a uniform-random name (median 3 members).
-#
-# And measured on the live index (20,321 eligible names, 118,963 member
-# slots):
-#
-#   min members | names  | % of pool | member slots | batches
-#   ----------- | ------ | --------- | ------------ | -------
-#   2 (was default) | 20,321 | 100%  | 118,963      | 20,834
-#   5           |  5,003 |  24.6%    |  80,935      |  5,516
-#   10          |  1,927 |   9.5%    |  61,539      |  2,440
-#   20          |    743 |   3.7%    |  45,932      |  1,256
-#   50          |    221 |   1.1%    |  30,620      |    734
-#
-# Cutting at 10 drops 90% of the pages and keeps 52% of the member evidence
-# -- the founder's chosen cut point.
-gather:
-  min_members: 10
+# Gather and its `min_members` product-scope cut are retired (DEC-75, issue
+# #853): the pipeline no longer has a Gather pass to configure.
 
 # Stage-3 agentic retrieval loop (issue #253, PRD §7.5/§7.6, P0-3): a
 # bounded step budget is a stated tunable, never hardcoded at the call
@@ -486,8 +434,8 @@ synthesis:
 # `contested_detection.min_distinct_theory_schools` block that lived here
 # counted distinct `theory_school` primaries, an axis Phase A v1 deleted; the
 # §7.8 rule now reads what the notes themselves say (`arguing_against` naming
-# the other side, or a Gather disagreement at a name the answer rests on) and
-# either fires or it doesn't.
+# the other side) and either fires or it doesn't. The Gather-disagreement
+# signal this comment used to also name is retired (DEC-75, issue #853).
 
 # Google Drive connector tunables (issue #239, PRD §7.10 "Language-gate
 # tunables" paragraph / §8 P0-11c): the English-only language gate's

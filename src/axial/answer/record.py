@@ -13,8 +13,7 @@ On a `refuse` disposition (§7.2), stages 3-4 never run: `claims` and
 `trajectory` are both empty, `model_by_pass` names only the interrogation
 pass, and the record is still written -- a refusal is a COMPLETE run, not
 an error (§7.2, §8 P0-1). This mirrors `run_examine`'s own inherited
-short-circuit (`run_planned_retrieval` itself returns an empty trajectory
-on `refuse`) and extends it one stage further to skip synthesis too.
+short-circuit and extends it one stage further to skip synthesis too.
 
 `coverage_map` (§7.7) and `confidence` (§7.4) ARE computed here (issue
 #400): `build_record` calls `axial.validators.coverage.compute_coverage_map`
@@ -94,7 +93,7 @@ import copy
 import json
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -115,7 +114,6 @@ from axial.argmap.ask import (
     CORRIDOR_ORDER_KIND,
     DECOMPOSE_PASS_NAME,
     AskResult,
-    resolve_pinned_map_dir,
     run_map_ask_for_brief,
 )
 from axial.argmap.vocabulary_join import (
@@ -124,22 +122,13 @@ from axial.argmap.vocabulary_join import (
     PER_CATEGORY_CAP,
     VocabularyJoinResult,
 )
-from axial.brief.fork import (
-    ForkAnswer,
-    ForkCheckError,
-    ForkCheckResult,
-    assess_fork,
-    compile_constraint,
-    describe_effect,
-)
+from axial.brief.fork import ForkAnswer, ForkCheckResult
 from axial.brief.intake import Brief
 from axial.brief.interrogate import InterrogationResult, interrogate
 from axial.eval.corpus_pin import resolve_pin_id
 from axial.llm import (
     COUNTER_POSITION_GENERATE_PASS_NAME,
-    FORK_CHECK_PASS_NAME,
     INTERROGATE_PASS_NAME,
-    RETRIEVE_PASS_NAME,
     SYNTHESIZE_PASS_NAME,
     EventCallback,
     LLMClient,
@@ -147,7 +136,6 @@ from axial.llm import (
     usage_and_cost_by_pass,
 )
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_analyses_dir, default_vault_dir
-from axial.retrieve.loop import assemble_evidence_ids, run_planned_retrieval
 from axial.validators.coverage import compute_confidence, compute_coverage_map
 
 # The trivial "nothing measured" fork-check result `build_record` substitutes
@@ -163,26 +151,23 @@ class AnswerError(Exception):
 
 # The named retrieval arms `run_brief`'s own `arm` argument recognises
 # (issue #807, `plans/derived-vocabulary/03-two-notes-meet-at-a-shared-
-# group.md`'s "the join is a step, not a tool"): `NAME_ARM` is the existing
-# name-layer loop (`use_map=False`), `MAP_ARM` is the argument-map path with
-# no vocabulary step (`use_map=True`, `use_vocabulary=False` -- issue #572),
-# `MAP_VOCAB_ARM` adds the vocabulary step onto the same map walk
-# (`use_vocabulary=True`). `axial.brief.sweep` (#808) already threads its
-# own `arm` string straight into `run_brief(use_map=...)`; this is the
-# lower layer #808's own module docstring says a real third arm teaches.
-NAME_ARM = "name"
+# group.md`'s "the join is a step, not a tool"): `MAP_ARM` is the
+# argument-map path with no vocabulary step (`use_vocabulary=False` --
+# issue #572), `MAP_VOCAB_ARM` adds the vocabulary step onto the same map
+# walk (`use_vocabulary=True`). The third arm, the name-layer loop, was
+# retired with the vault's name pages (DEC-75, issue #853).
 MAP_ARM = "map"
 MAP_VOCAB_ARM = "map+vocab"
-KNOWN_ARMS = (NAME_ARM, MAP_ARM, MAP_VOCAB_ARM)
+KNOWN_ARMS = (MAP_ARM, MAP_VOCAB_ARM)
 
 
 class UnknownArmError(AnswerError):
     """Raised when `run_brief`'s own `arm` names none of `KNOWN_ARMS`
     (issue #807). Refused up front, before interrogation ever runs -- the
     same "fail before any call is made" discipline the corpus-pin
-    resolution already follows -- rather than silently falling back to the
-    name-layer default, which would spend a real interrogation call on a
-    typo before anyone learned the arm was never recognised."""
+    resolution already follows -- rather than silently falling back to a
+    default arm, which would spend a real interrogation call on a typo
+    before anyone learned the arm was never recognised."""
 
     def __init__(self, arm: str):
         self.arm = arm
@@ -208,55 +193,6 @@ def _interrogation_conclusion_message(result: InterrogationResult) -> str:
     premise_word = "premise" if n_premises == 1 else "premises"
     bound_word = "bound" if n_bounds == 1 else "bounds"
     return f"interrogation concluded: found {n_premises} {premise_word}, applied {n_bounds} {bound_word}"
-
-
-_FORK_KIND_LABELS = {
-    "source_imbalance": "one source dominating the evidence",
-    "temporal_role": "sources split unevenly across a period",
-    "temporal_consequence": "sources split unevenly across an event",
-}
-
-
-def _fork_declined_message(fork: ForkCheckResult) -> str:
-    """The walk line for a genuine fork found with no way to answer it
-    (issue #750): neither `brief.fork_answer` nor `on_fork` is available --
-    the service worker, and every batch caller (`axial brief run`/`smoke`/
-    `sweep`), declare a single policy, decline, rather than opening a
-    mid-run prompt no caller can answer (DEC-62's interactive path stays
-    `axial ask`-only). States what was measured (the concept and the shape
-    of the imbalance) and what was on offer, then discloses the decision --
-    never repeats the model's own `question` text on screen, which is
-    phrased to be answered and reads as a broken control when nobody can
-    (a live run's question ended in "...or would you prefer to cap
-    Hinnebusch's notes..."). Nothing this composes ends in a question
-    addressed to the analyst."""
-    kind_label = _FORK_KIND_LABELS.get(fork.kind, "an imbalance in the evidence")
-    option_labels = ", ".join(f'"{option.label}"' for option in fork.options)
-    n = len(fork.options)
-    option_word = "option was" if n == 1 else "options were"
-    return (
-        f'the intake fork-check measured {kind_label} on "{fork.concept}" -- '
-        f"{n} {option_word} available ({option_labels}) -- but the service declines "
-        "every fork under its declared policy: it does not answer, and the run "
-        "proceeds unconstrained, every source read as a full voice"
-    )
-
-
-def _fork_disclosure_message(
-    fork: ForkCheckResult, *, fork_answer_supplied: bool, has_on_fork: bool
-) -> str:
-    """The walk line for a genuine, found fork (issue #750): a pure
-    decision, isolated from `run_brief`'s own wiring so it is unit-
-    testable without the full engine fixture. `axial ask` (`on_fork`
-    given) and a batch run with `brief.fork_answer` already on file both
-    still see the model's own question text verbatim -- unchanged from
-    before this issue, and the only two paths that can actually act on it.
-    Every other caller (the service worker; `axial brief run`/`smoke`/
-    `sweep` with no pre-supplied answer) has no way to answer at all, and
-    gets `_fork_declined_message`'s honest disclosure instead."""
-    if fork_answer_supplied or has_on_fork:
-        return f"a clarifying question was found: {fork.question}"
-    return _fork_declined_message(fork)
 
 
 def _brief_to_dict(brief: Brief) -> dict[str, Any]:
@@ -729,58 +665,41 @@ def run_brief(
     run -- the record is still written and this function still returns
     normally; translating that into exit 0 is the CLI's job.
 
-    `use_map` (issue #572, PR 4 of 4, default off): retrieve through the
-    argument map instead of the name-layer loop. Interrogation (stage 1)
-    and synthesis (stage 4) are the exact same calls either way -- only
-    stage 3 changes, from `run_planned_retrieval`'s tool loop to
+    **Retrieval is always the argument map now (DEC-75)**: the name-layer
+    tool loop (`find_names`/`get_name`/`name_neighbors`/`who_cites`/
+    `who_argues_against`/`where_names_meet`/`names_arguing_against`/
+    `opposition_pairs` as loop tools, and the name pages they walked) was
+    retired with the vault's name pages -- issue #853. Stage 3 is always
     `axial.argmap.ask.run_map_ask_for_brief`'s door/landing/corridor/
     assembly walk, which hands back an ordered list of chunk ids that feeds
-    the same `assemble_evidence`/`synthesize` the name-layer path already
-    used. `map_dir`/`sources_dir`/`map_pin` are forwarded verbatim (ignored
-    when `use_map` is `False`); nothing about them changes the default
-    path. The name-layer loop remains the default retrieval path -- this is
-    opt-in, not a replacement (settled on issue #572: nothing is retired on
-    one brief).
+    the same `assemble_evidence`/`synthesize` call either arm ever used.
+    `use_map`/`arm` (issue #572/#807) are kept as parameters so
+    `axial.brief.sweep`/`axial.brief.smoke`/the CLI do not need their own
+    signatures to change, but neither one selects a different retrieval
+    path any more -- `arm`, when given, must still name one of `KNOWN_ARMS`
+    (`"map"` or `"map+vocab"`; `"name"` now raises `UnknownArmError`, the
+    same as any other unrecognised string) and only ever decides whether
+    the vocabulary join runs. `map_dir`/`sources_dir`/`map_pin` are
+    forwarded verbatim.
 
-    `brief.weights` (issue #639) only bites on the name-layer path: it
-    reaches `run_planned_retrieval`, which forwards it to `assemble_
-    evidence_ids`'s round-robin. The argument-map path builds its own
-    ordered chunk list a different way (`run_map_ask_for_brief`) and never
-    calls that function, so a weight supplied on a `use_map=True` run is
-    recorded (`brief.weights` still lands in the persisted record, §7.1)
-    but has no retrieval effect -- out of scope here exactly as the map's
-    own ranking is (issue #639's own scope note).
+    `brief.weights` (issue #639) has no retrieval effect on the map path
+    (`run_map_ask_for_brief` builds its own ordered chunk list and never
+    reaches the round-robin `brief.weights` used to bite on the retired
+    name-layer path) -- it is still recorded verbatim in the persisted
+    record (§7.1).
 
-    **The intake fork-check (issue #649, specs/PHASE-B.md §7, DEC-62) runs
-    between interrogation and retrieval, and only on the name-layer path**
-    (`use_map=False`): it measures the question against the note store,
-    and, when the measurement resolved at least one concept, makes one
-    bounded model call (`axial.brief.fork.assess_fork`) to judge whether a
-    genuine fork exists. When one is found, `brief.fork_answer` (§7.1) is
-    read first -- the pre-supplied answer a batch caller (`axial brief
-    run`/`smoke`/`sweep`) gives with no interactive prompt to ask; when
-    that is absent, `on_fork`, when given, is called with the fork so an
-    interactive caller (`axial ask`, `axial.cli._fork_prompt`) can ask it
-    live. Neither given is not an error: the fork is recorded in the
-    persisted record's `intake_fork` block with `answer: null` and the run
-    proceeds fully unconstrained, exactly as issue #649 requires of a
-    batch run. An answer compiles (`compile_constraint`) into a
-    `ForkConstraint` that reaches `run_planned_retrieval`, the same site
-    `brief.weights` already bites, and `intake_fork.effect` discloses what
-    it actually did to the assembled evidence set.
+    found, it is recorded in the persisted record's `intake_fork` block with
+    `answer: null` -- there is no fork left to answer.
 
     `arm` (issue #807, one of `KNOWN_ARMS`, `None` by default) is the named
-    retrieval arm this run takes, and, when given, takes precedence over
-    `use_map` -- the same precedence `axial.brief.sweep._run_one_draw`
-    already gives its own `arm`/`use_map` pair. `arm="name"` runs the
-    name-layer loop, `arm="map"` is `use_map=True` with no vocabulary step,
-    `arm="map+vocab"` adds the vocabulary step (`axial.argmap.
-    vocabulary_join.vocabulary_neighbours`) onto the same map walk, between
-    the corridor and assembly. A string naming none of `KNOWN_ARMS` raises
-    `UnknownArmError` immediately, before interrogation or any other call --
-    the join is a deterministic step in the map arm's own walk (module
-    docstring's "the join is a step, not a tool"), never a tool a caller
-    could otherwise silently mis-name into the name-layer default.
+    retrieval arm this run takes: `arm="map"` (or `None`, the default) is
+    the map walk with no vocabulary step, `arm="map+vocab"` adds the
+    vocabulary step (`axial.argmap.vocabulary_join.vocabulary_neighbours`)
+    onto the same map walk, between the corridor and assembly. A string
+    naming none of `KNOWN_ARMS` raises `UnknownArmError` immediately, before
+    interrogation or any other call -- the join is a deterministic step in
+    the map arm's own walk (module docstring's "the join is a step, not a
+    tool"), never a tool a caller could otherwise silently mis-name.
     **All four `vocabulary_*` arguments are forwarded to `run_map_ask_for_
     brief` verbatim (issue #822)**, and every one of them is ignored on any
     arm but `map+vocab`: which column to join on, which level of its
@@ -793,7 +712,11 @@ def run_brief(
     literals."""
     if arm is not None and arm not in KNOWN_ARMS:
         raise UnknownArmError(arm)
-    resolved_use_map = use_map if arm is None else (arm != NAME_ARM)
+    # `use_map` is accepted but no longer selects a retrieval path (DEC-75,
+    # issue #853): the name-layer arm it used to toggle away from is gone,
+    # so the map walk always runs. Kept as a parameter only so
+    # `axial.brief.sweep`/`axial.brief.smoke`/the CLI keep their existing
+    # signatures.
     resolved_use_vocabulary = arm == MAP_VOCAB_ARM
 
     corpus_pin = resolve_pin_id(evals_dir)
@@ -824,170 +747,53 @@ def run_brief(
         fork_answer: ForkAnswer | None = None
         fork_effect: dict[str, int] | None = None
     else:
-        if resolved_use_map:
-            # The intake fork-check (issue #649) only bites the name-layer
-            # path: it compiles into `assemble_evidence_ids`'s own
-            # `fork_constraint` argument, which the argument-map path never
-            # calls (`brief.weights`' own scope note above, unchanged
-            # precedent). Skipped entirely here, not merely unconstrained --
-            # `measured=False` says plainly that nothing was asked, the same
-            # honest-absence reading `_NO_FORK` gives a `refuse` disposition.
-            fork_result = _NO_FORK
-            fork_answer = None
-            fork_effect = None
-            emit_event(
-                on_event, "retrieving evidence through the argument map", {"stage": "retrieve"}
+        # No fork-check and no name-layer trajectory any more (DEC-75,
+        # issue #853): the retired name-layer path was the only caller of
+        # both. `fork_result`/`fork_answer`/`fork_effect` stay in the
+        # returned record shape, at the same "nothing was asked" values a
+        # `refuse` disposition already reports, so no downstream reader
+        # (coverage_map, source_usage, the run report) needs a new case.
+        fork_result = _NO_FORK
+        fork_answer = None
+        fork_effect = None
+        emit_event(on_event, "retrieving evidence through the argument map", {"stage": "retrieve"})
+        with clock.time(DECOMPOSE_PASS_NAME):
+            ask_result = run_map_ask_for_brief(
+                brief,
+                client=client,
+                map_dir=map_dir,
+                envelopes_dir=envelopes_dir,
+                sources_dir=sources_dir,
+                config_path=config_path,
+                pin=map_pin,
+                use_vocabulary=resolved_use_vocabulary,
+                vocabulary_column=vocabulary_column,
+                vocabulary_level=vocabulary_level,
+                vocabulary_dir=vocabulary_dir,
+                vocabulary_cap=vocabulary_cap,
             )
-            with clock.time(DECOMPOSE_PASS_NAME):
-                ask_result = run_map_ask_for_brief(
-                    brief,
-                    client=client,
-                    map_dir=map_dir,
-                    envelopes_dir=envelopes_dir,
-                    sources_dir=sources_dir,
-                    config_path=config_path,
-                    pin=map_pin,
-                    use_vocabulary=resolved_use_vocabulary,
-                    vocabulary_column=vocabulary_column,
-                    vocabulary_level=vocabulary_level,
-                    vocabulary_dir=vocabulary_dir,
-                    vocabulary_cap=vocabulary_cap,
-                )
-            model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
-            evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)
-            emit_event(
-                on_event,
-                f"found {len(evidence_ids)} passage(s) through the argument map",
-                {"stage": "retrieve", "evidence_count": len(evidence_ids)},
-            )
-            # The map path makes no name-layer tool call, so it has no §7.6
-            # trajectory of its own -- an honest empty list, never a
-            # fabricated one built to keep a downstream reader fed. Every
-            # trajectory consumer (coverage_map, source_usage, the run
-            # report) already treats an empty trajectory as "this run
-            # queried no name", the same fact a `refuse` disposition's
-            # empty trajectory already states; what the map path actually
-            # did is recorded in `map_retrieval` instead.
-            trajectory = []
-            map_retrieval = _map_retrieval_to_dict(ask_result)
-        else:
-            emit_event(
-                on_event,
-                "checking the question against the measured corpus",
-                {"stage": "fork_check"},
-            )
-            try:
-                with clock.time(FORK_CHECK_PASS_NAME):
-                    fork_result = assess_fork(
-                        brief,
-                        client=client,
-                        vault_dir=vault_dir,
-                        question_scope=interrogation_result.question_scope,
-                    )
-            except ForkCheckError as exc:
-                # The fork-check is advisory by construction (module
-                # docstring): no fork found means nothing is asked and
-                # retrieval proceeds unconstrained. A malformed answer or a
-                # transport failure lands in that same place -- never
-                # propagated up to abort a run that already paid for
-                # interrogation (issue #649's own live-run finding: a model
-                # mistyped a source id on the third call of a live pass and
-                # the whole run died on it). `measured=False` here is
-                # deliberately the same shape `_NO_FORK` uses -- the run
-                # proceeds identically either way -- but `failed` is set so
-                # the record can say plainly the check FAILED, not that no
-                # fork existed.
-                fork_result = ForkCheckResult(is_fork=False, measured=False, failed=str(exc))
-                model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(FORK_CHECK_PASS_NAME)
-                emit_event(
-                    on_event,
-                    f"the fork-check failed and is being skipped: {exc}",
-                    {"stage": "fork_check", "failed": True},
-                )
-            else:
-                if fork_result.measured:
-                    model_by_pass[FORK_CHECK_PASS_NAME] = client.model_for_pass(
-                        FORK_CHECK_PASS_NAME
-                    )
-            fork_answer = None
-            if fork_result.is_fork:
-                fork_answer_supplied = brief.fork_answer is not None
-                # No answering mechanism at all (issue #750): the service
-                # worker and every batch caller (`axial brief run`/`smoke`/
-                # `sweep`) declare a single policy, decline, rather than a
-                # mid-run prompt neither has a client for. `axial ask`
-                # (`on_fork` given) and a batch run with a pre-supplied
-                # `brief.fork_answer` are both unchanged -- they still see
-                # the model's own question, either to ask it live or
-                # alongside the answer already on file.
-                emit_event(
-                    on_event,
-                    _fork_disclosure_message(
-                        fork_result,
-                        fork_answer_supplied=fork_answer_supplied,
-                        has_on_fork=on_fork is not None,
-                    ),
-                    {
-                        "stage": "fork_check",
-                        "concept": fork_result.concept,
-                        "declined": not (fork_answer_supplied or on_fork is not None),
-                    },
-                )
-                if brief.fork_answer is not None:
-                    fork_answer = ForkAnswer(
-                        option=brief.fork_answer.get("option"),
-                        free_text=brief.fork_answer.get("free_text"),
-                    )
-                elif on_fork is not None:
-                    fork_answer = on_fork(fork_result)
-            fork_constraint = (
-                compile_constraint(fork_result, fork_answer)
-                if fork_result.is_fork and fork_answer is not None and not fork_answer.is_blank()
-                else None
-            )
-
-            with clock.time(RETRIEVE_PASS_NAME):
-                retrieval_result = run_planned_retrieval(
-                    client,
-                    brief,
-                    interrogation_result,
-                    vault_dir=vault_dir,
-                    envelopes_dir=envelopes_dir,
-                    # The pinned argument map, when this corpus has one
-                    # built (issue #650): `positions_on` is a tool in the
-                    # loop's own set, so the map is read here as well as by
-                    # the `--map` arm above, and resolving it is tolerant --
-                    # no map means one tool returns nothing, never a failed
-                    # run.
-                    map_dir=resolve_pinned_map_dir(
-                        map_dir=map_dir,
-                        pin=map_pin,
-                        envelopes_dir=envelopes_dir,
-                        sources_dir=sources_dir,
-                        config_path=config_path,
-                    ),
-                    config_path=config_path,
-                    step_budget=step_budget,
-                    thin_result_floor=thin_result_floor,
-                    on_event=on_event,
-                    fork_constraint=fork_constraint,
-                )
-            model_by_pass[RETRIEVE_PASS_NAME] = client.model_for_pass(RETRIEVE_PASS_NAME)
-            evidence_ids = retrieval_result.evidence_ids
-            trajectory = retrieval_result.trajectory
-            map_retrieval = None
-            if fork_constraint is not None:
-                baseline_ids = assemble_evidence_ids(trajectory, brief.weights)
-                fork_effect = describe_effect(baseline_ids, evidence_ids)
-            else:
-                fork_effect = None
+        model_by_pass[DECOMPOSE_PASS_NAME] = client.model_for_pass(DECOMPOSE_PASS_NAME)
+        evidence_ids: list[str] = list(ask_result.assembled_chunk_ids)
+        emit_event(
+            on_event,
+            f"found {len(evidence_ids)} passage(s) through the argument map",
+            {"stage": "retrieve", "evidence_count": len(evidence_ids)},
+        )
+        # The map path makes no name-layer tool call, so it has no §7.6
+        # trajectory of its own -- an honest empty list, never a
+        # fabricated one built to keep a downstream reader fed. Every
+        # trajectory consumer (coverage_map, source_usage, the run
+        # report) already treats an empty trajectory as "this run
+        # queried no name", the same fact a `refuse` disposition's
+        # empty trajectory already states; what the map path actually
+        # did is recorded in `map_retrieval` instead.
+        trajectory = []
+        map_retrieval = _map_retrieval_to_dict(ask_result)
 
         # Evidence assembly is timed under the synthesis pass it feeds: it
         # makes no model call of its own and has no pass name to report
         # under, and leaving it untimed would make the per-pass figures sum
-        # to less than the run really took. This call is the SAME one
-        # either path takes -- the map path differs only in how
-        # `evidence_ids` was produced above.
+        # to less than the run really took.
         with clock.time(SYNTHESIZE_PASS_NAME):
             emit_event(
                 on_event,
@@ -1000,53 +806,22 @@ def run_brief(
                 f"assembled {len(evidence.chunk_ids)} passage(s)",
                 {"stage": "assemble", "assembled_count": len(evidence.chunk_ids)},
             )
-            # An answered fork must never be able to zero the evidence set
-            # SILENTLY (issue #649's own live-run finding, round 3): a live
-            # run's analyst answer reached the retrieval loop through its
-            # guidance prose and the walk came back with nothing to cite --
-            # `describe_effect` then reported `notes_before: 0, notes_after:
-            # 0` and `synthesize` still wrote 5 claims, every one with zero
-            # grounds. `fork_effect` is only ever non-`None` when a
-            # constraint actually reached retrieval (immediately above), so
-            # this can never fire on an unconstrained or `use_map` run. An
-            # empty result here is routed to the same `intake_fork.failed`
-            # disclosure a malformed fork-check response already uses
-            # (module docstring), never into `synthesize` -- which is left
-            # entirely untouched; its own behaviour on an empty evidence set
-            # is a separate, pre-existing concern outside #649's scope.
-            if fork_effect is not None and not evidence.chunk_ids:
-                emit_event(
-                    on_event,
-                    "the analyst's fork answer left no evidence to retrieve from -- "
-                    "skipping synthesis",
-                    {"stage": "synthesize", "failed": True},
-                )
-                fork_result = replace(
-                    fork_result,
-                    failed=(
-                        "the analyst's fork answer left no evidence to retrieve from -- "
-                        "retrieval assembled zero notes with this constraint applied"
-                    ),
-                )
-                claim_graph = None
-            else:
-                emit_event(on_event, "writing the answer", {"stage": "synthesize"})
-                claim_graph = synthesize(
-                    evidence,
-                    brief,
-                    client=client,
-                    vault_dir=vault_dir,
-                    lenses_dir=lenses_dir,
-                    config_path=config_path,
-                    question_scope=interrogation_result.question_scope,
-                )
-                emit_event(
-                    on_event,
-                    f"wrote the answer -- {len(claim_graph.claims)} claim(s)",
-                    {"stage": "synthesize", "claim_count": len(claim_graph.claims)},
-                )
-        if claim_graph is not None:
-            model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
+            emit_event(on_event, "writing the answer", {"stage": "synthesize"})
+            claim_graph = synthesize(
+                evidence,
+                brief,
+                client=client,
+                vault_dir=vault_dir,
+                lenses_dir=lenses_dir,
+                config_path=config_path,
+                question_scope=interrogation_result.question_scope,
+            )
+            emit_event(
+                on_event,
+                f"wrote the answer -- {len(claim_graph.claims)} claim(s)",
+                {"stage": "synthesize", "claim_count": len(claim_graph.claims)},
+            )
+        model_by_pass[SYNTHESIZE_PASS_NAME] = client.model_for_pass(SYNTHESIZE_PASS_NAME)
 
         lens = (
             claim_graph.lens

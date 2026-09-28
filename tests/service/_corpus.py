@@ -59,24 +59,9 @@ def build_corpus_root(
         vault / "prose" / f"{CHUNK_ID}.md",
         f"---\nchunk_id: {CHUNK_ID}\nsource_id: {SOURCE_ID}\n---\n\n{passage}\n",
     )
-    _write(
-        vault / "names" / f"{CANONICAL}.md",
-        f"---\nname: {CANONICAL}\nkind: person\nmember_count: 1\n---\n\n"
-        f"- [[{CHUNK_ID}]] -- Author (1979): {passage}\n",
-    )
-    _write(
-        vault / "names.jsonl",
-        json.dumps(
-            {
-                "name": CANONICAL,
-                "filename": f"{CANONICAL}.md",
-                "kind": "person",
-                "member_count": 1,
-                "source_count": 1,
-            }
-        )
-        + "\n",
-    )
+    # No `vault/names/` and no `vault/names.jsonl` (DEC-75, issue #853): the
+    # name pages and their door index are retired, and `axial materialize`
+    # writes neither any more -- a fresh corpus root never has them.
     _write(vault / "artifacts" / f"{SOURCE_ID}_art_1.md", "---\nartifact_id: x\n---\n\ntable\n")
     # Not a real database -- nothing in these tests opens it. It is here
     # because a snapshot that omitted `notes.db` would not be a corpus.

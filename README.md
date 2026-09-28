@@ -9,10 +9,10 @@ ground it, and carries a disclosed confidence band.
 
 This is the opposite of retrieval. A librarian returns what a source already said. Axial
 reads every passage once with open questions (what it claims, whose position it is, who it
-argues against, who it cites, what it names), lets passages meet each other at the names
-they share, and states what follows from many sources read together. The claim no single
-source made is the product, and it is also the risk, so that seam is labeled everywhere it
-appears.
+argues against, who it cites, what it names), lets passages meet each other on the argument
+map they make together, and states what follows from many sources read together. The claim
+no single source made is the product, and it is also the risk, so that seam is labeled
+everywhere it appears.
 
 **v1.0.0, released 2026-08-12** — the first tagged release.
 
@@ -34,7 +34,7 @@ All three are built, run end to end, and measured.
 
 | Phase | What it does | Input → output |
 |---|---|---|
-| **A. Corpus ingestion** | Ten stages: intake, structural extraction, routing, envelope, chunking, artifacts, interrogate, reconcile, materialize, gather | PDF/DOCX → an Obsidian vault of passages and name pages |
+| **A. Corpus ingestion** | Nine stages: intake, structural extraction, routing, envelope, chunking, artifacts, interrogate, reconcile, materialize | PDF/DOCX → an Obsidian vault of passages plus a relational store (`notes.db`) |
 | **B. Analysis engine** | Brief interrogation, an LLM-free query API, an agentic retrieval loop, synthesis, five deterministic validators | a question → a structured analysis record and markdown answer |
 | **C. Paper authorship** | Brief intake, arc planning, section-by-section drafting, citation indexing, apparatus | analysis records → a paper record and rendered paper |
 
@@ -55,9 +55,11 @@ it writes to disk before any inference spend, so passage quality is inspectable 
 Then one model call per passage asks the open questions. Nothing is picked off a closed
 vocabulary; the name layer is grown from what the corpus said, not decided in advance.
 
-Links live on the name pages, not in the passages. Obsidian treats a link as bidirectional,
-so the graph draws identically and the whole link layer is regenerable: a changed merge
-rewrites a few hundred name pages instead of six thousand notes.
+Links live on the argument map's own position pages, not in the passages (DEC-75): the
+name pages this used to describe are retired, since the final output never read one --
+every claim cites a `chunk_id` directly, and `find_names`/`get_name` answer from the
+relational store (`notes.db`) instead of a page. Obsidian treats a link as bidirectional,
+so the graph draws identically and the whole link layer is regenerable from `data/map/`.
 
 ### Where the guarantees live
 
@@ -85,14 +87,12 @@ judged check runs on the same model family that produced what it judges.
 |---|---:|
 | Sources ingested | 35 |
 | Passages | 6,842 |
-| Name pages | 47,584 |
 | Name mentions | 137,276 |
-| Pages that can carry a comparison | 329 |
 
-A page carries a comparison when it holds roughly 30 to 200 passages drawn from five or
-more books. Below thirty there is too little, above two hundred no reader can hold it, and
-under five books it is one author talking. 329 of 47,584 pages clear that bar, seven in ten
-thousand. Full report: `data/reports/axial-coverage-v2.md`.
+The name pages this table used to also count (47,584 of them, 329 clearing a
+cross-book-comparison bar) were retired with DEC-75 (issue #853): the argument map is what
+the vault renders as its own link layer now. Full report: `data/reports/axial-coverage-v2.md`
+(historical, measured against the retired page layer).
 
 ### What a run costs
 
@@ -191,7 +191,8 @@ uv run axial envelope    $SRC   # what this book argues; threaded into every lat
 uv run axial chunk       $SRC   # deterministic, zero model calls
 uv run axial interrogate $SRC --limit 50   # read 50 passages before paying for the rest
 uv run axial names build && uv run axial names merge && uv run axial names materialize
-uv run axial names gather       # what the authors at each name disagree about
+uv run axial map build          # the argument map: passages bagged by claim similarity, then read
+# axial names gather (Gather) is retired (DEC-75, issue #853): claims cite chunk_ids directly
 uv run axial ask                # state the case, ask, watch the walk, read the answer
 ```
 
@@ -205,13 +206,13 @@ backend, a local folder or Google Drive, and skips what is already done.
 | `schema` | inspect a domain frame, cross-check it against the codebook |
 | `intake` · `extract` · `envelope` · `chunk` · `artifacts` | Phase A stages 1 to 5; chunking is LLM-free |
 | `interrogate` | one open-question call per passage |
-| `names build / merge / materialize / gather` | the inventory, the merge calls, the vault write, the disagreements |
+| `names build / merge / materialize` | the inventory, the merge calls, the vault write and relational store |
 | `map build` | the argument map: passages bagged by claim similarity, then read |
 | `sources` · `ingest` · `run` · `drive` | batch and incremental corpus operations |
 | `status` · `runs` | one screen of pipeline state; watch a live run |
 | `ask` · `brief` | Phase B, as a session or from a brief file |
 | `paper` | Phase C: plan, draft, render |
-| `gate` · `panel` · `eval` · `gather-eval` · `distill` | the eval and gate harnesses |
+| `gate` · `panel` · `eval` · `distill` | the eval and gate harnesses |
 | `pin` · `reconcile` · `polity` · `key` | corpus pins, orphan GC, canonical maps, credentials |
 
 `uv run axial <command> --help` for the rest.
@@ -243,7 +244,7 @@ config/
   lenses/                  theoretical lenses a brief can apply
 src/axial/                 one module per stage, unit tests co-located
   intake extract router envelope chunk artifacts interrogate
-  names merge_names materialize gather argmap
+  names merge_names materialize argmap
   query/ retrieve/ analyze/ brief/ answer/ ask/          Phase B
   paper/ distill/ panel/                                 Phase C
   gates/ validators/ eval/                               the gate harnesses

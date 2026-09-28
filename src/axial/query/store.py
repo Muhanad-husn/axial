@@ -382,6 +382,31 @@ def doors(connection: sqlite3.Connection, canonicals: Iterable[str]) -> dict[str
     return found
 
 
+def all_doors(connection: sqlite3.Connection) -> dict[str, Door]:
+    """`canonical -> Door` for every name the store carries -- the same GROUP
+    BY `doors()` runs, over the whole `names` table rather than a caller-given
+    list. `axial.query.names.coverage_count` (DEC-75, issue #853) is the one
+    caller: the per-name pages it used to read each carried their own
+    `member_count` in frontmatter, and this is that same count, read off the
+    store instead now that the pages are gone."""
+    found: dict[str, Door] = {}
+    for row in connection.execute(
+        """
+        SELECT n.canonical, n.kind,
+               COUNT(DISTINCT CASE WHEN nt.back_matter = 0 THEN nn.chunk_id END)
+                   AS member_count,
+               COUNT(DISTINCT CASE WHEN nt.back_matter = 0 THEN nn.source_id END)
+                   AS source_count
+        FROM names n
+        LEFT JOIN note_names nn ON nn.canonical = n.canonical
+        LEFT JOIN notes nt ON nt.chunk_id = nn.chunk_id
+        GROUP BY n.canonical, n.kind
+        """
+    ):
+        found[row[0]] = Door(row[0], row[1], row[2], row[3])
+    return found
+
+
 def concept_sources(connection: sqlite3.Connection, canonical: str) -> list[SourceShare]:
     """Every source contributing to `canonical`'s membership, each with its
     own note count and publication year, ranked by note count descending
@@ -417,8 +442,7 @@ def concept_sources(connection: sqlite3.Connection, canonical: str) -> list[Sour
 def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:
     """`(chunk_id, source_id, author, date, claim)` for every note that
     carries `canonical`, in `chunk_id` order -- `get_name`'s member list as a
-    plain join, in the same order the name page writes its own member lines
-    (`axial.materialize.member_chunk_ids_for_node` sorts them).
+    plain join.
 
     **A back-matter note is never a member here (issue #661)**: the join to
     `notes` already carries `nt.back_matter`, so excluding it is one added
@@ -439,6 +463,36 @@ def name_members(connection: sqlite3.Connection, canonical: str) -> list[tuple]:
             (canonical,),
         )
     ]
+
+
+def arguing_against_notes(
+    connection: sqlite3.Connection, canonical: str, limit: int | None = None
+) -> list[tuple]:
+    """`(chunk_id, source_id, position, claim)` for every note whose
+    `arguing_against` answer resolved to `canonical`
+    (`note_arguing_against.resolved_canonical`), in `chunk_id` order --
+    the store-based replacement for the retired `axial.query.names.
+    who_argues_against` (DEC-75, issue #853), which walked the prose notes'
+    own answer blocks directly. `axial.analyze.synthesis`'s counter-position
+    candidate whitelist (§7.8) is the one caller: it needs only which notes
+    argue against a name the run touched, never a page.
+
+    **A back-matter note is never returned here (issue #661)**, the same
+    exclusion `name_members`/`doors` already apply."""
+    rows = [
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT na.chunk_id, na.source_id, nt.position, nt.claim
+            FROM note_arguing_against na
+            JOIN notes nt ON nt.chunk_id = na.chunk_id AND nt.back_matter = 0
+            WHERE na.resolved_canonical = ?
+            ORDER BY na.chunk_id
+            """,
+            (canonical,),
+        )
+    ]
+    return rows[:limit] if limit is not None else rows
 
 
 def note_locator(connection: sqlite3.Connection, chunk_id: str) -> dict[str, Any] | None:

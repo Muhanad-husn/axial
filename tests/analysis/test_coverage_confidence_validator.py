@@ -1,8 +1,8 @@
 """Outer acceptance test for the per-name coverage map and its release gate
 (issues #260 and #490, Phase B, sub:analysis-v0).
 
-Given a fixture vault whose name page for "Charles Tilly" carries
-      member_count 240 and whose page for "Asef Bayat" carries 6
+Given a fixture vault whose store carries 240 member notes for "Charles
+      Tilly" and 6 for "Asef Bayat" (DEC-75, issue #853: doors, not pages)
   And an analysis record at data/analyses/DEV25.json whose claims touch both
       and whose trajectory retrieved on both
   And config coverage_bands of {thin: <20, moderate: 20-99, dense: >=100}
@@ -51,8 +51,8 @@ The four `brief validate` scenarios use `kind: "c"` claims with empty
 grounds: those checks read only the record's own `claims`/`trajectory` and
 its persisted `coverage_map`/`confidence`, isolating each scenario's
 assertion to the reason under test. The `brief coverage` scenario is the
-opposite by design -- it computes the map for real, so it needs real name
-pages and real grounds.
+opposite by design -- it computes the map for real, so it needs a real
+store and real grounds.
 
 `AXIAL_LLM_PROVIDER=explode` is the DEFAULT for every scenario here: the
 coverage/confidence validator takes no LLM client at all and
@@ -86,6 +86,8 @@ from typing import Any
 
 import pytest
 import yaml
+
+from axial.query import store as note_store
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -205,20 +207,40 @@ def _write_chunk(root: Path, chunk_id: str) -> None:
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
 
-def _write_name_page(root: Path, name: str, *, member_ids: list[str], member_count: int) -> None:
-    """A name page as Materialize writes one (§7.17): `member_count` is the
-    §7.7 denominator, and the member list is what `evidence_note_count`
-    intersects this run's grounds with. The two differ here exactly as they
-    do on the real corpus, where a dense name's page holds far more members
-    than any one run cites."""
-    names_dir = root / "data" / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {"name": name, "kind": "person", "aliases": [], "member_count": member_count}
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1978): A claim." for chunk_id in member_ids]
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
+def _write_store(
+    vault_dir: Path, *, tilly_member_id: str, tilly_total: int, bayat_member_id: str, bayat_total: int
+) -> None:
+    """A `notes.db` carrying `tilly_total`/`bayat_total` REAL member notes
+    for TILLY/BAYAT (DEC-75, issue #853: `coverage_count`/`get_name` now
+    derive `member_count` from real `note_names` rows over the store, never
+    a name page's own declared frontmatter number, so the corpus-wide total
+    a test wants -- 240 on Tilly, of which the fixture's own grounds note is
+    one -- has to be that many real synthetic rows, not a number written
+    down independent of the members list)."""
+    sources = [
+        ("tilly-1978", "Author", "Title", "1978", 1978),
+        ("bayat-2017", "Author", "Title", "2017", 2017),
+    ]
+    notes: list[tuple] = []
+    note_names: list[tuple] = []
+    for chunk_id, source_id, canonical, total in (
+        (tilly_member_id, "tilly-1978", TILLY, tilly_total),
+        (bayat_member_id, "bayat-2017", BAYAT, bayat_total),
+    ):
+        notes.append((chunk_id, source_id, "Section", None, "A claim.", None))
+        note_names.append((chunk_id, source_id, canonical, "person"))
+        for i in range(1, total):
+            filler_id = f"{source_id}_filler-{i:03d}_intro_001"
+            notes.append((filler_id, source_id, "Section", None, "A claim.", None))
+            note_names.append((filler_id, source_id, canonical, "person"))
+    note_store.write_store(
+        note_store.store_path(vault_dir),
+        sources=sources,
+        notes=notes,
+        names=[(TILLY, "person", "tilly"), (BAYAT, "person", "bayat")],
+        note_names=note_names,
+        note_arguing_against=[],
+        note_citations=[],
     )
 
 
@@ -231,8 +253,13 @@ def fixture_root(tmp_path: Path) -> Path:
 def vault_root(tmp_path: Path) -> Path:
     _write_chunk(tmp_path, TILLY_CHUNK)
     _write_chunk(tmp_path, BAYAT_CHUNK)
-    _write_name_page(tmp_path, TILLY, member_ids=[TILLY_CHUNK], member_count=240)
-    _write_name_page(tmp_path, BAYAT, member_ids=[BAYAT_CHUNK], member_count=6)
+    _write_store(
+        tmp_path / "data" / "vault",
+        tilly_member_id=TILLY_CHUNK,
+        tilly_total=240,
+        bayat_member_id=BAYAT_CHUNK,
+        bayat_total=6,
+    )
     return tmp_path
 
 

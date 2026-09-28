@@ -1,88 +1,42 @@
 """Phase A v1 slice 06 (issue #411): Materialize -- the vault writer
-(`specs/PRODUCT.md` §7.17, P0-8).
+(`specs/PRODUCT.md` §7.17, P0-8). Name pages, and everything here that
+wrote them, were retired by DEC-75 (issue #853): the final output never
+read a page, only `chunk_id`s and the relational store.
 
-D11: "Code writes one file per surviving name (no model): the name, its
-aliases, and its member notes as links." This is the first point the founder
-can open the graph view and look -- everything before it is invisible on
-disk -- and it is **LLM-free by construction**: every merge decision was
-already made by Reconcile (slice 05, `axial.merge_names`); this module only
-joins already-persisted artifacts and writes files.
+This module only joins already-persisted artifacts and writes files, and is
+**LLM-free by construction**.
 
-Three outputs (§7.17), one pass, run **once over the whole corpus**
+Two outputs (§7.17), one pass, run **once over the whole corpus**
 (`plans/phase-a-v1/README.md`'s pipeline table: "Materialize | once over the
-index"), not per source:
+index"), not per source, plus the relational store built from the same
+inputs:
 
   1. **Prose notes** (`data/vault/prose/`) -- every chunk that has an
      interrogation answer record is (re)written carrying that record as
      frontmatter (Appendix H), replacing the retired tag/xref axis block.
-     A note carries **no links** (D11): `names`/`citations` stay plain
-     strings in the frontmatter's `answers` block.
+     A note carries **no links**: `names`/`citations` stay plain strings in
+     the frontmatter's `answers` block.
   2. **Artifact notes** (`data/vault/artifacts/`) -- every persisted
      artifacts-pass record (`data/artifacts/<source_id>.jsonl`,
      `axial.artifacts.run_artifacts`) is written via the existing, untouched
      `axial.vault.write_artifact_note` (issue #429 already settled that
      shape; nothing here re-derives it).
-  3. **Name pages** (`data/vault/names/`) -- one per node in Reconcile's
-     alias map (`data/names/alias_map.json`), carrying `name`/`kind`/
-     `aliases`/`member_count` in frontmatter and, in the body, every member
-     note as an Obsidian link with its author, year and one-sentence claim
-     (§7.17). Link direction is name-page -> note only.
-  4. **The name-page index** (`data/vault/names.jsonl`, issue #634) -- one
-     JSONL row per name page written above, a sibling of `names/` rather
-     than a member of it, carrying `name`/`filename`/`kind`/`member_count`
-     and `source_count` (the number of distinct `source_id` values the
-     page's members span, not otherwise recorded anywhere). It exists so a
-     retrieval reader never has to open all 49,674 pages itself to answer a
-     question the writer already knew the answer to while it wrote them;
-     see `axial.query.names._name_page_index`, which reads it. Written
-     atomically (issue #637), so a concurrent reader never observes a
-     truncated or partial file.
-
-**The figure/table join (Open Question, §10, spec line 807).** A name whose
-`kind` is `figure`/`table` additionally links to the artifact note(s) it
-names, found by a bounded, deterministic substring match: the canonical name
-or one of its aliases appears in an artifact's caption, restricted to the
-SAME source(s) the name's own member notes came from (never cross-source --
-"Table 3" in one book must never resolve to "Table 3" in another). This is
-not a model judgment and not fuzzy matching; it is a plain, case-insensitive
-substring check over a small, source-scoped candidate set, with one boundary
-rule: a match is refused when the character right after it is another digit,
-so `"Figure 9.1"` never matches inside `"Figure 9.10"` (`_matches_with_digit_
-boundary` -- measured on the real corpus, 2026-07-28: 10 of 292 links, 3.4%,
-were exactly this prefix collision before the rule). Confirmed here, not
-designed in the spec, exactly as the spec's own Open Questions section says
-to.
-
-**Cross-source locator collision, fixed upstream (issue #445).** 54 of 385
-real figure/table names (14%) used to have member notes spanning more than
-one source: the inventory (slice 04) keyed a locator like "Figure 4.1" by
-its exact surface string, so identical numbering from unrelated books
-collapsed into one node by construction. `axial.names.build_inventory` now
-scopes a locator-shaped surface's identity by source when it actually spans
-more than one ("Figure 4.1 (source_id)"), so a figure/table-kind node this
-module sees is, by construction, always single-source. The canonical/alias
-strings a scoped node carries no longer literally appear in that source's
-own caption text (the caption never carries the "(source_id)" suffix), so
-`materialize_names` strips it back off with `unscope_surface_form` before
-calling `find_artifact_links` below -- that function's own source-scoped
-substring match and digit-boundary rule are untouched.
+  3. **The relational store** (`data/vault/notes.db`, `build_note_store`
+     below, DEC-62) -- the notes and their typed relations, including
+     `note_names` (which name each note names), read by `find_names`/
+     `get_name` (`axial.query.names`) in place of the retired name pages.
 
 **Determinism and re-run cost (§7.17, P0-8).** Prose and artifact notes are
 a pure function of already-persisted upstream artifacts (chunks, envelope,
 source_meta, answers, artifacts) that Reconcile never touches, so they are
-unconditionally (re)written -- always byte-identical given unchanged input,
-and never touched by the alias map at all. Name pages are compared against
-their own current on-disk content before writing (a Reconcile re-run
-changes a bounded few hundred names, per D11); a stale name page --
-one whose canonical no longer survives the current alias map -- is deleted,
-so the vault never accumulates orphans from a tightened merge.
+unconditionally (re)written -- always byte-identical given unchanged input.
+The store is rewritten atomically on every run.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -103,13 +57,7 @@ from axial.interrogate import (
 from axial.intake import SOURCE_META_DIR
 from axial.merge_names import DEFAULT_ALIAS_MAP_PATH
 from axial.names import DEFAULT_INVENTORY_PATH, load_answer_records, unscope_surface_form
-from axial.paths import (
-    DEFAULT_PIPELINE_CONFIG_PATH,
-    _read_configured_dir,
-    atomic_write_text,
-    default_vault_dir,
-    name_page_path,
-)
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, _read_configured_dir, default_vault_dir
 from axial.query import store as note_store
 from axial.query.names import _build_name_layer, as_string_list, fold_surface_form
 from axial.query.reader import (
@@ -122,7 +70,6 @@ from axial.vault import (
     VaultError,
     bibliographic_value,
     read_source_meta,
-    render_note,
     write_artifact_note,
     write_chunk_note,
 )
@@ -135,19 +82,6 @@ from axial.vault import (
 # path constant, which this LLM-free, extraction-free pass has no other
 # reason to pull in.
 DEFAULT_ARTIFACTS_DIR = Path("data/artifacts")
-
-# The door index's own filename (issue #634, specs/PRODUCT.md §7.17): one
-# JSONL row per name page, written as a SIBLING of `vault_dir/names/` -- not
-# inside it, so a `*.md` glob over `names/` never picks it up and nothing
-# there mistakes it for a page. `axial.query.names` repeats this literal
-# rather than importing it, the same small-duplicate trade this module's own
-# docstring already makes for `DEFAULT_ARTIFACTS_DIR`.
-NAME_PAGE_INDEX_FILENAME = "names.jsonl"
-
-# The two `kind` values §7.15's interrogation prompt uses for a figure/table
-# name (D5) -- matched case-insensitively, since nothing enforces exact case
-# on a free-text `kind` answer.
-_FIGURE_TABLE_KINDS = frozenset({"figure", "table"})
 
 
 class MaterializeError(Exception):
@@ -207,9 +141,7 @@ def materialize_notes(
     record, for every source under `answers_dir` (§7.17). Unconditional
     write: the inputs here (chunks, envelope, source_meta, the answer
     itself) are never changed by Reconcile, so this is always
-    byte-identical given unchanged upstream artifacts -- there is nothing
-    for a "write only if changed" check to save here, unlike the name pages
-    below.
+    byte-identical given unchanged upstream artifacts.
 
     A chunk with no answer record (a failed or garble-skipped note, §7.15)
     is not written -- there is no interrogation answer for its frontmatter
@@ -279,7 +211,7 @@ def materialize_artifact_notes(*, artifacts_dir: Path, vault_dir: Path) -> dict[
     (`data/artifacts/<source_id>.jsonl`), via the existing, untouched
     `axial.vault.write_artifact_note`. `artifacts_dir` absent or empty
     yields zero notes, not an error: a corpus that has not run `axial
-    artifacts` yet still materializes its prose notes and name pages."""
+    artifacts` yet still materializes its prose notes and its store."""
     sources = 0
     written = 0
     artifacts_dir = Path(artifacts_dir)
@@ -296,114 +228,10 @@ def materialize_artifact_notes(*, artifacts_dir: Path, vault_dir: Path) -> dict[
     return {"artifact_sources": sources, "artifact_notes_written": written}
 
 
-def _load_artifacts_by_source(artifacts_dir: Path, source_ids: set[str]) -> dict[str, list[dict]]:
-    """`source_id -> [artifact record, ...]`, read only for the given
-    `source_ids` -- the figure/table join below only ever needs the sources
-    a figure/table-kind name's own member notes came from, never the whole
-    corpus's artifact records."""
-    artifacts_dir = Path(artifacts_dir)
-    by_source: dict[str, list[dict]] = {}
-    for source_id in source_ids:
-        path = artifacts_dir / f"{source_id}.jsonl"
-        if not path.is_file():
-            continue
-        by_source[source_id] = [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-    return by_source
-
-
-def _is_figure_or_table(kind: Any) -> bool:
-    return isinstance(kind, str) and kind.strip().casefold() in _FIGURE_TABLE_KINDS
-
-
-def _bare_surface_forms(
-    surface_forms: list[str], member_chunk_ids: list[str], source_id_by_chunk_id: dict[str, str]
-) -> list[str]:
-    """`surface_forms` (a node's canonical + aliases) plus, for each, the
-    bare text `unscope_surface_form` recovers for every source the node's
-    own members actually came from -- what an artifact caption would
-    contain, since a caption never carries the "(source_id)" suffix issue
-    #445's scoping adds. A form that was never scoped (the common case)
-    comes back unchanged, so this is a superset, never a narrowing, of what
-    `find_artifact_links` is asked to match."""
-    needed_sources = {
-        source_id_by_chunk_id[chunk_id]
-        for chunk_id in member_chunk_ids
-        if chunk_id in source_id_by_chunk_id
-    }
-    bare_forms = set(surface_forms)
-    for form in surface_forms:
-        for source_id in needed_sources:
-            bare_forms.add(unscope_surface_form(form, source_id))
-    return sorted(bare_forms)
-
-
-def _matches_with_digit_boundary(form: str, caption: str) -> bool:
-    """Whether `form` occurs in `caption` (both already casefolded) as a
-    substring whose end is NOT immediately followed by another digit.
-
-    A plain substring match alone lets `"figure 9.1"` match inside
-    `"figure 9.10"`/`"figure 9.11"`/... -- measured on the real corpus
-    (2026-07-28): 10 of 292 real figure/table links (3.4%) were exactly this
-    prefix collision, `"Figure 9.1"` alone accounting for five and `"Map 1"`
-    matching `"Map 12: Reconstruction Programmes in Aleppo"` the rest. This
-    is a boundary rule, not a threshold: it does not soften or loosen the
-    match, it only refuses the one case where a shorter numbered locator is
-    a strict prefix of a longer, different one. Deliberately narrow -- it
-    checks ONLY the digit that would extend the matched number, not a
-    general word-boundary rule, because that is the only case actually
-    measured; whether `"Table 3"` should also refuse to match inside
-    `"Table 3 continued"` (a letter/space boundary, not a digit one) is not
-    measured and is not this rule's job to guess at."""
-    start = 0
-    while True:
-        index = caption.find(form, start)
-        if index == -1:
-            return False
-        end = index + len(form)
-        if end >= len(caption) or not caption[end].isdigit():
-            return True
-        start = index + 1  # retry: this occurrence was a numeric prefix, not a match
-
-
-def find_artifact_links(
-    surface_forms: list[str],
-    member_chunk_ids: list[str],
-    source_id_by_chunk_id: dict[str, str],
-    artifacts_by_source: dict[str, list[dict]],
-) -> list[str]:
-    """`artifact_id`s this figure/table name resolves to (module docstring):
-    every artifact, in a source one of `member_chunk_ids` actually came
-    from, whose caption contains one of `surface_forms` as a substring
-    (case-insensitive), refusing a match whose end is immediately followed
-    by another digit (`_matches_with_digit_boundary` -- "Figure 9.1" must
-    never match inside "Figure 9.10"). Sorted, deduplicated; `[]` when no
-    caption matches -- a figure/table name with no resolvable artifact
-    still gets a name page, just with no `Artifacts:` section."""
-    needed_sources = {
-        source_id_by_chunk_id[chunk_id]
-        for chunk_id in member_chunk_ids
-        if chunk_id in source_id_by_chunk_id
-    }
-    folded_forms = [form.casefold() for form in surface_forms]
-    matches: set[str] = set()
-    for source_id in needed_sources:
-        for record in artifacts_by_source.get(source_id, []):
-            caption = record.get("caption")
-            if not caption:
-                continue
-            folded_caption = caption.casefold()
-            if any(_matches_with_digit_boundary(form, folded_caption) for form in folded_forms):
-                matches.add(record["artifact_id"])
-    return sorted(matches)
-
-
-# ---------------------------------------------------------------------------
-# 3. Name pages -- one per Reconcile alias-map node (D11, §7.17)
-# ---------------------------------------------------------------------------
+# `load_alias_map`/`load_inventory` (below) are shared with `build_note_store`
+# (DEC-62); everything else that once lived in this section -- the
+# figure/table artifact join, `member_chunk_ids_for_node`, and the name-page
+# writer itself -- went with the name pages (DEC-75, issue #853).
 
 
 def load_alias_map(path: Path) -> list[dict[str, Any]]:
@@ -440,258 +268,8 @@ def load_inventory(path: Path) -> dict[str, dict[str, Any]]:
     return inventory
 
 
-def member_chunk_ids_for_node(
-    node: dict[str, Any], inventory: dict[str, dict[str, Any]]
-) -> list[str]:
-    """Every chunk_id that named this node's canonical OR any of its
-    aliases (§7.17's "member notes"), unioned and sorted -- deduplicated,
-    since a note can name both a canonical and one of its own aliases in
-    the same `names[]` answer."""
-    chunk_ids: set[str] = set()
-    for surface_form in (node["canonical"], *node.get("aliases", [])):
-        entry = inventory.get(surface_form)
-        if entry:
-            chunk_ids.update(entry["chunk_ids"])
-    return sorted(chunk_ids)
-
-
-def _distinct_source_count(member_ids: list[str]) -> int:
-    """The number of distinct `source_id` values `member_ids` span, parsed
-    with the SAME function the reader groups a page's members by
-    (`axial.query.reader.source_id_from_chunk_id`,
-    `axial.query.names._parse_name_page_body`) -- so the door index's
-    `source_count` and the reader's own member grouping never disagree on
-    what counts as one source. A `chunk_id` that does not parse counts under
-    `""`, matching `_parse_name_page_body`'s placement for an unparsed
-    member, rather than being dropped."""
-    sources: set[str] = set()
-    for chunk_id in member_ids:
-        try:
-            sources.add(source_id_from_chunk_id(chunk_id))
-        except MalformedChunkIdError:
-            sources.add("")
-    return len(sources)
-
-
-def _write_name_page_index(vault_dir: Path, rows: list[dict[str, Any]]) -> None:
-    """The door index (issue #634): one JSONL row per surviving name page,
-    written next to `names/` as `NAME_PAGE_INDEX_FILENAME`. Rewritten in
-    full on every Materialize run, the same as prose and artifact notes --
-    it is cheap (~3 MB over the real corpus) and this pass already walks
-    every node once to write its page.
-
-    Written atomically (`atomic_write_text`, issue #637): a materialize run
-    rewriting this file while a concurrent `axial ask` reads it is the live
-    scenario this exists to survive, not a hypothetical. Unlike the query
-    side's self-healing write, a failed write here is a real failure and is
-    left to raise."""
-    path = Path(vault_dir) / NAME_PAGE_INDEX_FILENAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-    atomic_write_text(path, text)
-
-
-def name_page_paths(vault_dir: Path, nodes: list[dict[str, Any]]) -> dict[str, Path]:
-    """`{canonical: name page path}` for every node, assigned in ONE
-    deterministic pass (nodes sorted by canonical, one shared `used`
-    filename set) -- because `name_page_filename`'s collision guard is
-    order-dependent: two canonicals that sanitize to the same filename get
-    resolved in the order they are processed.
-
-    Shared by `materialize_names`, which writes those pages, and by
-    `axial.gather`, which has to find the exact same file to append its
-    disagreement section to. Deriving it twice from the same node list is
-    what would let the two drift apart on a collision."""
-    used: set[str] = set()
-    return {
-        node["canonical"]: name_page_path(vault_dir, node["canonical"], used)
-        for node in sorted(nodes, key=lambda node: node["canonical"])
-    }
-
-
-def build_name_frontmatter(
-    canonical: str, kind: str | None, aliases: list[str], member_count: int
-) -> dict[str, Any]:
-    """§7.17's exact name-page frontmatter: `name`, `kind`, `aliases`,
-    `member_count`."""
-    return {"name": canonical, "kind": kind, "aliases": list(aliases), "member_count": member_count}
-
-
-def _render_claim(value: Any) -> str:
-    """One member line's claim, rendered for the name-page body: the free
-    `claim` answer verbatim when it is one, else a plain marker for D7's
-    explicit abstention or a missing answer -- never a guess."""
-    if value is None:
-        return "(no claim recorded)"
-    if is_abstention(value):
-        return "(not stated in the passage)"
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False)
-
-
-@dataclass(frozen=True)
-class MemberLine:
-    chunk_id: str
-    author: Any
-    year: Any
-    claim: Any
-
-
-def render_name_page_body(
-    canonical: str, aliases: list[str], members: list[MemberLine], artifact_ids: list[str]
-) -> str:
-    """§7.17's name-page body: the aliases, then (for a figure/table name
-    whose surface resolved one) the artifact link(s), then every member
-    note as an Obsidian link with its author, year and one-sentence claim
-    -- "readable without opening anything". Link direction is name-page ->
-    note/artifact only (D11): nothing here is written back onto a note."""
-    lines = [f"# {canonical}", ""]
-    if aliases:
-        lines.append("**Aliases:** " + ", ".join(aliases))
-        lines.append("")
-    if artifact_ids:
-        lines.append("**Artifacts:**")
-        for artifact_id in artifact_ids:
-            lines.append(f"- [[{artifact_id}]]")
-        lines.append("")
-    lines.append("**Member notes:**")
-    if not members:
-        lines.append("(none)")
-    else:
-        for member in members:
-            lines.append(
-                f"- [[{member.chunk_id}]] — {member.author} ({member.year}): "
-                f"{_render_claim(member.claim)}"
-            )
-    return "\n".join(lines) + "\n"
-
-
-def materialize_names(
-    *,
-    alias_map_path: Path,
-    inventory_path: Path,
-    answers_dir: Path,
-    source_meta_dir: Path,
-    artifacts_dir: Path,
-    vault_dir: Path,
-) -> dict[str, int]:
-    """Write one name page per Reconcile alias-map node (§7.17, D11). A page
-    is (re)written only when its rendered content differs from what is
-    already on disk, and a name page whose canonical no longer survives the
-    current alias map is deleted -- so re-running against an unchanged
-    alias map touches nothing, and a tightened merge rewrites only the
-    affected pages, never the prose notes (acceptance criterion 4)."""
-    nodes = load_alias_map(alias_map_path)
-    inventory = load_inventory(inventory_path)
-
-    claim_by_chunk_id: dict[str, Any] = {}
-    source_id_by_chunk_id: dict[str, str] = {}
-    for record in load_answer_records(answers_dir):
-        if "answers" not in record:
-            continue
-        chunk_id = record.get("chunk_id")
-        source_id_by_chunk_id[chunk_id] = record.get("source_id")
-        claim_by_chunk_id[chunk_id] = record["answers"].get("claim")
-
-    figure_table_sources: set[str] = set()
-    for node in nodes:
-        if _is_figure_or_table(node.get("kind")):
-            for chunk_id in member_chunk_ids_for_node(node, inventory):
-                source_id = source_id_by_chunk_id.get(chunk_id)
-                if source_id is not None:
-                    figure_table_sources.add(source_id)
-    artifacts_by_source = _load_artifacts_by_source(artifacts_dir, figure_table_sources)
-
-    author_year_cache: dict[str, tuple[Any, Any]] = {}
-
-    def _author_year(source_id: str | None) -> tuple[Any, Any]:
-        if source_id is None:
-            return None, None
-        if source_id not in author_year_cache:
-            try:
-                record = read_source_meta(source_id, source_meta_dir)
-            except VaultError as exc:
-                raise MissingNoteContextError(
-                    source_id, "source-metadata record", "axial ingest"
-                ) from exc
-            author_year_cache[source_id] = (
-                bibliographic_value(record, "author"),
-                bibliographic_value(record, "date"),
-            )
-        return author_year_cache[source_id]
-
-    names_dir = Path(vault_dir) / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    existing = {path for path in names_dir.glob("*.md")}
-    kept: set[Path] = set()
-    page_paths = name_page_paths(vault_dir, nodes)
-
-    written = 0
-    unchanged = 0
-    index_rows: list[dict[str, Any]] = []
-    for node in sorted(nodes, key=lambda n: n["canonical"]):
-        canonical = node["canonical"]
-        kind = node.get("kind")
-        aliases = list(node.get("aliases", []))
-        member_ids = member_chunk_ids_for_node(node, inventory)
-
-        members = [
-            MemberLine(
-                chunk_id,
-                *_author_year(source_id_by_chunk_id.get(chunk_id)),
-                claim_by_chunk_id.get(chunk_id),
-            )
-            for chunk_id in member_ids
-        ]
-
-        artifact_ids: list[str] = []
-        if _is_figure_or_table(kind):
-            artifact_ids = find_artifact_links(
-                _bare_surface_forms([canonical, *aliases], member_ids, source_id_by_chunk_id),
-                member_ids,
-                source_id_by_chunk_id,
-                artifacts_by_source,
-            )
-
-        frontmatter = build_name_frontmatter(canonical, kind, aliases, len(member_ids))
-        body = render_name_page_body(canonical, aliases, members, artifact_ids)
-        text = render_note(frontmatter, body)
-
-        path = page_paths[canonical]
-        kept.add(path)
-        index_rows.append(
-            {
-                "name": canonical,
-                "filename": path.name,
-                "kind": kind,
-                "member_count": len(member_ids),
-                "source_count": _distinct_source_count(member_ids),
-            }
-        )
-        if path.is_file() and path.read_text(encoding="utf-8") == text:
-            unchanged += 1
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-        written += 1
-
-    orphaned = sorted(existing - kept)
-    for path in orphaned:
-        path.unlink()
-
-    _write_name_page_index(vault_dir, index_rows)
-
-    return {
-        "name_pages": len(nodes),
-        "name_pages_written": written,
-        "name_pages_unchanged": unchanged,
-        "name_pages_deleted": len(orphaned),
-    }
-
-
 # ---------------------------------------------------------------------------
-# 4. The relational store -- the notes and their typed relations (DEC-62)
+# 3. The relational store -- the notes and their typed relations (DEC-62)
 # ---------------------------------------------------------------------------
 
 # A source id is `<author>-[...-]<year>-<hash>` (issue #268's rename): the
@@ -723,7 +301,7 @@ def _store_claim(value: Any) -> str | None:
     when it answered with text, `None` when the record carries no claim at
     all, the bare abstention marker for D7's abstention in any of its shapes,
     and JSON for anything else -- so `axial.query.names._render_claim` reads
-    back exactly what `_render_claim` above would have written on the page."""
+    back exactly what this wrote."""
     if value is None or isinstance(value, str):
         return value
     if is_abstention(value):
@@ -733,9 +311,8 @@ def _store_claim(value: Any) -> str | None:
 
 def _source_of(chunk_id: str) -> str:
     """The `source_id` a chunk_id parses to, or `""` when it does not --
-    the same placement `_distinct_source_count` and the reader's own member
-    grouping give an unparsed member, so `note_names`' source count and the
-    name page's never disagree."""
+    the same placement the reader's own member grouping gives an unparsed
+    member, so `note_names`'s source count never disagrees with it."""
     try:
         return source_id_from_chunk_id(chunk_id)
     except MalformedChunkIdError:
@@ -868,25 +445,24 @@ def build_note_store(
     residue_decisions_path: Path | None = None,
 ) -> dict[str, int]:
     """Build the vault's relational store (DEC-62, `axial.query.store`) from
-    the same already-persisted artifacts the name pages are written from: the
-    answer records, the lossless inventory, Reconcile's alias map, and the
-    source metadata. No model call, no re-extraction, no second source of
-    truth -- `note_names` is exactly the name-page membership
-    (`member_chunk_ids_for_node`), so a door query over the store and the
-    name page for the same name can never disagree about who its members are.
+    already-persisted artifacts: the answer records, the lossless inventory,
+    Reconcile's alias map, and the source metadata. No model call, no
+    re-extraction, no second source of truth -- `note_names` is built
+    straight off the same alias map and inventory the retired name pages
+    used to read (DEC-75, issue #853), never derived from a page.
 
     `chapter` is the one column here that is not already sitting in the
     answer record: it is `chapter_for_section` read off the source's own
-    envelope, the same call `materialize_notes` makes for the note page, so
-    the store and the page can never disagree about which chapter a section
-    resolves to. The envelope is loaded once per source (issue #648's
-    comment measured 31 sources, ~2-6KB each) and cached across that
-    source's notes, never once per note.
+    envelope, the same call `materialize_notes` makes for the prose note, so
+    the two can never disagree about which chapter a section resolves to.
+    The envelope is loaded once per source (issue #648's comment measured 31
+    sources, ~2-6KB each) and cached across that source's notes, never once
+    per note.
 
-    The one relation the pages never carried is the resolved end of
-    `arguing_against`: each free-text target keeps a row with the canonical
-    it resolves to, or one row with `NULL` when it resolves to nothing, which
-    is the honest majority (56%) and must stay countable.
+    `arguing_against` is resolved here too: each free-text target keeps a
+    row with the canonical it resolves to, or one row with `NULL` when it
+    resolves to nothing, which is the honest majority (56%) and must stay
+    countable.
 
     **`notes.back_matter` (issue #661)** is set once here, from each note's
     own `section` via `axial.back_matter.is_evidence_back_matter` -- the
@@ -1060,10 +636,13 @@ def run_materialize(
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, Any]:
     """Materialize the whole vault in one pass (§7.17): prose notes, artifact
-    notes, then name pages, in that order. No model call anywhere (D11).
+    notes, then the relational store, in that order. No model call anywhere.
     Every directory defaults to the same config-then-fallback resolution
     every other pass uses; passing one overrides just that directory,
     the seam a test uses to point the whole pass at a fixture tree.
+
+    Writes no `names/` directory (DEC-75, issue #853 retired the name pages
+    that used to live there).
 
     `residue_decisions_path` (issue #651, default `None`) opts into folding
     the semantic residue resolver's decision log into the store's
@@ -1097,14 +676,6 @@ def run_materialize(
         config_path=config_path,
     )
     artifacts_result = materialize_artifact_notes(artifacts_dir=artifacts_dir, vault_dir=vault_dir)
-    names_result = materialize_names(
-        alias_map_path=alias_map_path,
-        inventory_path=inventory_path,
-        answers_dir=answers_dir,
-        source_meta_dir=source_meta_dir,
-        artifacts_dir=artifacts_dir,
-        vault_dir=vault_dir,
-    )
     store_result = build_note_store(
         alias_map_path=alias_map_path,
         inventory_path=inventory_path,
@@ -1119,6 +690,5 @@ def run_materialize(
         "vault_dir": str(vault_dir),
         **notes_result,
         **artifacts_result,
-        **names_result,
         **store_result,
     }

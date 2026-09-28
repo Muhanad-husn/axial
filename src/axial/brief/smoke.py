@@ -255,20 +255,18 @@ def _check_coverage_map(record: dict[str, Any]) -> CheckResult:
     has no map, so it is SKIPPED with the reason stated rather than failed
     -- a refusal is a complete run (§7.2).
 
-    **On the name-layer path** (unchanged): the §7.7 `coverage_map` carries
-    at least one name; any other disposition with an empty map is the
-    regression #490 exists to fix, and it must be loud.
-
-    **On a map-retrieved run** (`record["map_retrieval"]`, issue #572, PR 4
-    of 4): `coverage_map` is scoped to names the NAME-LAYER loop retrieved
-    on (§7.7/§7.17) and is empty by construction here, however well the map
-    path performed -- checking it would falsely fail every `--map` smoke
-    run. This branch checks the map path's OWN honest equivalent instead
-    (`map_retrieval["assembled_chunk_ids"]` non-empty), never a shrug: a
-    real pass/fail either way, since this check is the seam a future
-    decision about retiring the name layer would read, and a check that
-    silently always passes here would be worse than one that (correctly)
-    fails when the map genuinely assembled nothing."""
+    **Every non-refusing run is a map-retrieved run now** (DEC-75, issue
+    #853 retired the name-layer loop this check used to also branch on):
+    `record["map_retrieval"]` is always set. `coverage_map` (§7.7) is
+    scoped to names the run RETRIEVED on (`axial.validators.coverage`'s own
+    `retrieved_names`, read off the §7.6 trajectory) intersected with a
+    claim's own grounds -- and the map path makes no name-layer tool call,
+    so it writes no trajectory and `coverage_map` is empty by construction
+    on every run now, not a regression. This branch checks the map path's
+    own honest signal instead (`map_retrieval["assembled_chunk_ids"]`
+    non-empty), never a shrug: a real pass/fail either way. The bare
+    `coverage_map` branch below is kept only for a persisted record from
+    before this migration; a live smoke run never reaches it."""
     disposition = (record.get("interrogation") or {}).get("disposition")
     if disposition == "refuse":
         return CheckResult(

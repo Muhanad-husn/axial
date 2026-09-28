@@ -221,8 +221,8 @@ def test_a_valid_tool_returning_nothing_is_not_a_failure():
         trajectory=[
             {
                 "step": 1,
-                "tool": "find_names",
-                "args": {"query": "zzqqx"},
+                "tool": "find_notes",
+                "args": {"about": "zzqqx"},
                 "result_ids": [],
                 "result_count": 0,
             }

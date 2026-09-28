@@ -3,10 +3,12 @@
 Axial turns a corpus of born-digital academic sources into an Obsidian wiki the
 model wrote by reading. Each passage is interrogated once with open questions —
 what it claims, whose position it is, who it argues against, who it cites, what
-it names — and the passages meet each other at the names they share, on a page
-per name that says what their authors disagree about. The full build
-specification is in [`specs/PRODUCT.md`](specs/PRODUCT.md); the decision log is
-in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+it names — and every claim in the final answer cites a passage directly by
+`chunk_id`. Retrieval and the wiki's own name filter (`find_names`/`get_name`)
+run over `notes.db`, a relational store built from the interrogation; the
+argument map, not a page per name, is what the passages meet on (DEC-75). The
+full build specification is in [`specs/PRODUCT.md`](specs/PRODUCT.md); the
+decision log is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Working in this repo
 
