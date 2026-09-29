@@ -3,6 +3,7 @@
 import argparse
 import getpass
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -836,6 +837,19 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "bounded concurrent extraction workers (this pass is I/O-bound) "
             f"(default: {MAP_BUILD_DEFAULT_WORKERS})"
+        ),
+    )
+    map_build_parser.add_argument(
+        "--extract-model",
+        default=None,
+        metavar="MODEL",
+        help=(
+            "issue #859: run the extraction step on this model (a raw model "
+            "name, no secrets.toml tier) and write to "
+            "data/map/<pin>-variant-<model slug>/ instead of the pin's own "
+            "directory. Bags are the pin's own bag_state.json, byte for "
+            "byte; reads are asked afresh; the relations pass keeps its "
+            "configured model. The baseline build must exist"
         ),
     )
     map_ask_parser = map_subparsers.add_parser(
@@ -3408,6 +3422,7 @@ def _map_build(
     *,
     workers: int = MAP_BUILD_DEFAULT_WORKERS,
     force: bool = False,
+    extract_model: str | None = None,
     root: Path | None = None,
     clock: Callable[[], str] | None = None,
 ) -> int:
@@ -3429,8 +3444,18 @@ def _map_build(
             print(message, flush=True)
             run.logger.info(message)
 
+        variant = None
+        if extract_model:
+            if not hasattr(client, "override_model_for_pass"):
+                print("error: --extract-model needs the openrouter provider", file=sys.stderr)
+                return 1
+            client.override_model_for_pass(MAP_BUILD_PASS_NAME, extract_model)
+            variant = re.sub(r"[^A-Za-z0-9.]+", "-", extract_model).strip("-")
+
         try:
-            manifest = run_map_build(client=client, log=_tee, workers=workers, force=force)
+            manifest = run_map_build(
+                client=client, log=_tee, workers=workers, force=force, variant=variant
+            )
         except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
             run.record(
                 source_id="",
@@ -3891,7 +3916,9 @@ def main(argv: list[str] | None = None) -> int:
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
 
     if args.command == "map" and args.map_command == "build":
-        return _map_build(workers=args.workers, force=args.force)
+        return _map_build(
+            workers=args.workers, force=args.force, extract_model=args.extract_model
+        )
 
     if args.command == "map" and args.map_command == "ask":
         return _map_ask(args.brief_path)

@@ -1254,6 +1254,11 @@ def _force_aside_suffix() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
 
 
+# A variant build (issue #859) lives in `<pin>-variant-<label>` beside the
+# pin it varies. It is never a "prior pin" a later build seeds from.
+VARIANT_MARKER = "-variant-"
+
+
 def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
     """The most recently written sibling pin directory under `map_dir` (by
     its own `map.json` mtime), excluding `current_pin` -- "the newest prior
@@ -1278,6 +1283,7 @@ def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
         if child.is_dir()
         and child.name != current_pin
         and not child.name.endswith("-category")
+        and VARIANT_MARKER not in child.name
         and (child / "map.json").is_file()
     ]
     if not candidates:
@@ -1394,6 +1400,7 @@ def run_map_build(
     guard: bool = True,
     pin: str | None = None,
     force: bool = False,
+    variant: str | None = None,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Run both stages -- positions, then relations -- and write
@@ -1432,7 +1439,15 @@ def run_map_build(
     the prior pin's own read for every slice whose ordered claims match
     exactly (`_seed_reads_from_prior_pin`), so `run_extraction`'s existing
     `(bag, slice)` resume skips those with no model call. `force=True`
-    skips both -- a full re-bag is always available and never automatic."""
+    skips both -- a full re-bag is always available and never automatic.
+
+    **Issue #859: `variant`** (a short label, e.g. a model slug) writes to
+    `<map_dir>/<pin>-variant-<label>/` instead of the pin's own directory,
+    so the baseline build survives. The bags are the baseline pin's own
+    (its `bag_state.json`, which must exist, be reusable and place every
+    passage: else `MapError`, never a silent re-bag) and no read is seeded
+    from it, so extraction runs afresh on identical bags. The caller sets
+    the extraction model on `client`."""
     started = time.monotonic()
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
@@ -1449,7 +1464,8 @@ def run_map_build(
     if pin is None:
         pin = compute_corpus_pin(envelopes_dir, sources_dir)
 
-    outdir = Path(map_dir) / pin
+    baseline_dir = Path(map_dir) / pin
+    outdir = Path(map_dir) / f"{pin}{VARIANT_MARKER}{variant}" if variant else baseline_dir
     outdir.mkdir(parents=True, exist_ok=True)
     # Read before anything overwrites it: this build's cost and wall time
     # accumulate onto whatever earlier runs under this pin already spent
@@ -1464,21 +1480,32 @@ def run_map_build(
 
     # Issue #677: `--force` always re-bags globally (the founder's chosen
     # escape hatch), so a forced run never even looks for a prior pin.
-    prior_pin_dir = None if force else _prior_pin_dir(Path(map_dir), pin)
+    prior_pin_dir = None if force or variant else _prior_pin_dir(Path(map_dir), pin)
+    bag_source_dir = baseline_dir if variant else prior_pin_dir
     prior_bag_state = (
-        _load_json_or_none(_bag_state_path(prior_pin_dir)) if prior_pin_dir is not None else None
+        _load_json_or_none(_bag_state_path(bag_source_dir)) if bag_source_dir is not None else None
     )
+    if variant and not _bag_state_reusable(prior_bag_state):
+        raise MapError(
+            f"variant build needs the baseline's reusable bag state at "
+            f"{_bag_state_path(baseline_dir)}; build the baseline first"
+        )
     if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
         log(
-            f"map: prior bag state at {prior_pin_dir} does not match this run's "
+            f"map: prior bag state at {bag_source_dir} does not match this run's "
             "encoder/threshold/library version -- falling back to a full re-bag"
         )
         prior_bag_state = None
 
     if prior_bag_state is not None:
         bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
+        if variant and new_count:
+            raise MapError(
+                f"variant build: {new_count} passage(s) are absent from the baseline's "
+                "bags, so the bags would not be the baseline's own"
+            )
         log(
-            f"bags {len(bags)} (incremental against {prior_pin_dir.name}: "
+            f"bags {len(bags)} (incremental against {bag_source_dir.name}: "
             f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
             "their prior bag)"
         )
