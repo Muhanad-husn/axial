@@ -204,7 +204,10 @@ def _build_fixture(root: Path) -> None:
     )
     _write_json(
         root / "data" / "names" / "index.json",
-        {"names": ["Ernest Gellner", "the state", "French Mandate", "Rule"]},
+        {
+            "names": ["Ernest Gellner", "the state", "French Mandate", "Rule"],
+            "qids": {"Ernest Gellner": "Q233868", "French Mandate": None},
+        },
     )
 
 
@@ -261,6 +264,19 @@ def test_a_source_carries_its_publication_year_parsed_from_its_id(corpus):
     assert rows[BETA] == ("John Hall", 2005)
     # A volume token between the author and the year does not hide the year.
     assert rows[MANN] == ("Michael Mann", 2012)
+
+
+def test_a_name_carries_the_qid_the_index_records_and_null_otherwise(corpus):
+    """Issue #856: `axial names wikidata` writes QIDs into `index.json`;
+    materialize folds them into `names.qid`. A name the index gives no QID
+    (out of the band, or unmatched) reads `NULL`."""
+    rows = dict(_query(corpus, "SELECT canonical, qid FROM names"))
+    assert rows == {
+        "Ernest Gellner": "Q233868",
+        "the state": None,
+        "French Mandate": None,
+        "Rule": None,
+    }
 
 
 def test_a_note_carries_its_claim_its_position_and_the_names_it_names(corpus):

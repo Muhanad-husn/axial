@@ -80,7 +80,7 @@ def _record(*, claims, disposition="proceed", brief=None):
     return record
 
 
-def _write_store(vault_dir, *, member_ids_by_name: dict, source_by_chunk: dict):
+def _write_store(vault_dir, *, member_ids_by_name: dict, source_by_chunk: dict, qids=None):
     """A minimal `notes.db` under `vault_dir`: one `names` row per key of
     `member_ids_by_name`, one `note_names` row per (chunk_id, name) pair, and
     one `notes`/`sources` row per distinct chunk_id/source_id -- exactly what
@@ -96,7 +96,9 @@ def _write_store(vault_dir, *, member_ids_by_name: dict, source_by_chunk: dict):
                 notes_rows.append((chunk_id, source_id, "A Section", None, "A claim.", None))
                 seen_chunks.add(chunk_id)
             note_names_rows.append((chunk_id, source_id, name, "person"))
-    names_rows = [(name, "person", name.casefold()) for name in member_ids_by_name]
+    names_rows = [
+        (name, "person", name.casefold(), (qids or {}).get(name)) for name in member_ids_by_name
+    ]
     source_rows = [(source_id, "An Author", "A Title", "1978", 1978) for source_id in source_ids]
     note_store.write_store(
         note_store.store_path(vault_dir),
@@ -213,6 +215,27 @@ def test_available_count_is_the_sum_across_the_names_touched(tmp_path):
     assert tilly["available_share"] == pytest.approx(2 / 3)
     # Drawn on harder than its availability explains -- the §7.13 signal.
     assert tilly["usage_ratio"] == pytest.approx(1.5)
+
+
+def test_the_disclosure_names_each_touched_names_qid_and_moves_no_figure(tmp_path):
+    """Issue #856: `qid_by_name` carries each touched name's Wikidata QID,
+    `None` where it has none, as an identifier only -- the denominator and
+    the shares are exactly what they were without it."""
+    members = {TILLY: ["tilly_0_a_001", "tilly_0_a_002"], BAYAT: ["bayat_0_a_001"]}
+    by_chunk = {"tilly_0_a_001": "tilly", "tilly_0_a_002": "tilly", "bayat_0_a_001": "bayat"}
+    claims = [{"names_touched": [TILLY, BAYAT], "grounds": [_chunk_ground("tilly_0_a_001")]}]
+
+    _write_store(tmp_path, member_ids_by_name=members, source_by_chunk=by_chunk)
+    without = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
+    _write_store(
+        tmp_path, member_ids_by_name=members, source_by_chunk=by_chunk, qids={TILLY: "Q717635"}
+    )
+    result = compute_source_usage(_record(claims=claims), vault_dir=tmp_path)
+
+    assert result["qid_by_name"] == {BAYAT: None, TILLY: "Q717635"}
+    assert {k: v for k, v in result.items() if k != "qid_by_name"} == {
+        k: v for k, v in without.items() if k != "qid_by_name"
+    }
 
 
 def test_a_note_that_is_a_member_of_two_touched_names_is_summed_once_per_name(tmp_path):
