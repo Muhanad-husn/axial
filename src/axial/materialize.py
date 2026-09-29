@@ -58,6 +58,7 @@ from axial.intake import SOURCE_META_DIR
 from axial.merge_names import DEFAULT_ALIAS_MAP_PATH
 from axial.names import DEFAULT_INVENTORY_PATH, load_answer_records, unscope_surface_form
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, _read_configured_dir, default_vault_dir
+from axial.position_pages import write_position_pages
 from axial.query import store as note_store
 from axial.query.names import _build_name_layer, as_string_list, fold_surface_form
 from axial.query.reader import (
@@ -66,6 +67,7 @@ from axial.query.reader import (
     source_id_from_chunk_id,
     stated_position,
 )
+from axial.vocabulary import VOCABULARY_DIR
 from axial.vault import (
     VaultError,
     bibliographic_value,
@@ -633,6 +635,8 @@ def run_materialize(
     artifacts_dir: Path | None = None,
     vault_dir: Path | None = None,
     residue_decisions_path: Path | None = None,
+    map_dir: Path | None = None,
+    vocabulary_dir: Path | None = None,
     config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH,
 ) -> dict[str, Any]:
     """Materialize the whole vault in one pass (§7.17): prose notes, artifact
@@ -651,7 +655,13 @@ def run_materialize(
     raw source file (`axial.argmap.build.compute_corpus_pin`), a cost every
     ordinary materialize run would otherwise pay just to check whether a
     residue pass happens to exist. An operator who has run one passes its
-    path explicitly (`axial names materialize --residue-decisions-path`)."""
+    path explicitly (`axial names materialize --residue-decisions-path`).
+
+    `map_dir` (issue #854) is one built map, `data/map/<pin>/`: when given,
+    its positions are written as pages under `<vault_dir>/positions/`
+    (`axial.position_pages`), their categories read from `vocabulary_dir`
+    (default `data/vocabulary`). Explicit for the same reason as
+    `residue_decisions_path`: resolving the pin hashes every raw source."""
     answers_dir = (
         Path(answers_dir) if answers_dir is not None else _default_answers_dir(config_path)
     )
@@ -686,9 +696,18 @@ def run_materialize(
         residue_decisions_path=residue_decisions_path,
     )
 
+    pages_result = {"position_pages_written": 0, "position_pages_isolated": 0}
+    if map_dir is not None:
+        pages_result = write_position_pages(
+            map_dir=Path(map_dir),
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else VOCABULARY_DIR,
+            vault_dir=vault_dir,
+        )
+
     return {
         "vault_dir": str(vault_dir),
         **notes_result,
         **artifacts_result,
         **store_result,
+        **pages_result,
     }
