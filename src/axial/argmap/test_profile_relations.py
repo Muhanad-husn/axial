@@ -328,9 +328,12 @@ def test_a_shared_category_is_never_recorded_as_a_relation(tmp_path):
 
     outdir, _ = _run(tmp_path, client)
 
-    text = (outdir / PROFILE_RELATIONS_FILENAME).read_text(encoding="utf-8")
-    assert "m1" not in text
-    assert '"relation": "supports"' in text
+    (row,) = [
+        json.loads(line)
+        for line in (outdir / PROFILE_RELATIONS_FILENAME).read_text(encoding="utf-8").splitlines()
+    ]
+    assert row["relation"] == "supports"
+    assert "m1" not in row["says"]
 
 
 def test_a_relation_between_positions_that_were_not_proposed_is_dropped_and_counted(tmp_path):

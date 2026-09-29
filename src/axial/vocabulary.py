@@ -427,6 +427,9 @@ def read_column(
 
 RELATION_COLUMN = "relation"
 RELATIONS_FILENAME = "relations.jsonl"
+# Issue #858: relations `axial map relate-profile` proposes from the
+# vocabulary profile. Read with the map's own, when the file exists.
+PROFILE_RELATIONS_FILENAME = "profile_relations.jsonl"
 POSITIONS_FILENAME = "positions.jsonl"
 
 
@@ -464,7 +467,11 @@ def load_relation_records(relations_dir: Path) -> list[dict[str, Any]]:
             sources_by_id[str(position.get("position_id"))] = set(position.get("sources") or [])
 
     records: list[dict[str, Any]] = []
-    for relation in _read_jsonl(relations_path):
+    relation_rows = _read_jsonl(relations_path)
+    profile_path = Path(relations_dir) / PROFILE_RELATIONS_FILENAME
+    if profile_path.is_file():
+        relation_rows += _read_jsonl(profile_path)
+    for relation in relation_rows:
         ends = sources_by_id.get(str(relation.get("from_position_id")), set()) | sources_by_id.get(
             str(relation.get("to_position_id")), set()
         )
