@@ -42,8 +42,8 @@ Then  zero LLM calls are made
 Given a hand-built analysis record at data/analyses/DEV32.json with
       disposition "refuse" and empty claims
 When  the source-usage computation runs over that record
-Then  source_usage is present with names_queried from the trajectory and
-      an empty sources list
+Then  source_usage is present with an empty names_queried (no claim touched
+      a name, DEC-75) and an empty sources list
 
 Given a hand-built analysis record at data/analyses/DEV33.json whose
       trajectory queries no name at all while its grounds cite a "zaum" chunk
@@ -86,6 +86,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 from axial.answer.record import persist_record
 from axial.answer.source_usage import compute_source_usage
@@ -172,6 +173,7 @@ def fixture_root(tmp_path: Path) -> Path:
     _write_fixture_vault_100_chunks(tmp_path)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, _EVIDENCE_ORDER)
     return tmp_path
 
 
@@ -184,6 +186,7 @@ def _run_brief_run_cli(
     stub_synthesize_response: dict[str, Any] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "record"
     env[RECORD_PATH_ENV_VAR] = str(record_path)
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(stub_interrogate_response)
@@ -232,16 +235,11 @@ def _grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str, Any
 TILLY_CHUNK_IDS = sorted(f"tilly_0_intro_{i:03d}" for i in range(TILLY_COUNT))
 OTHER_CHUNK_IDS = sorted(f"other_0_intro_{i:03d}" for i in range(OTHER_COUNT))
 
-# The evidence set's own order for scenario 1's two scripted calls --
-# `query_by_source("tilly")` then `query_by_source("other")`, each sorted by
-# chunk_id (§7.5's determinism contract) -- run through the REAL
-# `assemble_evidence_ids` (issue #517 slice 2: dedup first-seen, then
-# reordered source round-robin) rather than hand-concatenated, so this
-# fixture cannot drift out of sync with the production function again the
-# way a literal `TILLY_CHUNK_IDS + OTHER_CHUNK_IDS` silently did. With two
-# sources this interleaves: `other`'s chunk_id sorts before `tilly`'s, so
-# the assembled order is other[0], tilly[0], other[1], tilly[1], ..., then
-# (once the 22-chunk tilly group is exhausted) the rest of `other` alone.
+# The evidence set's own order for scenario 1: tilly and other interleaved
+# source round-robin (`assemble_evidence_ids` builds it, so the fixture reads
+# like a real mixed evidence set). The fixture map's one position carries
+# exactly this order, so assembly hands synthesis the same list and the
+# handles below line up with it.
 _EVIDENCE_ORDER = assemble_evidence_ids(
     [
         {
@@ -288,15 +286,6 @@ def _stub_grounded_claim(text: str, kind: str, chunk_ids: list[str]) -> dict[str
     }
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root: Path):
     """Scenario 1 (issue #265): a real `axial brief run` over a fixture
     vault of 100 chunks (22 tilly / 78 other), grounds citing 10 distinct
@@ -305,11 +294,6 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
     is not a name query and this run queried no name at all."""
     record_path = fixture_root / "record.jsonl"
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
-    stub_tool_calls = [
-        {"tool": "query_by_source", "args": {"source_id": "tilly"}},
-        {"tool": "query_by_source", "args": {"source_id": "other"}},
-        None,
-    ]
     tilly_grounds = [f"tilly_0_intro_{i:03d}" for i in range(TILLY_GROUNDS_COUNT)]
     other_grounds = [f"other_0_intro_{i:03d}" for i in range(OTHER_GROUNDS_COUNT)]
     stub_synthesize_response = {
@@ -325,7 +309,6 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
         fixture_root,
         record_path=record_path,
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
 
@@ -357,25 +340,12 @@ def test_source_usage_disclosed_with_denominator_via_full_brief_run(fixture_root
         assert "evidence_share" in entry and "available_share" in entry
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_source_usage_exits_0_and_writes_the_record_a_second_identical_run(fixture_root: Path):
     """A re-run over the same pinned vault writes to the same path with the
     same source_usage -- determinism carried through the CLI, not just the
     bare function (mirrors test_brief_run_analysis_record.py's own
     identical-path scenario)."""
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
-    stub_tool_calls = [
-        {"tool": "query_by_source", "args": {"source_id": "tilly"}},
-        None,
-    ]
     stub_synthesize_response = {
         "claims": [_stub_grounded_claim("A claim.", "a", ["tilly_0_intro_000"])]
     }
@@ -384,7 +354,6 @@ def test_source_usage_exits_0_and_writes_the_record_a_second_identical_run(fixtu
         fixture_root,
         record_path=fixture_root / "record_1.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert first.returncode == 0, first.stderr
@@ -397,7 +366,6 @@ def test_source_usage_exits_0_and_writes_the_record_a_second_identical_run(fixtu
         fixture_root,
         record_path=fixture_root / "record_2.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert second.returncode == 0, second.stderr
@@ -504,20 +472,12 @@ def test_source_usage_on_a_concentrated_hand_built_record_makes_zero_llm_calls(
     assert gellner["available_share"] is None
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Path):
-    """Scenario 3 (issue #265, DEV32, re-pointed by #491): disposition
-    "refuse" and empty claims -- source_usage is present, names_queried comes
-    from the trajectory, sources is empty. What the run LOOKED at is a fact
-    about the run whether or not it then cited anything."""
+    """Scenario 3 (issue #265, DEV32, re-pointed by #491 and again by
+    #853): disposition "refuse" and empty claims -- source_usage is still
+    present, with empty sources. `names_queried` is read off the claims'
+    own `names_touched` since DEC-75, not the trajectory, so a run with no
+    claims touched no name, whatever its trajectory says."""
     analyses_dir = tmp_path / "data" / "analyses"
     trajectory = [
         {
@@ -534,7 +494,7 @@ def test_source_usage_empty_on_refuse_disposition_with_empty_claims(tmp_path: Pa
 
     source_usage = compute_source_usage(record, vault_dir=None)
     assert source_usage["sources"] == []
-    assert source_usage["names_queried"] == [{"tool": "find_names", "args": {"query": "Tilly"}}]
+    assert source_usage["names_queried"] == []
 
 
 def test_source_usage_usage_ratio_null_when_filters_match_zero_of_a_cited_sources_chunks(
