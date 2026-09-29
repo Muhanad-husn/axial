@@ -22,6 +22,13 @@ from axial.argmap.build import MapError
 from axial.argmap.build import PASS_NAME as MAP_BUILD_PASS_NAME
 from axial.argmap.build import WORKERS as MAP_BUILD_DEFAULT_WORKERS
 from axial.argmap.build import run_map_build
+from axial.argmap.compare import (
+    DEFAULT_SEED as MAP_COMPARE_DEFAULT_SEED,
+    DEFAULT_TRIALS as MAP_COMPARE_DEFAULT_TRIALS,
+    CompareError,
+    compute_comparison,
+    format_comparison_report,
+)
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
@@ -872,6 +879,67 @@ def build_parser() -> argparse.ArgumentParser:
             "bounded concurrent resolve-target workers (this pass is "
             f"I/O-bound, like 'map build') (default: {MAP_RESIDUE_DEFAULT_WORKERS})"
         ),
+    )
+
+    map_compare_parser = map_subparsers.add_parser(
+        "compare",
+        help=(
+            "issue #831: the structural verdict on the re-formed map. Puts "
+            "two map builds side by side -- the default build first, the "
+            "variant second -- and decides on five metrics: "
+            "D1 book-spread ratio and D2 held-out `position`-axis purity, "
+            "both size-matched against a seeded permutation of each build's "
+            "own placed pool; D3 member coherence as a band-by-band floor; "
+            "D4 passages reaching no position, counted as DISTINCT chunk ids "
+            "in positions.jsonl and never as a sum of position sizes; and D5, "
+            "a blind hand-sample this command names but never computes. Zero "
+            "model calls. Pass the variant's FORCED replicate with "
+            "--replicate: without it, D1 and D2 report 'not resolved at this "
+            "sample' rather than quoting a margin against a gap nobody "
+            "measured. Refuses when the builds disagree on the corpus pin, "
+            "the answers pin or a vocabulary scheme version"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "baseline_dir", help="the baseline (default) build's own pin directory, e.g. data/map/<pin>"
+    )
+    map_compare_parser.add_argument(
+        "variant_dir", help="the variant build's own directory, e.g. data/map/<pin>-variant-<slug>"
+    )
+    map_compare_parser.add_argument(
+        "--replicate",
+        default=None,
+        help=(
+            "the variant's FORCED replicate, in its own directory -- the "
+            "error bar every D1/D2 margin is quoted against. Its manifest "
+            "must read units_reused == 0 or the gap is reported as unusable"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "--vocabulary-dir",
+        default=None,
+        help="override data/vocabulary/ (default: that path). `claim` and `position` are read",
+    )
+    map_compare_parser.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="the vocabulary level to read both columns at (default: each column's own max_level)",
+    )
+    map_compare_parser.add_argument(
+        "--seed",
+        type=int,
+        default=MAP_COMPARE_DEFAULT_SEED,
+        help=(
+            "the permutation null's seed -- the same seed gives the same "
+            f"figure twice (default: {MAP_COMPARE_DEFAULT_SEED})"
+        ),
+    )
+    map_compare_parser.add_argument(
+        "--trials",
+        type=int,
+        default=MAP_COMPARE_DEFAULT_TRIALS,
+        help=f"permutation trials per null (default: {MAP_COMPARE_DEFAULT_TRIALS})",
     )
 
     eval_parser = subparsers.add_parser(
@@ -3497,6 +3565,38 @@ def _map_ask(brief_path: str) -> int:
     return 0
 
 
+def _map_compare(
+    baseline_dir: str,
+    variant_dir: str,
+    replicate_dir: str | None,
+    vocabulary_dir: str | None,
+    level: int | None,
+    seed: int,
+    trials: int,
+) -> int:
+    """`axial map compare` (issue #831): zero model calls, like `_map_purity`
+    -- but not zero network. `compute_comparison` builds the local
+    sentence-transformer encoder itself for D3 when this command does not
+    inject one, which it never does, and on a cold cache that construction
+    reaches the HF hub."""
+    try:
+        report = compute_comparison(
+            Path(baseline_dir),
+            Path(variant_dir),
+            Path(replicate_dir) if replicate_dir is not None else None,
+            vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
+            level=level,
+            seed=seed,
+            trials=trials,
+        )
+    except (CompareError, NoVocabularyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_encoding_safe(format_comparison_report(report))
+    return 0
+
+
+
 def _map_residue(*, workers: int = MAP_RESIDUE_DEFAULT_WORKERS) -> int:
     """`axial map residue` (issue #651): run the semantic residue resolver's
     full pass -- every unresolved `arguing_against` target, both blocking
@@ -3898,6 +3998,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "residue":
         return _map_residue(workers=args.workers)
+
+    if args.command == "map" and args.map_command == "compare":
+        return _map_compare(
+            args.baseline_dir,
+            args.variant_dir,
+            args.replicate,
+            args.vocabulary_dir,
+            args.level,
+            args.seed,
+            args.trials,
+        )
 
     if args.command == "artifacts":
         return _artifacts(args.source_path)

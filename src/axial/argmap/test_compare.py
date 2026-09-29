@@ -1358,3 +1358,16 @@ def test_d4s_breakdown_names_its_residual_and_reads_as_a_lower_bound(tmp_path, m
     assert "of which, at least:" in out
     residual = next(line for line in out.splitlines() if "not attributed" in line)
     assert "lower bound" in residual
+
+
+def test_load_build_accepts_a_variant_slug_directory_as_map_build_variant_writes_it(tmp_path):
+    """Issue #871: `map build --variant <slug>` (#859) writes
+    `data/map/<pin>-variant-<slug>/`. Nothing in `load_build` keys on a
+    directory name, so the variant loads and compares like any other build."""
+    from axial.argmap.compare import check_identity, load_build
+
+    baseline = build_baseline(tmp_path)
+    variant = build_variant(tmp_path, name="pin-1-variant-glm-5")
+
+    check_identity([load_build(baseline, "A"), load_build(variant, "B")])
+    assert load_build(variant, "B").path == variant
