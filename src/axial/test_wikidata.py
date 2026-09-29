@@ -54,6 +54,14 @@ def test_a_kind_maps_to_its_wikidata_type_and_an_unmapped_kind_sends_none():
     assert type_for_kind(None) is None
 
 
+def test_an_event_goes_untyped():
+    """Measured 2026-09-29: typed Q1190554 (occurrence), the service answers
+    403 to every query -- it fails parsing that type's own subclass tree --
+    and the narrower event types miss the Six-Day War's own item. Untyped,
+    the Six-Day War, the Hama massacre and the Arab Revolt all come first."""
+    assert type_for_kind("event") is None
+
+
 def test_a_place_is_typed_geographic_location_not_administrative_entity():
     """Measured 2026-09-29 against the live service: typed Q56061
     (administrative territorial entity), `Europe` comes back `match: true`
