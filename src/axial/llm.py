@@ -645,6 +645,9 @@ PRICE_TABLE_USD_PER_1K: dict[str, dict[str, float]] = {
     # Added 2026-09-29 (#855): the vocabulary tier moves here on the
     # proposing-model experiment in data/logs/2026-09-29-855-relation-examine-glm53/.
     "deepseek/deepseek-v4.1-flash": {"input": 0.0003, "output": 0.0012},
+    # Added 2026-09-29: the counter-position experiment against glm-5.2 in
+    # data/logs/2026-09-29-counter-position-glm53/.
+    "z-ai/glm-5.3": {"input": 0.0014, "output": 0.0044},
     "nvidia/nemotron-3-ultra-550b-a55b:free": {"input": 0.0, "output": 0.0},
 }
 
