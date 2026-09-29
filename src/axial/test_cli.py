@@ -1749,7 +1749,7 @@ def test_map_build_offers_no_grouping_option(capsys):
     assert "unrecognized arguments" in captured.err
 
 
-@pytest.mark.parametrize("subcommand", ["purity", "grouping-report", "compare"])
+@pytest.mark.parametrize("subcommand", ["purity", "grouping-report"])
 def test_map_category_subcommands_are_gone(subcommand, capsys):
     from axial.cli import build_parser
 
@@ -1770,7 +1770,7 @@ def test_map_help_still_offers_ask_and_build_without_the_category_surface(capsys
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "{build,ask,residue}" in captured.out
+    assert "{build,ask,residue,compare}" in captured.out
     assert "purity" not in captured.out
     assert "grouping-report" not in captured.out
 
@@ -1784,3 +1784,69 @@ def test_vocabulary_help_still_offers_build(capsys):
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "{examine,build,export}" in captured.out
+
+
+
+# ---------------------------------------------------------------------------
+# `axial map compare` (issue #831): the structural verdict. The behaviour
+# itself is covered at CLI level in `src/axial/argmap/test_compare.py`, over
+# three fixture builds; what is here is the argument surface and the two
+# refusals a bad invocation must get as a named error rather than a traceback.
+# ---------------------------------------------------------------------------
+
+
+def test_build_parser_recognises_map_compare_subcommand(tmp_path):
+    from axial.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "map",
+            "compare",
+            str(tmp_path / "map" / "pin-1"),
+            str(tmp_path / "map" / "pin-1-category"),
+            "--replicate",
+            str(tmp_path / "map" / "pin-1-category-replicate"),
+            "--vocabulary-dir",
+            str(tmp_path / "vocab"),
+            "--level",
+            "1",
+            "--seed",
+            "7",
+            "--trials",
+            "3",
+        ]
+    )
+
+    assert args.command == "map"
+    assert args.map_command == "compare"
+    assert args.baseline_dir == str(tmp_path / "map" / "pin-1")
+    assert args.variant_dir == str(tmp_path / "map" / "pin-1-category")
+    assert args.replicate == str(tmp_path / "map" / "pin-1-category-replicate")
+    assert args.vocabulary_dir == str(tmp_path / "vocab")
+    assert args.level == 1
+    assert args.seed == 7
+    assert args.trials == 3
+
+
+def test_build_parser_map_compare_replicate_defaults_to_none(tmp_path):
+    """The replicate is optional. Without it the command still runs and says
+    the D1/D2 gap was not measured, rather than assuming one (issue #831)."""
+    from axial.argmap.compare import DEFAULT_SEED, DEFAULT_TRIALS
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["map", "compare", "a", "b"])
+
+    assert args.replicate is None
+    assert (args.seed, args.trials) == (DEFAULT_SEED, DEFAULT_TRIALS)
+
+
+def test_main_map_compare_reports_a_directory_that_is_not_a_build_as_an_error_not_a_traceback(
+    tmp_path, capsys
+):
+    from axial.cli import main
+
+    exit_code = main(["map", "compare", str(tmp_path / "nowhere"), str(tmp_path / "elsewhere")])
+
+    assert exit_code == 1
+    assert "map.json" in capsys.readouterr().err
