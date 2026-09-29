@@ -4,8 +4,9 @@ subproject (Phase B, sub:analysis-v0): the analysis record and
 
 Given a fixture vault, a written corpus pin under evals/corpus_pin/, and a
       brief file config/briefs/dev/fixture-syria-displacement.yaml
-  And AXIAL_LLM_PROVIDER=record so interrogation, retrieval, and synthesis
-      are all scripted, the interrogation yielding disposition "proceed"
+  And a fixture argument map whose one position holds both fixture notes
+  And AXIAL_LLM_PROVIDER=record so interrogation, the map's door, and
+      synthesis are all scripted, the interrogation yielding "proceed"
 When  `axial brief run config/briefs/dev/fixture-syria-displacement.yaml` runs
 Then  the command exits 0
   And data/analyses/<brief_id>.json exists, where <brief_id> is the id the
@@ -16,9 +17,8 @@ Then  the command exits 0
   And record["brief"] equals the loaded brief verbatim
   And record["corpus_pin"] equals the pin id under evals/corpus_pin/
   And record["claims"] equals the claim graph the synthesis pass emitted
-  And record["trajectory"] is a list of {step, tool, args, result_ids,
-      result_count, total, detail} entries in tool-call order (issue #493
-      adds total/detail additively over the original five)
+  And record["trajectory"] is empty and record["map_retrieval"] names what
+      the map walk assembled instead (DEC-75: the map is the only arm)
   And record["model_by_pass"] names each pass that ran
 
 Given the same brief run a second time over the same pinned vault
@@ -48,8 +48,9 @@ Mirrors tests/analysis/test_brief_examine.py exactly: an isolated `tmp_path`
 staging root as the subprocess `cwd` (never the real, shared `data/` tree),
 `AXIAL_LLM_PROVIDER=record` with `AXIAL_LLM_RECORD_PATH` so every prompt is
 observable, and the scripted-response env vars issues #252/#254/#256 already
-established (`AXIAL_STUB_INTERROGATE_RESPONSE`, `AXIAL_STUB_TOOL_CALLS`,
-`AXIAL_STUB_SYNTHESIZE_RESPONSE`). The brief file itself is still the real
+established (`AXIAL_STUB_INTERROGATE_RESPONSE`,
+`AXIAL_STUB_SYNTHESIZE_RESPONSE`), over the shared map fixture
+(tests/analysis/_map_fixture.py, issue #863). The brief file itself is still the real
 repo fixture `config/briefs/dev/fixture-syria-displacement.yaml`, passed by
 its absolute path so it resolves regardless of the isolated cwd.
 
@@ -79,6 +80,9 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
+
+from axial.validators.coverage import NOT_MEASURED_BAND
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_BRIEF_PATH = REPO_ROOT / "config" / "briefs" / "dev" / "fixture-syria-displacement.yaml"
@@ -87,7 +91,6 @@ REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 
 _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
@@ -105,8 +108,8 @@ def _chunk_frontmatter(*, chunk_id: str, surfaces: list[str]) -> dict[str, Any]:
     not the reader).
 
     `surfaces` are the names the note itself named. Each note names one
-    surface the fixture's alias map DOES carry (so §7.4's `names_touched` and
-    the §7.7 map are exercised end to end) and one it does not (so §7.4's
+    surface the fixture's alias map DOES carry (so §7.4's `names_touched` is
+    exercised end to end) and one it does not (so §7.4's
     drop-rather-than-invent rule is exercised at the record layer too)."""
     return {
         "chunk_id": chunk_id,
@@ -151,21 +154,6 @@ def _write_fixture_vault(root: Path) -> None:
     )
     (names_layer / "index.json").write_text(json.dumps({"names": [TILLY]}), encoding="utf-8")
 
-    # The §7.7 denominator is the name page's own `member_count` (D2): 50
-    # here, so the band is `moderate` under the default cut points and the
-    # overall confidence disclosure is `medium` -- not the `low` that an
-    # empty map pinned it to on every v1 run.
-    names_dir = root / "data" / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    page = {"name": TILLY, "kind": "person", "aliases": ["Tilly"], "member_count": 50}
-    body = yaml.safe_dump(page, sort_keys=False)
-    members = "\n".join(
-        f"- [[{chunk_id}]] — A. Synthetic Author (2021): A claim." for chunk_id in (SYRIA_A, IRAQ_A)
-    )
-    (names_dir / f"{TILLY}.md").write_text(
-        f"---\n{body}---\n**Member notes:**\n{members}\n", encoding="utf-8"
-    )
-
 
 def _write_fixture_pin(root: Path, name: str = "baseline") -> None:
     """A corpus-pin manifest under evals/corpus_pin/<name>.json (§7.12). Its
@@ -195,6 +183,7 @@ def fixture_root(tmp_path: Path) -> Path:
     _write_fixture_vault(tmp_path)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, [SYRIA_A, IRAQ_A])
     return tmp_path
 
 
@@ -203,15 +192,13 @@ def _run_brief_run_cli(
     *,
     record_path: Path,
     stub_interrogate_response: dict[str, Any],
-    stub_tool_calls: list[dict[str, Any] | None] | None = None,
     stub_synthesize_response: dict[str, Any] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "record"
     env[RECORD_PATH_ENV_VAR] = str(record_path)
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(stub_interrogate_response)
-    if stub_tool_calls is not None:
-        env[STUB_TOOL_CALLS_ENV_VAR] = json.dumps(stub_tool_calls)
     if stub_synthesize_response is not None:
         env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps(stub_synthesize_response)
     return subprocess.run(
@@ -258,9 +245,9 @@ def _read_recorded_prompts(record_path: Path) -> list[str]:
 
 def _three_kind_synthesize_response() -> dict[str, Any]:
     # Grounds cite the opaque HANDLE (issue #410), never the real chunk_id:
-    # the fixture's stub tool calls fetch SYRIA_A then IRAQ_A via `get_chunk`
-    # (below), the same order `compose_prompt` then walks the assembled
-    # evidence set in, so SYRIA_A is "[c1]" and IRAQ_A is "[c2]". The
+    # the fixture map's one position holds SYRIA_A then IRAQ_A, the order
+    # assembly hands them to `compose_prompt`, so SYRIA_A is "[c1]" and
+    # IRAQ_A is "[c2]". The
     # PERSISTED record's own grounds still carry the real resolved id --
     # only what the model is shown/cites changes.
     return {
@@ -284,38 +271,18 @@ def _three_kind_synthesize_response() -> dict[str, Any]:
     }
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path):
     """Scenario 1 (issue #257): every §7.3 key is present, `brief`/
     `corpus_pin`/`claims`/`trajectory`/`model_by_pass` round-trip the
     scripted stages' real output."""
     record_path = fixture_root / "record.jsonl"
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
-    stub_tool_calls = [
-        {"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}},
-        {"tool": "get_chunk", "args": {"chunk_id": IRAQ_A}},
-        # A name-layer call, so this run really did retrieve on a name and
-        # the §7.7 map has a scope (issue #490). It comes last so the
-        # assembled evidence order -- and therefore the [c1]/[c2] handle
-        # assignment the scripted synthesis response cites -- is unchanged.
-        {"tool": "get_name", "args": {"canonical": TILLY}},
-        None,
-    ]
     stub_synthesize_response = _three_kind_synthesize_response()
 
     result = _run_brief_run_cli(
         fixture_root,
         record_path=record_path,
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
 
@@ -378,101 +345,50 @@ def test_brief_run_writes_the_full_analysis_record_on_proceed(fixture_root: Path
     assert by_kind["b"]["names_touched"] == [TILLY]
     assert "polities_touched" not in by_kind["b"]
 
-    # The §7.7 map is computed for real (issue #490): one entry for the name
-    # this run both retrieved on and grounded a claim in, carrying the page's
-    # own `member_count` as the denominator and this run's own two grounds
-    # notes as the numerator. `confidence` follows from it deterministically,
-    # and is no longer the `low` that an empty map pinned every v1 run to.
-    assert record["coverage_map"] == {
-        TILLY: {
-            "corpus_note_count": 50,
-            "evidence_note_count": 2,
-            "coverage_band": "moderate",
-        }
-    }
-    assert record["confidence"]["overall_band"] == "medium"
-    rationale = record["confidence"]["rationale"]
-    assert TILLY in rationale and "50" in rationale, rationale
-    assert "placeholder" not in rationale
+    # The map arm writes no name-layer trajectory, so the §7.7 map has no
+    # scope and confidence reads NOT MEASURED, never a measured `low`
+    # (issue #584).
+    assert record["coverage_map"] == {}
+    assert record["confidence"]["overall_band"] == NOT_MEASURED_BAND
 
     # Issue #545: both fixture notes are a few dozen characters, nowhere
     # near `synthesis.evidence_char_budget`'s default 100,000 -- so nothing
-    # is dropped and the two counts agree, proving the field is wired
-    # end-to-end rather than only unit-tested against `build_record`/
-    # `synthesize` in isolation.
+    # is dropped and the two counts agree.
     assert record["evidence"] == {"assembled_count": 2, "composed_count": 2}
 
-    assert isinstance(record["trajectory"], list) and record["trajectory"]
-    # issue #493: `total`/`detail` are additively persisted onto every entry
-    # now, beside the original five -- this assertion is updated with that
-    # one-line justification. Issue #650 adds `resolved_name`, the sixth
-    # rider; this run's three calls (get_chunk, get_chunk, get_name) are all
-    # door tools, none of the four relational tools that resolve one, so the
-    # value is `None` on every entry -- asserted, not just the key's
-    # presence.
-    for entry in record["trajectory"]:
-        assert set(entry) == {
-            "step",
-            "tool",
-            "args",
-            "result_ids",
-            "result_count",
-            "total",
-            "detail",
-            "resolved_name",
-        }
-        assert entry["resolved_name"] is None
-    assert [entry["tool"] for entry in record["trajectory"]] == [
-        "get_chunk",
-        "get_chunk",
-        "get_name",
-    ]
+    # What retrieval did is recorded in the map's own terms (DEC-75).
+    assert record["trajectory"] == []
+    assert record["map_retrieval"]["used"] is True
+    assert record["map_retrieval"]["assembled_chunk_ids"] == [SYRIA_A, IRAQ_A]
 
-    assert record["model_by_pass"] == {
-        "interrogate": "stub",
-        "retrieve": "stub",
-        "synthesize": "stub",
-    }
+    passes = {"interrogate", "brief_decompose", "synthesize"}
+    assert record["model_by_pass"] == dict.fromkeys(passes, "stub")
 
-    # Issue #363: `cost` carries the same three passes, token usage
-    # captured, dollar cost null -- "stub" is never in the real price
-    # table, so this proves the unpriced path end-to-end rather than
-    # crashing or reporting a fabricated zero.
-    assert set(record["cost"]["by_pass"]) == {"interrogate", "retrieve", "synthesize"}
+    # Issue #363: `cost` carries the same passes, token usage captured,
+    # dollar cost null -- "stub" is never in the real price table, so this
+    # proves the unpriced path end-to-end rather than a fabricated zero.
+    assert set(record["cost"]["by_pass"]) == passes
     for pass_name, entry in record["cost"]["by_pass"].items():
         assert entry["prompt_tokens"] > 0, pass_name
         assert entry["total_tokens"] > 0, pass_name
         assert entry["usd"] is None, f"{pass_name}: 'stub' is not in the real price table"
     assert record["cost"]["total_usd"] is None
 
-    # 1 interrogate call + 4 retrieval-loop turns (3 tool calls, then a
-    # final turn with no tool call to end the loop cleanly) + 1 synthesize
-    # call -- every one of the three passes actually ran and is observable.
+    # One call per pass -- interrogate, the door, synthesize.
     prompts = _read_recorded_prompts(record_path)
-    assert len(prompts) == 6, f"expected interrogate+retrieve+synthesize calls, got {prompts!r}"
+    assert len(prompts) == 3, f"expected interrogate+door+synthesize calls, got {prompts!r}"
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_brief_run_writes_the_identical_path_on_a_second_run(fixture_root: Path):
     """Scenario 2 (issue #257): re-running the same brief over the same
     pinned vault writes to the identical path."""
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
-    stub_tool_calls = [{"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}}, None]
     stub_synthesize_response = {"claims": []}
 
     first = _run_brief_run_cli(
         fixture_root,
         record_path=fixture_root / "record_1.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert first.returncode == 0, first.stderr
@@ -482,7 +398,6 @@ def test_brief_run_writes_the_identical_path_on_a_second_run(fixture_root: Path)
         fixture_root,
         record_path=fixture_root / "record_2.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert second.returncode == 0, second.stderr
