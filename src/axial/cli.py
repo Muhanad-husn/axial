@@ -185,6 +185,7 @@ from axial.validators.coverage import (
     validate_coverage_and_confidence,
 )
 from axial.vault import VaultError, run_vault_write
+from axial.vocabulary_skos import DEFAULT_SKOS_EXPORT_PATH, export_skos
 from axial.vocabulary import (
     DEFAULT_ASSIGN_N,
     DEFAULT_ASSIGN_WORKERS,
@@ -769,6 +770,25 @@ def build_parser() -> argparse.ArgumentParser:
             "rather than deleting it: it is the only record of what each "
             "note was filed under, and it was paid for"
         ),
+    )
+
+    vocabulary_export_parser = vocabulary_subparsers.add_parser(
+        "export",
+        help=(
+            "issue #857: write every committed scheme as SKOS Turtle, one "
+            "skos:ConceptScheme per column; a category's close_match becomes "
+            "skos:closeMatch. No model call"
+        ),
+    )
+    vocabulary_export_parser.add_argument(
+        "--scheme-path",
+        default=None,
+        help=f"override {DEFAULT_VOCABULARY_SCHEME_PATH} (default: that path)",
+    )
+    vocabulary_export_parser.add_argument(
+        "--out",
+        default=None,
+        help=f"where the Turtle goes (default: {DEFAULT_SKOS_EXPORT_PATH})",
     )
 
     map_parser = subparsers.add_parser(
@@ -3180,6 +3200,23 @@ def _vocabulary_build(
     return 0 if stats.complete else 1
 
 
+def _vocabulary_export(scheme_path: str | None, out: str | None) -> int:
+    try:
+        stats = export_skos(
+            Path(scheme_path) if scheme_path is not None else DEFAULT_VOCABULARY_SCHEME_PATH,
+            Path(out) if out is not None else DEFAULT_SKOS_EXPORT_PATH,
+        )
+    except VocabularySchemeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"wrote {stats.out_path}: {len(stats.columns)} scheme(s) "
+        f"({', '.join(stats.columns)}), {stats.concept_count} concept(s), "
+        f"{stats.close_match_count} closeMatch"
+    )
+    return 0
+
+
 def _names_merge(
     min_cluster_size: int | None,
     min_samples: int | None,
@@ -3829,6 +3866,9 @@ def main(argv: list[str] | None = None) -> int:
             args.force,
             args.relations_dir,
         )
+
+    if args.command == "vocabulary" and args.vocabulary_command == "export":
+        return _vocabulary_export(args.scheme_path, args.out)
 
     if args.command == "names" and args.names_command == "merge":
         return _names_merge(

@@ -1783,4 +1783,4 @@ def test_vocabulary_help_still_offers_build(capsys):
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "{examine,build}" in captured.out
+    assert "{examine,build,export}" in captured.out
