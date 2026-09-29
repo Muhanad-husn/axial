@@ -159,7 +159,12 @@ from axial.interrogate import _default_answers_dir, is_abstention
 from axial.llm import LLMClient, LLMError, estimate_cost, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.names import load_answer_records, load_back_matter_sections
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
+from axial.paths import (
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    default_map_dir,
+    default_sources_dir,
+    default_vault_dir,
+)
 from axial.pidguard import claim_single_instance
 from axial.vocabulary import SchemeCategory, relation_kind_examples
 
@@ -273,6 +278,9 @@ class MapError(Exception):
 # DEC-74, and its code deleted -- issue #850). The manifest still records
 # `grouping.mode: "bag"` so prior artifacts read identically.
 GROUPING_BAG = "bag"
+# Issue #860: bags formed from what passages argue against. Its own directory.
+GROUPING_OPPOSITION = "opposition"
+OPPOSITION_SUFFIX = "-opposition"
 
 
 class CorruptReadsLedgerError(MapError):
@@ -585,6 +593,50 @@ def _write_bag_state(
         },
         "assignments": assignments,
         "centroids": {str(label): centroid.tolist() for label, centroid in centroids.items()},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _opposition_groups(
+    passages: Sequence[Passage], encode: Encoder, vault_dir: Path
+) -> tuple[dict[str, list[Passage]], dict[str, Any]]:
+    """Issue #860: opposition bags keyed by their key, then the passages with
+    no usable key wording-bagged as `wording:<n>`. Slicing an over-large bag is
+    `build_jobs`' own author-spread cut; nothing here re-splits by wording."""
+    from axial.argmap.opposition import load_opposition_keys, opposition_bags
+
+    try:
+        keys = load_opposition_keys(vault_dir)
+    except FileNotFoundError as exc:
+        raise MapError(f"--grouping opposition needs the vault store: {exc}") from exc
+    bags, rest = opposition_bags(passages, keys)
+    groups: dict[str, list[Passage]] = dict(bags)
+    if rest:
+        wording, _ = _bag_passages_with_centroids(rest, encode)
+        groups.update({f"wording:{label}": members for label, members in wording.items()})
+    return groups, {
+        "mode": GROUPING_OPPOSITION,
+        "scheme_versions": {},
+        "opposition_bags": len(bags),
+        "passages_in_opposition_bags": sum(len(members) for members in bags.values()),
+        "passages_wording_fallback": len(rest),
+    }
+
+
+def _write_opposition_state(path: Path, groups: Mapping[str, list[Passage]]) -> None:
+    """`bag_state.json` for an opposition build: integer group indexes (what
+    `map compare` reads for its passage universe), labels alongside. No config
+    or centroids, so `_bag_state_reusable` can never accept it as a wording fit."""
+    ordered = sorted(groups)
+    index = {label: i for i, label in enumerate(ordered)}
+    state = {
+        "config": {"grouping": GROUPING_OPPOSITION},
+        "assignments": {
+            member.chunk_id: index[label] for label, members in groups.items() for member in members
+        },
+        "group_labels": {str(i): label for label, i in index.items()},
+        "centroids": {},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1282,7 +1334,7 @@ def _prior_pin_dir(map_dir: Path, current_pin: str) -> Path | None:
         for child in root.iterdir()
         if child.is_dir()
         and child.name != current_pin
-        and not child.name.endswith("-category")
+        and not child.name.endswith(("-category", OPPOSITION_SUFFIX))
         and VARIANT_MARKER not in child.name
         and (child / "map.json").is_file()
     ]
@@ -1401,6 +1453,8 @@ def run_map_build(
     pin: str | None = None,
     force: bool = False,
     variant: str | None = None,
+    grouping: str = GROUPING_BAG,
+    vault_dir: Path | None = None,
     log: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     """Run both stages -- positions, then relations -- and write
@@ -1447,7 +1501,14 @@ def run_map_build(
     (its `bag_state.json`, which must exist, be reusable and place every
     passage: else `MapError`, never a silent re-bag) and no read is seeded
     from it, so extraction runs afresh on identical bags. The caller sets
-    the extraction model on `client`."""
+    the extraction model on `client`.
+
+    **Issue #860: `grouping="opposition"`** writes to `<map_dir>/<pin>-
+    opposition/`, bagging by what passages argue against (`axial.argmap.
+    opposition`, keys read from `<vault_dir>/notes.db`); passages with no
+    usable key are wording-bagged as before. It consults no prior pin, seeds
+    no reads and cannot combine with `variant`. Extraction, merge and
+    relations are unchanged."""
     started = time.monotonic()
     if answers_dir is None:
         answers_dir = _default_answers_dir(config_path)
@@ -1465,7 +1526,15 @@ def run_map_build(
         pin = compute_corpus_pin(envelopes_dir, sources_dir)
 
     baseline_dir = Path(map_dir) / pin
-    outdir = Path(map_dir) / f"{pin}{VARIANT_MARKER}{variant}" if variant else baseline_dir
+    if grouping not in (GROUPING_BAG, GROUPING_OPPOSITION):
+        raise MapError(f"unknown grouping {grouping!r}")
+    opposition = grouping == GROUPING_OPPOSITION
+    if opposition and variant:
+        raise MapError("--grouping opposition cannot be combined with --extract-model")
+    if opposition:
+        outdir = Path(map_dir) / f"{pin}{OPPOSITION_SUFFIX}"
+    else:
+        outdir = Path(map_dir) / f"{pin}{VARIANT_MARKER}{variant}" if variant else baseline_dir
     outdir.mkdir(parents=True, exist_ok=True)
     # Read before anything overwrites it: this build's cost and wall time
     # accumulate onto whatever earlier runs under this pin already spent
@@ -1473,47 +1542,58 @@ def run_map_build(
     prior_manifest = _load_json_or_none(outdir / "map.json")
     if guard:
         claim_single_instance(outdir)
-    log(f"corpus pin {pin} | grouping {GROUPING_BAG} -> {outdir}")
+    log(f"corpus pin {pin} | grouping {grouping} -> {outdir}")
 
     passages = select_passages(answers_dir, trees_dir)
     log(f"passages {len(passages)} | authors {len({p.author for p in passages})}")
 
     # Issue #677: `--force` always re-bags globally (the founder's chosen
     # escape hatch), so a forced run never even looks for a prior pin.
-    prior_pin_dir = None if force or variant else _prior_pin_dir(Path(map_dir), pin)
+    prior_pin_dir = None if force or variant or opposition else _prior_pin_dir(Path(map_dir), pin)
     bag_source_dir = baseline_dir if variant else prior_pin_dir
-    prior_bag_state = (
-        _load_json_or_none(_bag_state_path(bag_source_dir)) if bag_source_dir is not None else None
-    )
-    if variant and not _bag_state_reusable(prior_bag_state):
-        raise MapError(
-            f"variant build needs the baseline's reusable bag state at "
-            f"{_bag_state_path(baseline_dir)}; build the baseline first"
+    grouping_block: dict[str, Any] = {"mode": GROUPING_BAG, "scheme_versions": {}}
+    if opposition:
+        bags, grouping_block = _opposition_groups(
+            passages, encode, vault_dir or default_vault_dir(config_path)
         )
-    if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
         log(
-            f"map: prior bag state at {bag_source_dir} does not match this run's "
-            "encoder/threshold/library version -- falling back to a full re-bag"
+            f"bags {len(bags)} ({grouping_block['opposition_bags']} opposition, "
+            f"{grouping_block['passages_wording_fallback']} passage(s) fell back to wording)"
         )
-        prior_bag_state = None
-
-    if prior_bag_state is not None:
-        bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
-        if variant and new_count:
-            raise MapError(
-                f"variant build: {new_count} passage(s) are absent from the baseline's "
-                "bags, so the bags would not be the baseline's own"
-            )
-        log(
-            f"bags {len(bags)} (incremental against {bag_source_dir.name}: "
-            f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
-            "their prior bag)"
-        )
+        _write_opposition_state(_bag_state_path(outdir), bags)
     else:
-        bags, centroids = _bag_passages_with_centroids(passages, encode)
-        log(f"bags {len(bags)} (full re-bag)")
+        prior_bag_state = (
+            _load_json_or_none(_bag_state_path(bag_source_dir)) if bag_source_dir is not None else None
+        )
+        if variant and not _bag_state_reusable(prior_bag_state):
+            raise MapError(
+                f"variant build needs the baseline's reusable bag state at "
+                f"{_bag_state_path(baseline_dir)}; build the baseline first"
+            )
+        if prior_bag_state is not None and not _bag_state_reusable(prior_bag_state):
+            log(
+                f"map: prior bag state at {bag_source_dir} does not match this run's "
+                "encoder/threshold/library version -- falling back to a full re-bag"
+            )
+            prior_bag_state = None
 
-    _write_bag_state(_bag_state_path(outdir), bags, centroids)
+        if prior_bag_state is not None:
+            bags, centroids, new_count = _incremental_bag_passages(passages, encode, prior_bag_state)
+            if variant and new_count:
+                raise MapError(
+                    f"variant build: {new_count} passage(s) are absent from the baseline's "
+                    "bags, so the bags would not be the baseline's own"
+                )
+            log(
+                f"bags {len(bags)} (incremental against {bag_source_dir.name}: "
+                f"{new_count} new passage(s) placed, {len(passages) - new_count} kept "
+                "their prior bag)"
+            )
+        else:
+            bags, centroids = _bag_passages_with_centroids(passages, encode)
+            log(f"bags {len(bags)} (full re-bag)")
+
+        _write_bag_state(_bag_state_path(outdir), bags, centroids)
 
     jobs = build_jobs(bags)
     # Issue #829: "every passage shown once" read as a coverage guarantee,
@@ -1768,7 +1848,7 @@ def run_map_build(
         },
         # What step 2 grouped by. One mode since issue #850; the block stays
         # so every manifest on disk reads identically.
-        "grouping": {"mode": GROUPING_BAG, "scheme_versions": {}},
+        "grouping": grouping_block,
         "model": model,
         "reasoning": POSITION_EXTRACT_REASONING,
         # `ENCODER_MODEL` (issue #572, PR 3 of 4): the position-argument
