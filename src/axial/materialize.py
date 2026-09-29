@@ -68,6 +68,7 @@ from axial.query.reader import (
     stated_position,
 )
 from axial.vocabulary import VOCABULARY_DIR
+from axial.wikidata import load_qids
 from axial.vault import (
     VaultError,
     bibliographic_value,
@@ -560,11 +561,15 @@ def build_note_store(
             for canonical in resolved:
                 opposition.append((chunk_id, source_id, target, canonical))
 
+    # Issue #856: the QIDs `axial names wikidata` wrote beside the index.
+    qids = load_qids(Path(alias_map_path).parent / "index.json")
     names: list[tuple] = []
     note_names: list[tuple] = []
     for node in sorted(nodes, key=lambda node: node["canonical"]):
         canonical = node["canonical"]
-        names.append((canonical, _text(node.get("kind")), fold_surface_form(canonical)))
+        names.append(
+            (canonical, _text(node.get("kind")), fold_surface_form(canonical), qids.get(canonical))
+        )
         kinds: dict[str, str | None] = {}
         for surface in (canonical, *node.get("aliases", [])):
             entry = inventory.get(surface)

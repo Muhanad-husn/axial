@@ -85,7 +85,8 @@ from typing import Any
 
 import yaml
 
-from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH
+from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_vault_dir
+from axial.query import store as note_store
 from axial.query.names import NameNotFoundError, coverage_count, get_name
 from axial.yaml_loader import SAFE_LOADER
 
@@ -363,11 +364,15 @@ def compute_coverage_map(
         return {}
 
     corpus_counts = coverage_count(vault_dir=vault_dir)
+    qids = note_store.vault_qids(
+        Path(vault_dir) if vault_dir is not None else default_vault_dir(), scope
+    )
     grounds = _collect_grounds_chunk_ids(claims)
     moderate_floor, dense_floor = _resolve_coverage_bands(config_path)
 
     return {
         canonical: {
+            "qid": qids.get(canonical),
             "corpus_note_count": corpus_counts.get(canonical),
             "evidence_note_count": _evidence_note_count(canonical, grounds, vault_dir=vault_dir),
             "coverage_band": coverage_band_for(

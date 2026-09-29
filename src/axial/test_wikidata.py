@@ -13,6 +13,7 @@ from axial.wikidata import (
     measure,
     reconcile,
     resolve_node,
+    run_reconcile,
     type_for_kind,
     write_qids,
 )
@@ -36,7 +37,9 @@ def test_the_band_counts_sources_across_every_surface_of_a_node():
     inventory = {
         "Ba'th Party": {"chunk_ids": _chunks("a", 1) + _chunks("b", 2) + _chunks("c", 1)},
         "Baath Party": {"chunk_ids": _chunks("d", 1) + _chunks("e", 1)},
-        "Hama": {"chunk_ids": _chunks("a", 1) + _chunks("b", 1) + _chunks("c", 1) + _chunks("d", 1)},
+        "Hama": {
+            "chunk_ids": _chunks("a", 1) + _chunks("b", 1) + _chunks("c", 1) + _chunks("d", 1)
+        },
     }
     assert [node["canonical"] for node in band_nodes(nodes, inventory)] == ["Ba'th Party"]
 
@@ -83,7 +86,10 @@ def test_every_response_is_cached_and_a_rerun_is_offline(tmp_path: Path):
 
     def post(batch: dict) -> dict:
         calls.append(batch)
-        return {key: {"result": [{"id": f"Q{q['query']}", "score": 100.0, "match": True}]} for key, q in batch.items()}
+        return {
+            key: {"result": [{"id": f"Q{q['query']}", "score": 100.0, "match": True}]}
+            for key, q in batch.items()
+        }
 
     queries = [("1", "Q5"), ("2", None), ("3", "Q5")]
     first = reconcile(queries, cache_path=cache, post=post, batch_size=2)
@@ -137,7 +143,9 @@ def test_two_qids_on_one_node_is_a_disagreement_and_the_canonical_wins():
 
 def test_an_unmatched_canonical_takes_its_aliases_qid_only_when_they_agree():
     node = {"canonical": "Tilly", "kind": "person", "aliases": ["Charles Tilly", "C. Tilly"]}
-    assert resolve_node(node, {"Charles Tilly": "Q717635", "C. Tilly": "Q717635"})["qid"] == "Q717635"
+    assert (
+        resolve_node(node, {"Charles Tilly": "Q717635", "C. Tilly": "Q717635"})["qid"] == "Q717635"
+    )
     split = resolve_node(node, {"Charles Tilly": "Q717635", "C. Tilly": "Q1"})
     assert split["qid"] is None, "never guess between two QIDs"
 
@@ -157,7 +165,12 @@ def test_measure_reports_resolution_agreement_and_both_kinds_of_disagreement():
     resolutions = [
         {"canonical": "Ba'th Party", "qid": "Q179933", "verdict": "agrees", "surface_qids": {}},
         {"canonical": "Baath", "qid": "Q179933", "verdict": "untested", "surface_qids": {}},
-        {"canonical": "Asad", "qid": "Q118725", "verdict": "disagrees", "surface_qids": {"x": "Q1"}},
+        {
+            "canonical": "Asad",
+            "qid": "Q118725",
+            "verdict": "disagrees",
+            "surface_qids": {"x": "Q1"},
+        },
         {"canonical": "Syria", "qid": None, "verdict": "untested", "surface_qids": {}},
     ]
     report = measure(resolutions)
@@ -169,6 +182,62 @@ def test_measure_reports_resolution_agreement_and_both_kinds_of_disagreement():
     assert report["agreement_rate"] == 0.5
     assert [entry["canonical"] for entry in report["merged_apart"]] == ["Asad"]
     assert report["kept_apart"] == [{"qid": "Q179933", "canonicals": ["Ba'th Party", "Baath"]}]
+
+
+# -- the whole pass ----------------------------------------------------------
+
+
+def test_the_pass_writes_band_qids_to_the_index_and_measures_the_merge(tmp_path: Path):
+    names = tmp_path / "names"
+    names.mkdir()
+    (names / "alias_map.json").write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "canonical": "Ba'th Party",
+                        "kind": "institution/group",
+                        "aliases": ["Baath Party"],
+                    },
+                    {"canonical": "Hama", "kind": "country/state/place", "aliases": []},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    wide = [c for s in "abcde" for c in _chunks(s, 1)]
+    (names / "inventory.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"surface": "Ba'th Party", "chunk_ids": wide[:3]},
+                {"surface": "Baath Party", "chunk_ids": wide[3:]},
+                {"surface": "Hama", "chunk_ids": wide[:1]},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (names / "index.json").write_text(
+        json.dumps({"names": ["Ba'th Party", "Hama"]}), encoding="utf-8"
+    )
+    sent: list[dict] = []
+
+    def post(batch: dict) -> dict:
+        sent.extend(batch.values())
+        return {k: {"result": [{"id": "Q179933", "score": 100.0, "match": True}]} for k in batch}
+
+    report = run_reconcile(names_dir=names, post=post, log=lambda _: None)
+
+    assert sent == [
+        {"query": "Ba'th Party", "type": "Q43229"},
+        {"query": "Baath Party", "type": "Q43229"},
+    ], "Hama sits in one source, outside the band"
+    assert json.loads((names / "index.json").read_text(encoding="utf-8"))["qids"] == {
+        "Ba'th Party": "Q179933"
+    }
+    assert report["resolved"] == 1 and report["agrees"] == 1
+    assert json.loads((names / "wikidata" / "report.json").read_text(encoding="utf-8")) == report
+    assert (names / "wikidata" / "resolutions.jsonl").read_text(encoding="utf-8").count("\n") == 1
 
 
 # -- the index ---------------------------------------------------------------

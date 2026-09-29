@@ -506,6 +506,18 @@ def test_alias_map_and_index_have_the_spec_shape(tmp_path: Path):
     assert json.loads((tmp_path / "index.json").read_text(encoding="utf-8"))["names"] == ["a"]
 
 
+def test_a_rewritten_index_keeps_the_qids_of_the_names_that_survive(tmp_path: Path):
+    """Issue #856: a merge re-run rewrites `index.json` whole. The QIDs
+    `axial names wikidata` wrote there survive for every canonical still in
+    the index; a canonical the merge dropped takes its QID with it."""
+    index = tmp_path / "index.json"
+    index.write_text(
+        json.dumps({"names": ["a", "gone"], "qids": {"a": "Q1", "gone": "Q2"}}), encoding="utf-8"
+    )
+    write_index([{"canonical": "a", "kind": "concept", "aliases": []}], index)
+    assert json.loads(index.read_text(encoding="utf-8"))["qids"] == {"a": "Q1"}
+
+
 def test_manifest_carries_the_escalated_surfaces_count(tmp_path: Path):
     """Issue #450: the rate is readable off the manifest alone, without
     re-parsing `merge_decisions.jsonl`."""
