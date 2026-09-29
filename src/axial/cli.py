@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
+
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
 from axial.argmap.ask import AskError, resolve_pinned_map_dir, run_map_ask
@@ -199,6 +201,7 @@ from axial.vocabulary import (
     format_vocabulary_build_report,
     format_vocabulary_report,
 )
+from axial.wikidata import run_reconcile as run_wikidata_reconcile
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -592,6 +595,17 @@ def build_parser() -> argparse.ArgumentParser:
             "issue #854: the built map (data/map/<pin>/) whose positions are "
             "written as vault pages under positions/. Omitted (default): the "
             "map pinned to the current corpus, or no pages when none is built"
+        ),
+    )
+
+    names_subparsers.add_parser(
+        "wikidata",
+        help=(
+            "issue #856: reconcile every name in five or more sources to a "
+            "Wikidata QID through the reconciliation API (free), cached under "
+            "data/names/wikidata/ so a re-run is offline. Writes the QIDs into "
+            "data/names/index.json (materialize folds them into notes.db) and "
+            "reports the resolution rate and the agreement with the LLM merge"
         ),
     )
 
@@ -3254,6 +3268,42 @@ def _names_materialize(
     return 0
 
 
+def _names_wikidata() -> int:
+    with run_context("names-wikidata") as run:
+        start = time.monotonic()
+
+        def _tee(message: str) -> None:
+            print(message, flush=True)
+            run.logger.info(message)
+
+        try:
+            report = run_wikidata_reconcile(log=_tee)
+        except (OSError, httpx.HTTPError) as exc:
+            run.record(
+                source_id="",
+                pass_name="wikidata_reconcile",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        run.record(
+            source_id="",
+            pass_name="wikidata_reconcile",
+            model=None,
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+        for key in ("band", "resolved", "resolution_rate", "tested", "agrees", "agreement_rate"):
+            _tee(f"{key}: {report[key]}")
+        _tee(f"merged_apart: {len(report['merged_apart'])}")
+        _tee(f"kept_apart: {len(report['kept_apart'])}")
+    return 0
+
+
 def _names_escalations(
     decisions_path: str | None, inventory_path: str | None, as_json: bool
 ) -> int:
@@ -3793,6 +3843,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "names" and args.names_command == "materialize":
         return _names_materialize(args.residue_decisions_path, args.map_dir)
+
+    if args.command == "names" and args.names_command == "wikidata":
+        return _names_wikidata()
 
     if args.command == "names" and args.names_command == "escalations":
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)

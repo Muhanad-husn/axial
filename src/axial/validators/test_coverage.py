@@ -96,7 +96,7 @@ def _build_store(
         note_store.store_path(vault_dir),
         sources=sources,
         notes=notes,
-        names=[(TILLY, "person", "tilly"), (BAYAT, "person", "bayat")],
+        names=[(TILLY, "person", "tilly", "Q717635"), (BAYAT, "person", "bayat")],
         note_names=note_names,
         note_arguing_against=[],
         note_citations=[],
@@ -258,6 +258,18 @@ def test_compute_coverage_map_covers_a_name_reached_only_via_intersection(vault_
     trajectory = [_where_names_meet_call(TILLY, BAYAT)]
     coverage_map = compute_coverage_map(claims, trajectory=trajectory, vault_dir=vault_dir)
     assert set(coverage_map) == {TILLY, BAYAT}
+
+
+def test_a_coverage_entry_carries_the_names_qid_as_an_identifier_only(vault_dir: Path):
+    """Issue #856: the QID rides beside the counts. A name with no QID reads
+    `None`; the counts and the band do not move."""
+    claims = [_claim("c-1", names_touched=[TILLY, BAYAT], grounds=_chunk_grounds(TILLY_CHUNK_1))]
+    coverage_map = compute_coverage_map(
+        claims, trajectory=[_where_names_meet_call(TILLY, BAYAT)], vault_dir=vault_dir
+    )
+    assert coverage_map[TILLY]["qid"] == "Q717635"
+    assert coverage_map[BAYAT]["qid"] is None
+    assert coverage_map[TILLY]["corpus_note_count"] == 240
 
 
 def test_coverage_count_tool_results_never_enter_the_scope():

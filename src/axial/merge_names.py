@@ -1335,14 +1335,22 @@ def write_alias_map(nodes: list[dict[str, Any]], path: Path) -> None:
 
 def write_index(nodes: list[dict[str, Any]], path: Path) -> None:
     """The surviving canonical set (§7.16: "the surviving `canonical` set is
-    the index") -- what slice 06 writes one name page per entry for."""
+    the index") -- what slice 06 writes one name page per entry for.
+
+    The Wikidata QIDs a previous `axial names wikidata` wrote here (issue
+    #856) are kept for every canonical that survives the rewrite."""
+    names = [node["canonical"] for node in nodes]
+    previous = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    surviving = set(names)
+    kept = {name: qid for name, qid in (previous.get("qids") or {}).items() if name in surviving}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "version": ALIAS_MAP_VERSION,
                 "generated_at": _utc_now(),
-                "names": [node["canonical"] for node in nodes],
+                "names": names,
+                **({"qids": kept} if kept else {}),
             },
             indent=2,
             ensure_ascii=False,

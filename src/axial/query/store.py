@@ -132,7 +132,8 @@ CREATE TABLE notes (
 CREATE TABLE names (
     canonical TEXT PRIMARY KEY,
     kind      TEXT,
-    folded    TEXT NOT NULL
+    folded    TEXT NOT NULL,
+    qid       TEXT
 );
 CREATE TABLE note_names (
     chunk_id  TEXT NOT NULL,
@@ -173,7 +174,7 @@ CREATE INDEX note_opposed_position_chunk_id ON note_opposed_position (chunk_id);
 _TABLES = (
     ("sources", 5),
     ("notes", 7),
-    ("names", 3),
+    ("names", 4),
     ("note_names", 4),
     ("note_arguing_against", 4),
     ("note_citations", 5),
@@ -288,7 +289,9 @@ def write_store(
             tuple(row) if len(row) != _NOTE_COLUMNS_BEFORE_BACK_MATTER else (*row, 0)
             for row in notes
         ),
-        "names": names,
+        # `qid` (issue #856) is padded the same way: a three-wide row is a
+        # name with no Wikidata identity.
+        "names": (tuple(row) if len(row) != 3 else (*row, None) for row in names),
         "note_names": note_names,
         "note_arguing_against": note_arguing_against,
         "note_citations": note_citations,
@@ -405,6 +408,34 @@ def all_doors(connection: sqlite3.Connection) -> dict[str, Door]:
     ):
         found[row[0]] = Door(row[0], row[1], row[2], row[3])
     return found
+
+
+def qids(connection: sqlite3.Connection, canonicals: Iterable[str]) -> dict[str, str | None]:
+    """`canonical -> qid` (issue #856) for the names the store carries, `None`
+    where a carried name has no Wikidata identity; a canonical the store does
+    not carry is absent, the same reading `doors()` gives it."""
+    ordered = list(dict.fromkeys(canonicals))
+    found: dict[str, str | None] = {}
+    for start in range(0, len(ordered), _PARAMETER_BATCH):
+        batch = ordered[start : start + _PARAMETER_BATCH]
+        placeholders = ",".join("?" * len(batch))
+        found.update(
+            connection.execute(
+                f"SELECT canonical, qid FROM names WHERE canonical IN ({placeholders})", batch
+            ).fetchall()
+        )
+    return found
+
+
+def vault_qids(vault_dir: Path, canonicals: Iterable[str]) -> dict[str, str | None]:
+    """`qids()` over the vault's own store; `{}` when the vault has none."""
+    connection = connect(vault_dir)
+    if connection is None:
+        return {}
+    try:
+        return qids(connection, canonicals)
+    finally:
+        connection.close()
 
 
 def concept_sources(connection: sqlite3.Connection, canonical: str) -> list[SourceShare]:

@@ -191,6 +191,29 @@ def test_write_store_defaults_note_opposed_position_to_empty(tmp_path: Path):
         connection.close()
 
 
+def test_a_name_carries_its_qid_and_a_row_without_one_reads_null(tmp_path: Path):
+    """Issue #856: `names.qid` is the Wikidata identity of a name in five or
+    more sources. A three-wide row (every caller before the column) is
+    padded with `NULL`, never refused."""
+    note_store.write_store(
+        tmp_path / "notes.db",
+        sources=[],
+        notes=[],
+        names=[("Syria", "place", "syria", "Q858"), ("Hama", "place", "hama")],
+        note_names=[],
+        note_arguing_against=[],
+        note_citations=[],
+    )
+    connection = note_store.connect(tmp_path)
+    try:
+        assert note_store.qids(connection, ["Syria", "Hama", "Nowhere"]) == {
+            "Syria": "Q858",
+            "Hama": None,
+        }
+    finally:
+        connection.close()
+
+
 def test_opposing_notes_returns_mode_and_self_referential_unfiltered(tmp_path: Path):
     path = tmp_path / "notes.db"
     note_store.write_store(

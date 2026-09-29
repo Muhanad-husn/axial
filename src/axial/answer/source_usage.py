@@ -204,9 +204,12 @@ def compute_source_usage(
     )
 
     weights = dict((record.get("brief") or {}).get("weights") or {})
+    vault = Path(vault_dir) if vault_dir is not None else default_vault_dir()
     base = {
         "names_queried": names_queried,
         "denominator_by_name": denominator_by_name,
+        # Issue #856: each touched name's Wikidata QID, an identifier only.
+        "qid_by_name": note_store.vault_qids(vault, names_touched),
         "weights": weights,
     }
     if not evidence_counts:
