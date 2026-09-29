@@ -61,6 +61,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 from axial.answer.render import render_markdown
 
@@ -71,7 +72,6 @@ REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 
 _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
@@ -282,6 +282,7 @@ def fixture_root(tmp_path: Path) -> Path:
     _write_fixture_vault(tmp_path)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, [SYRIA_A, IRAQ_A])
     return tmp_path
 
 
@@ -290,15 +291,13 @@ def _run_brief_run_cli(
     *,
     record_path: Path,
     stub_interrogate_response: dict[str, Any],
-    stub_tool_calls: list[dict[str, Any] | None] | None = None,
     stub_synthesize_response: dict[str, Any] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "record"
     env[RECORD_PATH_ENV_VAR] = str(record_path)
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(stub_interrogate_response)
-    if stub_tool_calls is not None:
-        env[STUB_TOOL_CALLS_ENV_VAR] = json.dumps(stub_tool_calls)
     if stub_synthesize_response is not None:
         env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps(stub_synthesize_response)
     return subprocess.run(
@@ -326,28 +325,14 @@ def _extract_brief_id(result: subprocess.CompletedProcess) -> str:
     return match.group(1)
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_brief_run_writes_both_json_and_markdown_and_rerun_is_byte_identical(
     fixture_root: Path,
 ):
     stub_interrogate_response = {"premises_found": [], "bounds_applied": [], "refusal": None}
-    stub_tool_calls = [
-        {"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}},
-        {"tool": "get_chunk", "args": {"chunk_id": IRAQ_A}},
-        None,
-    ]
     # Grounds cite the opaque HANDLE (issue #410), never the real chunk_id:
-    # the stub tool calls fetch SYRIA_A then IRAQ_A via `get_chunk` above,
-    # the same order `compose_prompt` then walks the assembled evidence set
-    # in, so SYRIA_A is "[c1]" and IRAQ_A is "[c2]".
+    # the fixture map's one position holds SYRIA_A then IRAQ_A, the order
+    # assembly hands them to `compose_prompt`, so SYRIA_A is "[c1]" and
+    # IRAQ_A is "[c2]".
     stub_synthesize_response = {
         "claims": [
             {
@@ -372,7 +357,6 @@ def test_brief_run_writes_both_json_and_markdown_and_rerun_is_byte_identical(
         fixture_root,
         record_path=fixture_root / "record_1.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert first.returncode == 0, (
@@ -392,7 +376,6 @@ def test_brief_run_writes_both_json_and_markdown_and_rerun_is_byte_identical(
         fixture_root,
         record_path=fixture_root / "record_2.jsonl",
         stub_interrogate_response=stub_interrogate_response,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=stub_synthesize_response,
     )
     assert second.returncode == 0, second.stderr

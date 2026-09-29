@@ -388,6 +388,11 @@ FORK_CHECK_PASS_NAME = "fork_check"
 # also named in DEFAULT_REASONING_BY_PASS below.
 SYNTHESIZE_PASS_NAME = "synthesize"
 
+# Pass name the argument map's door (`axial.argmap.ask.decompose_brief`)
+# identifies itself with. Defined here, not in `axial.argmap.ask`, so the
+# stub/record clients can route it without a circular import.
+DECOMPOSE_PASS_NAME = "brief_decompose"
+
 # Pass name the stage-4 counter-position GENERATION call identifies itself
 # with (see src/axial/analyze/synthesis.py's `generate_counter_position`,
 # issue #399, PRD §7.8/§7.11): the second, follow-up synthesis-family call
@@ -890,6 +895,11 @@ STUB_RECONCILE_RESPONSE_ENV_VAR = "AXIAL_STUB_RECONCILE_RESPONSE"
 # in-process. Read at call time, like every other seam here. Never affects
 # any other pass's canned response.
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
+
+# Issue #863 test/CI-only seam: the same shape as the synthesize seam above,
+# for the argument map's door. Unset, the stub answers with one fixed
+# argument -- landing has no similarity floor, so any map lands on it.
+STUB_DECOMPOSE_RESPONSE_ENV_VAR = "AXIAL_STUB_DECOMPOSE_RESPONSE"
 
 # Issue #258 test/CI-only seam: mirrors STUB_SYNTHESIZE_RESPONSE_ENV_VAR
 # above, exactly, for the stage-5 attribution validator's (b)-seam check
@@ -1519,6 +1529,15 @@ def _canned_synthesize_response() -> str:
     return override or _CANNED_SYNTHESIZE_RESPONSE
 
 
+_CANNED_DECOMPOSE_RESPONSE = json.dumps({"arguments": ["Stub client: one stated argument."]})
+
+
+def _canned_decompose_response() -> str:
+    """The canned response for the map door's call: `STUB_DECOMPOSE_RESPONSE_
+    ENV_VAR` verbatim when set, else `_CANNED_DECOMPOSE_RESPONSE`."""
+    return os.environ.get(STUB_DECOMPOSE_RESPONSE_ENV_VAR, "") or _CANNED_DECOMPOSE_RESPONSE
+
+
 # issue #589: the (b)/(c)-seam check is now one combined call that can ask
 # either or both questions, so the canned reply answers BOTH keys
 # unconditionally -- `_parse_seam_response` only requires whichever key the
@@ -1709,6 +1728,8 @@ def _canned_response_for(pass_name: str | None) -> str:
         return _canned_note_interrogate_response()
     if pass_name == SYNTHESIZE_PASS_NAME:
         return _canned_synthesize_response()
+    if pass_name == DECOMPOSE_PASS_NAME:
+        return _canned_decompose_response()
     if pass_name == ATTRIBUTION_PASS_NAME:
         return _canned_attribution_response()
     if pass_name == COUNTER_POSITION_PASS_NAME:

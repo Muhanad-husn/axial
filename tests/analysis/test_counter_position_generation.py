@@ -54,6 +54,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_BRIEF_PATH = REPO_ROOT / "config" / "briefs" / "dev" / "fixture-syria-displacement.yaml"
@@ -62,7 +63,6 @@ REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR = "AXIAL_STUB_COUNTER_POSITION_GENERATE_RESPONSE"
 
@@ -140,6 +140,7 @@ def contested_root(tmp_path: Path) -> Path:
     _write_fixture_vault(tmp_path, contested=True)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, [MAIN_CHUNK, COUNTER_CHUNK])
     return tmp_path
 
 
@@ -148,6 +149,7 @@ def uncontested_root(tmp_path: Path) -> Path:
     _write_fixture_vault(tmp_path, contested=False)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, [MAIN_CHUNK])
     return tmp_path
 
 
@@ -155,17 +157,16 @@ def _run_brief_run_cli(
     root: Path,
     *,
     record_path: Path,
-    stub_tool_calls: list[dict[str, Any] | None],
     stub_synthesize_response: dict[str, Any],
     stub_counter_position_generate_response: dict[str, Any] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "record"
     env[RECORD_PATH_ENV_VAR] = str(record_path)
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(
         {"premises_found": [], "bounds_applied": [], "refusal": None}
     )
-    env[STUB_TOOL_CALLS_ENV_VAR] = json.dumps(stub_tool_calls)
     env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps(stub_synthesize_response)
     if stub_counter_position_generate_response is not None:
         env[STUB_COUNTER_POSITION_GENERATE_RESPONSE_ENV_VAR] = json.dumps(
@@ -198,10 +199,9 @@ def _extract_brief_id(result: subprocess.CompletedProcess) -> str:
 
 def _synthesize_response(*, chunk_ids: list[str]) -> dict[str, Any]:
     # Grounds cite the opaque HANDLE each id would be offered under (issue
-    # #410), never the real chunk_id: each id here is fetched by its own
-    # `get_chunk` stub tool call, in the same order `compose_prompt` then
-    # walks the assembled evidence set, so the Nth id in `chunk_ids` is
-    # handle "[cN]". The counter-position-generation pass is unaffected --
+    # #410), never the real chunk_id: the fixture map's one position holds
+    # these ids in this order, the order assembly hands them to
+    # `compose_prompt`, so the Nth id in `chunk_ids` is handle "[cN]". The counter-position-generation pass is unaffected --
     # its own, separate prompt still shows real chunk ids (out of #410's
     # scope: a smaller, already-whitelisted candidate pool).
     handles = [f"[c{index + 1}]" for index in range(len(chunk_ids))]
@@ -217,24 +217,10 @@ def _synthesize_response(*, chunk_ids: list[str]) -> dict[str, Any]:
     }
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_contested_brief_with_scripted_present_response_yields_present_counter_position(
     contested_root: Path,
 ):
     record_path = contested_root / "record.jsonl"
-    stub_tool_calls = [
-        {"tool": "get_chunk", "args": {"chunk_id": MAIN_CHUNK}},
-        {"tool": "get_chunk", "args": {"chunk_id": COUNTER_CHUNK}},
-        None,
-    ]
     stub_counter_position_generate_response = {
         "present": True,
         "stance": "Skocpol's material argues structural crisis, not organization, converts.",
@@ -246,7 +232,6 @@ def test_contested_brief_with_scripted_present_response_yields_present_counter_p
     result = _run_brief_run_cli(
         contested_root,
         record_path=record_path,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=_synthesize_response(chunk_ids=[MAIN_CHUNK, COUNTER_CHUNK]),
         stub_counter_position_generate_response=stub_counter_position_generate_response,
     )
@@ -269,31 +254,17 @@ def test_contested_brief_with_scripted_present_response_yields_present_counter_p
     assert record["model_by_pass"]["counter_position_generate"] == "stub"
     assert set(record["cost"]["by_pass"]) == {
         "interrogate",
-        "retrieve",
+        "brief_decompose",
         "synthesize",
         "counter_position_generate",
     }
     assert record["cost"]["by_pass"]["counter_position_generate"]["prompt_tokens"] > 0
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_contested_brief_with_scripted_one_sided_response_yields_disclosure(
     contested_root: Path,
 ):
     record_path = contested_root / "record.jsonl"
-    stub_tool_calls = [
-        {"tool": "get_chunk", "args": {"chunk_id": MAIN_CHUNK}},
-        {"tool": "get_chunk", "args": {"chunk_id": COUNTER_CHUNK}},
-        None,
-    ]
     stub_counter_position_generate_response = {
         "present": False,
         "stance": None,
@@ -306,7 +277,6 @@ def test_contested_brief_with_scripted_one_sided_response_yields_disclosure(
     result = _run_brief_run_cli(
         contested_root,
         record_path=record_path,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=_synthesize_response(chunk_ids=[MAIN_CHUNK, COUNTER_CHUNK]),
         stub_counter_position_generate_response=stub_counter_position_generate_response,
     )
@@ -324,23 +294,12 @@ def test_contested_brief_with_scripted_one_sided_response_yields_disclosure(
     assert counter_position["grounds"] == []
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_uncontested_brief_never_calls_counter_position_generation(uncontested_root: Path):
     record_path = uncontested_root / "record.jsonl"
-    stub_tool_calls = [{"tool": "get_chunk", "args": {"chunk_id": MAIN_CHUNK}}, None]
 
     result = _run_brief_run_cli(
         uncontested_root,
         record_path=record_path,
-        stub_tool_calls=stub_tool_calls,
         stub_synthesize_response=_synthesize_response(chunk_ids=[MAIN_CHUNK]),
         # Deliberately no stub_counter_position_generate_response: if the
         # pipeline called that pass here, it would get the conservative
@@ -362,5 +321,5 @@ def test_uncontested_brief_never_calls_counter_position_generation(uncontested_r
         "corpus_one_sided": False,
         "one_sided_reason": None,
     }
-    assert set(record["model_by_pass"]) == {"interrogate", "retrieve", "synthesize"}
-    assert set(record["cost"]["by_pass"]) == {"interrogate", "retrieve", "synthesize"}
+    assert set(record["model_by_pass"]) == {"interrogate", "brief_decompose", "synthesize"}
+    assert set(record["cost"]["by_pass"]) == {"interrogate", "brief_decompose", "synthesize"}

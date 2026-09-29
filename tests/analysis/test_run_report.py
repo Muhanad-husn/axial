@@ -2,9 +2,9 @@
 per-run report (specs/PHASE-B.md §7.15, §8 P0-14) and the §7.13 source-usage
 denominator re-based onto the names a run queried.
 
-Given a fixture vault holding two sources (`tilly-1978`, `bayat-2017`) and a
-      name page per scholar
-  And a fixture brief whose retrieval calls `get_name` on both names
+Given a fixture vault holding two sources (`tilly-1978`, `bayat-2017`), one
+      chunk naming each scholar, and a `notes.db` carrying both names
+  And a fixture argument map whose one position holds both chunks
 When  `axial brief run <brief>` runs
 Then  the command exits 0
   And a run report is written to data/runs/<brief_id>.json
@@ -50,8 +50,8 @@ See specs/PHASE-B.md §7.15 (the run report), §7.13 (source usage, re-based),
 Seam decisions
 --------------
 Scenario 1 drives the real `axial brief run` CLI as a subprocess from an
-isolated `tmp_path` staging root with `AXIAL_LLM_PROVIDER=stub` and the
-scripted tool-call channel, mirroring
+isolated `tmp_path` staging root with `AXIAL_LLM_PROVIDER=stub` over the
+shared map fixture (tests/analysis/_map_fixture.py, issue #863), mirroring
 tests/analysis/test_source_usage.py's own CLI seam. Every other scenario
 calls `build_run_report` directly over a hand-built record: a report is a
 pure function of an already-finished record plus the latencies the running
@@ -72,13 +72,15 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
+
+from axial.query import store as note_store
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 
 _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
@@ -96,7 +98,7 @@ BAYAT_SOURCE = "bayat-2017"
 # ---------------------------------------------------------------------------
 
 
-def _write_chunk(root: Path, chunk_id: str) -> None:
+def _write_chunk(root: Path, chunk_id: str, *, surface: str | None = None) -> None:
     prose_dir = root / "data" / "vault" / "prose"
     prose_dir.mkdir(parents=True, exist_ok=True)
     frontmatter = {
@@ -108,24 +110,32 @@ def _write_chunk(root: Path, chunk_id: str) -> None:
         "frame_version": "0.1",
         "answers": {"claim": f"Claim of {chunk_id}.", "position_of": "the author"},
     }
+    if surface is not None:
+        frontmatter["answers"]["names"] = [{"name": surface, "kind": "person"}]
     text = "---\n" + yaml.safe_dump(frontmatter, sort_keys=False) + "---\nBody.\n"
     (prose_dir / f"{chunk_id}.md").write_text(text, encoding="utf-8")
 
 
-def _write_name_page(root: Path, name: str, *, member_ids: list[str]) -> None:
-    names_dir = root / "data" / "vault" / "names"
+def _write_name_layer(root: Path, members: dict[str, tuple[str, str, str]]) -> None:
+    """The alias map `names_touched` resolves a chunk's surface through, and
+    the `notes.db` the source-usage denominator reads (DEC-75: no name
+    pages). `members` maps each canonical to (surface, chunk_id, source_id)."""
+    names_dir = root / "data" / "names"
     names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {
-        "name": name,
-        "kind": "person",
-        "aliases": [],
-        "member_count": len(member_ids),
-    }
-    lines = ["**Member notes:**"]
-    lines += [f"- [[{chunk_id}]] — An Author (1978): A claim." for chunk_id in member_ids]
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{name}.md").write_text(
-        "---\n" + body + "---\n" + "\n".join(lines) + "\n", encoding="utf-8"
+    nodes = [
+        {"canonical": name, "kind": "person", "aliases": [surface]}
+        for name, (surface, _chunk, _source) in members.items()
+    ]
+    (names_dir / "alias_map.json").write_text(json.dumps({"nodes": nodes}), encoding="utf-8")
+    (names_dir / "index.json").write_text(json.dumps({"names": list(members)}), encoding="utf-8")
+    note_store.write_store(
+        note_store.store_path(root / "data" / "vault"),
+        sources=[(source, "An Author", "A Title", "2020", 2020) for _s, _c, source in members.values()],
+        notes=[(chunk, source, "A Section", None, "A claim.", None) for _s, chunk, source in members.values()],
+        names=[(name, "person", name.casefold()) for name in members],
+        note_names=[(chunk, source, name, "person") for name, (_s, chunk, source) in members.items()],
+        note_arguing_against=[],
+        note_citations=[],
     )
 
 
@@ -158,17 +168,21 @@ def _write_fixture_brief(root: Path) -> Path:
 
 @pytest.fixture
 def fixture_root(tmp_path: Path) -> Path:
-    _write_chunk(tmp_path, TILLY_CHUNK)
-    _write_chunk(tmp_path, BAYAT_CHUNK)
-    _write_name_page(tmp_path, TILLY, member_ids=[TILLY_CHUNK])
-    _write_name_page(tmp_path, BAYAT, member_ids=[BAYAT_CHUNK])
+    _write_chunk(tmp_path, TILLY_CHUNK, surface="Tilly")
+    _write_chunk(tmp_path, BAYAT_CHUNK, surface="Bayat")
+    _write_name_layer(
+        tmp_path,
+        {TILLY: ("Tilly", TILLY_CHUNK, TILLY_SOURCE), BAYAT: ("Bayat", BAYAT_CHUNK, BAYAT_SOURCE)},
+    )
     _write_fixture_pin(tmp_path)
     shutil.copytree(REPO_LENSES_DIR, tmp_path / "config" / "lenses")
+    write_map_fixture(tmp_path, [TILLY_CHUNK, BAYAT_CHUNK])
     return tmp_path
 
 
 def _run_brief_run_cli(root: Path, brief_path: Path, **env_overrides: str):
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "stub"
     env.update(env_overrides)
     return subprocess.run(
@@ -185,23 +199,8 @@ def _run_brief_run_cli(root: Path, brief_path: Path, **env_overrides: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's name-page fixture and scripted "
-        "get_name tool calls do not provide. Rebuilding a map-arm CLI "
-        "fixture is a pending follow-up, not done in #853 itself -- flagged "
-        "in that PR."
-    )
-)
 def test_brief_run_writes_a_run_report_keyed_on_brief_id_and_pin(fixture_root: Path):
     brief_path = _write_fixture_brief(fixture_root)
-    tool_calls = [
-        {"tool": "get_name", "args": {"canonical": TILLY}},
-        {"tool": "get_name", "args": {"canonical": BAYAT}},
-        None,
-    ]
     synthesize_response = {
         "claims": [
             {
@@ -223,7 +222,6 @@ def test_brief_run_writes_a_run_report_keyed_on_brief_id_and_pin(fixture_root: P
             STUB_INTERROGATE_RESPONSE_ENV_VAR: json.dumps(
                 {"premises_found": [], "bounds_applied": [], "refusal": None}
             ),
-            STUB_TOOL_CALLS_ENV_VAR: json.dumps(tool_calls),
             STUB_SYNTHESIZE_RESPONSE_ENV_VAR: json.dumps(synthesize_response),
         },
     )
@@ -260,8 +258,8 @@ def test_brief_run_writes_a_run_report_keyed_on_brief_id_and_pin(fixture_root: P
     source_usage = record["source_usage"]
     assert "filters_observed" not in source_usage
     assert source_usage["names_queried"] == [
-        {"tool": "get_name", "args": {"canonical": TILLY}},
-        {"tool": "get_name", "args": {"canonical": BAYAT}},
+        {"tool": "names_touched", "args": {"canonical": BAYAT}},
+        {"tool": "names_touched", "args": {"canonical": TILLY}},
     ]
     assert source_usage["denominator_by_name"] == {TILLY: 1, BAYAT: 1}
     by_source = {entry["source_id"]: entry for entry in source_usage["sources"]}

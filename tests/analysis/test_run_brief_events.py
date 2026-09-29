@@ -29,10 +29,11 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 from axial.answer import run_brief
 from axial.brief.intake import Brief
-from axial.llm import STUB_SYNTHESIZE_RESPONSE_ENV_VAR, STUB_TOOL_CALLS_ENV_VAR, StubLLMClient
+from axial.llm import STUB_SYNTHESIZE_RESPONSE_ENV_VAR, StubLLMClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
@@ -92,6 +93,9 @@ def _write_fixture_root(root: Path) -> None:
 @pytest.fixture
 def fixture_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write_fixture_root(tmp_path)
+    write_map_fixture(tmp_path, [SYRIA_A])
+    for key, value in MAP_ARM_ENV.items():
+        monkeypatch.setenv(key, value)
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -100,22 +104,9 @@ def _collecting_client() -> tuple[StubLLMClient, list[tuple[str, dict[str, Any]]
     return StubLLMClient(), []
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_run_brief_announces_every_stage_live_in_order(
     fixture_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setenv(
-        STUB_TOOL_CALLS_ENV_VAR,
-        json.dumps([{"tool": "get_chunk", "args": {"chunk_id": SYRIA_A}}, None]),
-    )
     monkeypatch.setenv(
         STUB_SYNTHESIZE_RESPONSE_ENV_VAR,
         json.dumps(

@@ -86,7 +86,7 @@ from axial.argmap.vocabulary_join import (
 )
 from axial.brief.intake import Brief, load_brief
 from axial.envelope import _default_envelopes_dir
-from axial.llm import LLMClient, LLMError, get_client
+from axial.llm import DECOMPOSE_PASS_NAME, LLMClient, LLMError, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
@@ -97,9 +97,6 @@ from axial.vocabulary import (
     RELATION_COLUMN,
     VOCABULARY_DIR,
 )
-
-# The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of.
-DECOMPOSE_PASS_NAME = "brief_decompose"
 
 # Every stated argument lands on this many positions (scratchpad measurement,
 # issue #572 step 3) -- kept once each even where two arguments both reach

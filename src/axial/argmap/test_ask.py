@@ -321,3 +321,25 @@ def test_the_vocabulary_step_wins_the_cap_over_the_corridor(tmp_path: Path):
     )
 
     assert result.assembled_chunk_ids == ("n1", "n3")
+
+
+def test_stub_encoder_env_lands_a_map_with_no_sentence_transformer(tmp_path: Path, monkeypatch):
+    """Issue #863: `AXIAL_STUB_ENCODER=1` swaps the MiniLM default for a
+    deterministic offline encoder, so a subprocess CLI test can walk the
+    map without downloading a model."""
+    import sys
+
+    monkeypatch.setenv("AXIAL_STUB_ENCODER", "1")
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    argument = "States extract resources through coercion."
+    map_dir = _write_map(tmp_path / "map", [_position("pos-a", ["n1", "n2"], ["src-1"], argument)])
+
+    first = run_map_ask_for_brief(
+        _brief(), client=_DecomposeOnlyClient([argument]), map_dir=map_dir, pin="pin"
+    )
+    second = run_map_ask_for_brief(
+        _brief(), client=_DecomposeOnlyClient([argument]), map_dir=map_dir, pin="pin"
+    )
+
+    assert first.assembled_chunk_ids == ("n1", "n2")
+    assert [p.score for p in first.landed] == [p.score for p in second.landed]

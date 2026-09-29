@@ -139,6 +139,7 @@ from __future__ import annotations
 import collections
 import hashlib
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -378,11 +379,30 @@ def select_passages(answers_dir: Path, trees_dir: Path = TREES_DIR) -> list[Pass
     return rows
 
 
+STUB_ENCODER_ENV_VAR = "AXIAL_STUB_ENCODER"
+
+
+def _stub_encode(texts: Sequence[str]) -> np.ndarray:
+    """A unit vector seeded from each text's sha256: identical text, identical
+    vector, and no model download."""
+    vectors = []
+    for text in texts:
+        seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest(), 16) % (2**32)
+        vector = np.random.default_rng(seed).normal(size=16)
+        vectors.append(vector / np.linalg.norm(vector))
+    return np.array(vectors)
+
+
 def _default_encoder() -> Encoder:
     """The local sentence-transformer encoder, built only when no encoder is
     injected -- so a unit test that injects its own fake never pays
     MiniLM's load cost, and importing this module never requires
-    `sentence-transformers` to be installed."""
+    `sentence-transformers` to be installed.
+
+    `AXIAL_STUB_ENCODER` set non-empty (issue #863, test/CI only) returns
+    `_stub_encode` instead, so a subprocess CLI test walks the map offline."""
+    if os.environ.get(STUB_ENCODER_ENV_VAR, ""):
+        return _stub_encode
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(ENCODER_MODEL, device="cpu")

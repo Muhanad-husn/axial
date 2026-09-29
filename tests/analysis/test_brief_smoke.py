@@ -2,7 +2,8 @@
 `axial brief smoke`, the five-brief smoke set behind mechanical checks and a
 cost and latency budget (specs/PHASE-B.md §9.0, §8 P0-11).
 
-Given a fixture vault with a name page and a name layer that resolves it
+Given a fixture vault, a name layer that resolves its one chunk's name, and
+      a fixture argument map holding that chunk
   And a directory of two fixture smoke briefs
 When  `axial brief smoke --briefs-dir <dir> --sweep-dir out` runs
 Then  the command exits 0
@@ -12,11 +13,10 @@ Then  the command exits 0
       UNMEASURED and their checks were skipped -- never that they passed
   And NO rung-3 gate was scored: no gate report is written anywhere
 
-Given the same briefs over a vault whose name layer is absent, so no claim
-      resolves a name and the coverage map comes back empty
+Given the same briefs over an argument map that assembles no chunk
 When  the same command runs
-Then  the command exits NON-ZERO, naming the empty coverage map -- the #490
-      regression this check exists to make loud
+Then  the command exits NON-ZERO, naming the retrieval check -- the map-arm
+      form of the #490 empty-map regression (DEC-75)
 
 Given the smoke set is `config/briefs/smoke/`
 Then  it holds exactly the five briefs §9.0 names, each loadable under the
@@ -28,7 +28,8 @@ read) and issue #491 for the five checks.
 Seam decisions
 --------------
 Drives the real CLI as a subprocess from an isolated `tmp_path` staging root
-with `AXIAL_LLM_PROVIDER=stub`, mirroring tests/analysis/test_brief_sweep.py's
+with `AXIAL_LLM_PROVIDER=stub` over the shared map fixture
+(tests/analysis/_map_fixture.py, issue #863), mirroring tests/analysis/test_brief_sweep.py's
 own seam. Two fixture briefs rather than the real five: the checks are
 per-brief and identical, the five real briefs need the real corpus to say
 anything, and the founder runs those separately. The last scenario asserts on
@@ -46,6 +47,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
@@ -53,7 +55,6 @@ SMOKE_DIR = REPO_ROOT / "config" / "briefs" / "smoke"
 CASES_DIR = REPO_ROOT / "evals" / "cases" / "sim"
 
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
 
@@ -86,24 +87,9 @@ def _write_chunk(root: Path) -> None:
     (prose_dir / f"{TILLY_CHUNK}.md").write_text(text, encoding="utf-8")
 
 
-def _write_name_page(root: Path) -> None:
-    names_dir = root / "data" / "vault" / "names"
-    names_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = {"name": TILLY, "kind": "person", "aliases": [], "member_count": 1}
-    body = yaml.safe_dump(frontmatter, sort_keys=False)
-    (names_dir / f"{TILLY}.md").write_text(
-        "---\n"
-        + body
-        + "---\n**Member notes:**\n"
-        + f"- [[{TILLY_CHUNK}]] — An Author (1978): A claim.\n",
-        encoding="utf-8",
-    )
-
-
 def _write_name_layer(root: Path) -> None:
-    """The alias-map/index pair `names_touched` resolves surface forms
-    through (§7.4). Without it no surface resolves, so no claim touches a
-    name and the coverage map is empty -- which is exactly scenario 2."""
+    """The index `names_touched` resolves the chunk's surface through
+    (§7.4), so the run's names are printed."""
     names_dir = root / "data" / "names"
     names_dir.mkdir(parents=True, exist_ok=True)
     (names_dir / "index.json").write_text(json.dumps({"names": [TILLY]}), encoding="utf-8")
@@ -137,33 +123,30 @@ def _write_briefs(root: Path) -> Path:
 @pytest.fixture
 def fixture_root(tmp_path: Path) -> Path:
     _write_chunk(tmp_path)
-    _write_name_page(tmp_path)
     _write_pin(tmp_path)
     shutil.copytree(REPO_LENSES_DIR, tmp_path / "config" / "lenses")
+    write_map_fixture(tmp_path, [TILLY_CHUNK])
     return tmp_path
 
 
-def _run_smoke_cli(root: Path, briefs_dir: Path) -> subprocess.CompletedProcess:
+def _run_smoke_cli(
+    root: Path, briefs_dir: Path, *, cite: bool = True
+) -> subprocess.CompletedProcess:
     env = dict(os.environ)
+    env.update(MAP_ARM_ENV)
     env[PROVIDER_ENV_VAR] = "stub"
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(
         {"premises_found": [], "bounds_applied": [], "refusal": None}
     )
-    env[STUB_TOOL_CALLS_ENV_VAR] = json.dumps(
-        [{"tool": "get_name", "args": {"canonical": TILLY}}, None]
-    )
-    env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps(
+    claims = [
         {
-            "claims": [
-                {
-                    "text": "A claim grounded in the corpus.",
-                    "kind": "a",
-                    "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
-                    "confidence": "medium",
-                }
-            ]
+            "text": "A claim grounded in the corpus.",
+            "kind": "a",
+            "grounds": [{"ref_type": "chunk", "ref_id": "[c1]"}],
+            "confidence": "medium",
         }
-    )
+    ]
+    env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps({"claims": claims if cite else []})
     return subprocess.run(
         [
             "uv",
@@ -185,15 +168,6 @@ def _run_smoke_cli(root: Path, briefs_dir: Path) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief smoke now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's name-page/name-layer fixture "
-        "does not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_smoke_passes_and_states_its_budgets_are_unmeasured(fixture_root: Path):
     _write_name_layer(fixture_root)
     briefs_dir = _write_briefs(fixture_root)
@@ -223,31 +197,23 @@ def test_smoke_passes_and_states_its_budgets_are_unmeasured(fixture_root: Path):
     # Gate scoring is off: no rung-3 gate report exists anywhere.
     assert not list(sweep_dir.glob("analyses/*/gates/*.json"))
 
-    # The names each run queried are printed, so a nearest-neighbour
+    # The names each run's claims touched are printed, so a nearest-neighbour
     # substitution (the P4-04 fragmentation read) is visible by eye.
-    assert f"get_name:{TILLY}" in result.stdout
+    assert f"names_touched:{TILLY}" in result.stdout
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief smoke now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's name-page/name-layer fixture "
-        "does not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_smoke_exits_non_zero_when_the_coverage_map_regresses_to_empty(fixture_root: Path):
-    """The #490 regression must be loud: with no name layer, no claim
-    resolves a name, so the map is empty on a `proceed` run."""
+    """The #490 regression must be loud: a `proceed` run whose argument map
+    assembles nothing retrieved nothing, and smoke says so."""
+    write_map_fixture(fixture_root, [])
     briefs_dir = _write_briefs(fixture_root)
 
-    result = _run_smoke_cli(fixture_root, briefs_dir)
+    result = _run_smoke_cli(fixture_root, briefs_dir, cite=False)
 
     assert result.returncode == 1, f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     assert "smoke: FAIL" in result.stdout
     assert "coverage_map_non_empty" in result.stdout
-    assert "#490" in result.stdout
+    assert "the argument map assembled no chunk" in result.stdout
 
 
 def test_the_committed_smoke_set_is_the_five_briefs_with_their_case_files():
