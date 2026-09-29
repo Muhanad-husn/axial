@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import axial
 from axial.analyze import format_examine_report as format_brief_examine_report
-from axial.argmap.ask import AskError, run_map_ask
+from axial.argmap.ask import AskError, resolve_pinned_map_dir, run_map_ask
 from axial.argmap.vocabulary_join import (
     DEFAULT_VOCABULARY_COLUMN,
     PER_CATEGORY_CAP,
@@ -585,6 +585,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    names_materialize_parser.add_argument(
+        "--map-dir",
+        default=None,
+        help=(
+            "issue #854: the built map (data/map/<pin>/) whose positions are "
+            "written as vault pages under positions/. Omitted (default): the "
+            "map pinned to the current corpus, or no pages when none is built"
+        ),
+    )
+
     names_escalations_parser = names_subparsers.add_parser(
         "escalations",
         help=(
@@ -731,10 +741,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers",
         type=int,
         default=DEFAULT_ASSIGN_WORKERS,
-        help=(
-            "how many assignment batches run concurrently (default: "
-            f"{DEFAULT_ASSIGN_WORKERS})"
-        ),
+        help=(f"how many assignment batches run concurrently (default: {DEFAULT_ASSIGN_WORKERS})"),
     )
     vocabulary_build_parser.add_argument(
         "--force",
@@ -3146,9 +3153,7 @@ def _vocabulary_build(
             answers_dir=Path(answers_dir) if answers_dir is not None else None,
             columns=_parse_vocabulary_columns(columns) if columns is not None else None,
             scheme_path=(
-                Path(scheme_path)
-                if scheme_path is not None
-                else DEFAULT_VOCABULARY_SCHEME_PATH
+                Path(scheme_path) if scheme_path is not None else DEFAULT_VOCABULARY_SCHEME_PATH
             ),
             vocabulary_dir=Path(vocabulary_dir) if vocabulary_dir is not None else None,
             workers=workers,
@@ -3214,10 +3219,16 @@ def _names_merge(
     return 0
 
 
-def _names_materialize(residue_decisions_path: str | None = None) -> int:
+def _names_materialize(
+    residue_decisions_path: str | None = None, map_dir: str | None = None
+) -> int:
+    # Issue #854: the map pinned to this corpus, when one is built, becomes
+    # the vault's position pages.
+    pinned_map_dir = Path(map_dir) if map_dir else resolve_pinned_map_dir()
     try:
         result = run_materialize(
-            residue_decisions_path=Path(residue_decisions_path) if residue_decisions_path else None
+            residue_decisions_path=Path(residue_decisions_path) if residue_decisions_path else None,
+            map_dir=pinned_map_dir,
         )
     except MaterializeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -3236,6 +3247,8 @@ def _names_materialize(residue_decisions_path: str | None = None) -> int:
         "store_note_arguing_against",
         "store_note_citations",
         "store_note_opposed_position",
+        "position_pages_written",
+        "position_pages_isolated",
     ):
         print(f"{key}: {result[key]}")
     return 0
@@ -3779,7 +3792,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.command == "names" and args.names_command == "materialize":
-        return _names_materialize(args.residue_decisions_path)
+        return _names_materialize(args.residue_decisions_path, args.map_dir)
 
     if args.command == "names" and args.names_command == "escalations":
         return _names_escalations(args.decisions_path, args.inventory_path, args.as_json)
