@@ -407,3 +407,195 @@ columns:
           One argument carries the other's claim to new cases, periods, or
           levels, or sets it in a wider historical or analytical frame.
           AIF inference. (scope extension 6, contextualization 8)
+
+  about:
+    # Committed for issue #857 (DEC-75 step 4) from #805's corrected examine
+    # run, 2026-08-27 (data/logs/2026-08-27-vocabulary-categorise-v2/,
+    # run.jsonl and summary.md line 38): 10 categories, 98.0% assignment on a
+    # disjoint held-out 400, largest category 19.8%, all 10 reaching 5+
+    # members across 2+ sources, two-model agreement 81.9% where assigned
+    # (n=94). `about` is list-valued: each entry of a note's list is
+    # assigned on its own.
+    #
+    # Committed verbatim from the proposal, names lowered to match this
+    # file's convention. The retrieval filter, address and coverage
+    # disclosure this column serves are its only uses; it is never the
+    # map's bagging rule (DEC-74).
+    #
+    # `close_match` cross-maps a category to ELSST version 7 (CESSDA,
+    # CC-BY-SA, https://thesauri.cessda.eu/elsst-7/) and is exported as
+    # skos:closeMatch by `axial vocabulary export`. Nothing in the pipeline
+    # reads it. Three categories have no close ELSST concept and carry none:
+    # state formation (ELSST has no STATE or STATE FORMATION concept), social
+    # categories (split across ETHNIC GROUPS, SOCIAL STRATIFICATION and
+    # IDENTITY), and bibliographic references (not a subject).
+    version: "2026-09-29-about-v1"
+    categories:
+      - id: state-formation-and-transformation
+        name: "state formation and transformation"
+        gloss: >-
+          Answers about the origins, development, consolidation,
+          and transformation of states, including nation-states,
+          empires, and unrecognized states, as well as the shift
+          between them.
+      - id: nationalism-and-national-identity
+        name: "nationalism and national identity"
+        gloss: >-
+          Answers about the origins, nature, expression, and
+          consequences of nationalism, national identity, and
+          national belonging, including banal/hot nationalism and
+          ethnic vs. civic forms.
+        # ELSST: NATIONALISM
+        close_match: "https://elsst.cessda.eu/id/7/9389ee32-51c7-4eb6-8b4f-cc661ed4c027"
+      - id: violence-war-and-conflict
+        name: "violence, war, and conflict"
+        gloss: >-
+          Answers about the causes, conduct, dynamics, and
+          consequences of organized violence, war, civil war, and
+          collective violence, including motivations,
+          psychological aspects, and logics.
+        # ELSST: WAR
+        close_match: "https://elsst.cessda.eu/id/7/61b5e15a-e082-4efc-87c4-7238a729bb58"
+      - id: political-economy-and-development
+        name: "political economy and development"
+        gloss: >-
+          Answers about economic systems, reforms, state
+          allocation, class relations, welfare, taxation, and the
+          intersection of economic and political power.
+        # ELSST: ECONOMICS (alt. label POLITICAL ECONOMY)
+        close_match: "https://elsst.cessda.eu/id/7/fc09ab8a-c74e-41b7-83ca-c5af01921a64"
+      - id: colonialism-and-decolonization
+        name: "colonialism and decolonization"
+        gloss: >-
+          Answers about colonial governance, its legacies, and
+          processes of decolonization, including resistance,
+          administrative practices, and post-colonial transitions.
+        # ELSST: COLONIALISM
+        close_match: "https://elsst.cessda.eu/id/7/0289b6ce-d389-43a8-96e2-248f8543cd93"
+      - id: social-categories-and-identities
+        name: "social categories and identities"
+        gloss: >-
+          Answers about the politicization, construction, and
+          transformation of social categories such as ethnicity,
+          race, religion, caste, and class, and their role in
+          conflict or politics.
+      - id: power-authority-and-governance
+        name: "power, authority, and governance"
+        gloss: >-
+          Answers about the nature, sources, distribution, and
+          exercise of power, including sovereignty, state
+          capacity, bureaucratic autonomy, and types of authority.
+        # ELSST: POLITICAL POWER
+        close_match: "https://elsst.cessda.eu/id/7/7dbdef84-fc4c-4310-a89e-5927cfafd414"
+      - id: social-movements-and-collective-action
+        name: "social movements and collective action"
+        gloss: >-
+          Answers about the mobilization, organization, and
+          dynamics of protest, revolutions, labor movements, and
+          other forms of collective action.
+        # ELSST: POLITICAL MOVEMENTS
+        close_match: "https://elsst.cessda.eu/id/7/6c2edd13-ee22-4acc-8262-def2750e28c0"
+      - id: theory-and-methodology
+        name: "theory and methodology"
+        gloss: >-
+          Answers that discuss theoretical approaches, conceptual
+          definitions, critiques of specific theories, or
+          methodological issues in studying social and political
+          phenomena.
+        # ELSST: RESEARCH METHODOLOGY
+        close_match: "https://elsst.cessda.eu/id/7/b949de54-22e5-40cc-a9bd-efe1148d4ee4"
+      - id: bibliographic-and-source-references
+        name: "bibliographic and source references"
+        gloss: >-
+          Answers that are lists of citations, sources, primary
+          documents, or acknowledgements, rather than analytical
+          content.
+
+  move:
+    # Committed for issue #857 (DEC-75 step 4) from #805's corrected examine
+    # run, 2026-08-27 (data/logs/2026-08-27-vocabulary-categorise-v2/,
+    # run.jsonl and summary.md line 39): 13 categories, 97.5% assignment on a
+    # disjoint held-out 400, largest category 15.2%, all 13 reaching 5+
+    # members across 2+ sources, two-model agreement 72.0% (n=100).
+    #
+    # Committed verbatim from the proposal, names lowered to match this
+    # file's convention. The last category, role annotation, is answers that
+    # echo a role label instead of naming a move; it is kept so those
+    # answers have somewhere to go rather than being forced into a real one.
+    version: "2026-09-29-move-v1"
+    categories:
+      - id: concede-and-narrow-argument
+        name: "concede-and-narrow argument"
+        gloss: >-
+          Answers that first concede a point to an opposing view,
+          then restrict its scope or force to make room for the
+          author's own argument.
+      - id: theory-synthesis-or-rebuttal
+        name: "theory synthesis or rebuttal"
+        gloss: >-
+          Answers that survey, critique, or synthesize competing
+          theoretical positions to clear ground for or to advance
+          the author's own framework.
+      - id: causal-process-tracing
+        name: "causal process tracing"
+        gloss: >-
+          Answers that narrate a sequence of events or mechanisms,
+          linking causes to outcomes through a detailed story of
+          change.
+      - id: comparative-case-analysis
+        name: "comparative case analysis"
+        gloss: >-
+          Answers that contrast two or more cases (countries,
+          periods, groups) to derive a generalizable pattern or to
+          support a thesis.
+      - id: bibliographic-or-evidentiary-apparatus
+        name: "bibliographic or evidentiary apparatus"
+        gloss: >-
+          Answers that provide citations, source notes,
+          references, or data documentation rather than making an
+          analytical claim.
+      - id: structural-or-typological-framework
+        name: "structural or typological framework"
+        gloss: >-
+          Answers that lay out definitions, categories,
+          typologies, or coding rules to structure subsequent
+          analysis.
+      - id: refutation-of-an-existing-claim-or-assumption
+        name: "refutation of an existing claim or assumption"
+        gloss: >-
+          Answers that directly challenge a specific scholar's or
+          school's claim, showing it to be empirically or
+          logically flawed.
+      - id: interpretation-or-reinterpretation-of-a-concept-or-text
+        name: "interpretation or reinterpretation of a concept or text"
+        gloss: >-
+          Answers that reclassify, redefine, or reframe the
+          meaning of an idea, event, figure, or text.
+      - id: methodological-justification-or-critique
+        name: "methodological justification or critique"
+        gloss: >-
+          Answers that defend or criticize a particular research
+          method, data source, or analytical approach.
+      - id: context-setting-or-historical-background
+        name: "context-setting or historical background"
+        gloss: >-
+          Answers that establish the preconditions, scope, or
+          contextual backdrop for the study's main argument
+          without yet advancing it.
+      - id: expose-of-hidden-mechanisms-or-unintended-consequences
+        name: "exposé of hidden mechanisms or unintended consequences"
+        gloss: >-
+          Answers that reveal a non-obvious causal mechanism or
+          ironic outcome, often showing how intentions misfire.
+      - id: synthesis-of-findings-into-a-conclusion
+        name: "synthesis of findings into a conclusion"
+        gloss: >-
+          Answers that wrap up or summarize a chapter's or book's
+          argument, often by weaving previous evidence into a
+          final claim.
+      - id: role-annotation
+        name: "role annotation (setup, evidence, etc.)"
+        gloss: >-
+          Answers that explicitly label their function in the
+          text, such as 'role:evidence' or 'role:setup', without
+          making a substantive claim.
