@@ -72,7 +72,6 @@ REPO_LENSES_DIR = REPO_ROOT / "config" / "lenses"
 PROVIDER_ENV_VAR = "AXIAL_LLM_PROVIDER"
 RECORD_PATH_ENV_VAR = "AXIAL_LLM_RECORD_PATH"
 STUB_INTERROGATE_RESPONSE_ENV_VAR = "AXIAL_STUB_INTERROGATE_RESPONSE"
-STUB_TOOL_CALLS_ENV_VAR = "AXIAL_STUB_TOOL_CALLS"
 STUB_SYNTHESIZE_RESPONSE_ENV_VAR = "AXIAL_STUB_SYNTHESIZE_RESPONSE"
 
 _BRIEF_ID_PATTERN = re.compile(r"brief_id:\s*(\S+)")
@@ -292,7 +291,6 @@ def _run_brief_run_cli(
     *,
     record_path: Path,
     stub_interrogate_response: dict[str, Any],
-    stub_tool_calls: list[dict[str, Any] | None] | None = None,
     stub_synthesize_response: dict[str, Any] | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
@@ -300,8 +298,6 @@ def _run_brief_run_cli(
     env[PROVIDER_ENV_VAR] = "record"
     env[RECORD_PATH_ENV_VAR] = str(record_path)
     env[STUB_INTERROGATE_RESPONSE_ENV_VAR] = json.dumps(stub_interrogate_response)
-    if stub_tool_calls is not None:
-        env[STUB_TOOL_CALLS_ENV_VAR] = json.dumps(stub_tool_calls)
     if stub_synthesize_response is not None:
         env[STUB_SYNTHESIZE_RESPONSE_ENV_VAR] = json.dumps(stub_synthesize_response)
     return subprocess.run(

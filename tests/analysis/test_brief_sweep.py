@@ -30,7 +30,8 @@ value, which a subprocess's stdout would only offer to re-parse.
 
 Fixtures reused, no new fixture content: the real dev briefs
 `config/briefs/dev/fixture-syria-displacement.yaml` and
-`fixture-iraq-tribal-authority.yaml` (issue #247), and the same
+`fixture-iraq-tribal-authority.yaml` (issue #247), the shared map fixture
+(tests/analysis/_map_fixture.py, issue #863), and the same
 vault/pin/lenses fixture shape `tests/analysis/test_brief_run_analysis_record.py`
 already established for driving `run_brief`/`axial brief run` end to end.
 """
@@ -47,6 +48,7 @@ from typing import Any
 
 import pytest
 import yaml
+from _map_fixture import MAP_ARM_ENV, write_map_fixture
 
 import axial.brief.sweep as sweep_mod
 
@@ -120,10 +122,16 @@ def _write_fixture_lenses(root: Path) -> None:
 
 
 @pytest.fixture
-def fixture_root(tmp_path: Path) -> Path:
+def fixture_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write_fixture_vault(tmp_path)
     _write_fixture_pin(tmp_path)
     _write_fixture_lenses(tmp_path)
+    write_map_fixture(tmp_path, [SYRIA_A, IRAQ_A])
+    # Scenarios 3-4 call `run_sweep` in-process, where the map's default
+    # paths resolve against the cwd.
+    for key, value in MAP_ARM_ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
@@ -173,15 +181,6 @@ def _assert_not_argparse_fallback(result: subprocess.CompletedProcess) -> None:
 # --- Scenario 1: no clobbering ------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_sweep_writes_one_record_per_brief_per_draw_with_no_clobbering(fixture_root: Path):
     worklist = _write_worklist(fixture_root, [SYRIA_BRIEF_PATH, IRAQ_BRIEF_PATH])
 
@@ -212,15 +211,6 @@ def test_sweep_writes_one_record_per_brief_per_draw_with_no_clobbering(fixture_r
 # --- Scenario 2: resume -------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_sweep_resume_skips_completed_brief_and_attempts_the_new_one(fixture_root: Path):
     worklist_a = _write_worklist(fixture_root, [SYRIA_BRIEF_PATH])
     first = _run_sweep_cli(fixture_root, worklist_a, draws=2)
@@ -252,15 +242,6 @@ def test_sweep_resume_skips_completed_brief_and_attempts_the_new_one(fixture_roo
 # --- Scenario 3: failure isolation (direct run_sweep, see module docstring) --
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_sweep_isolates_one_failing_draw_and_the_rest_complete_normally(
     fixture_root: Path, monkeypatch
 ):
@@ -308,15 +289,6 @@ def test_sweep_isolates_one_failing_draw_and_the_rest_complete_normally(
 # --- Scenario 4: per-brief gate reports + quorum, never pooled ---------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "DEC-75 (issue #853): axial brief run now always retrieves through "
-        "the argument map, which needs a real data/envelopes/+data/sources/+"
-        "data/map/<pin>/ fixture this test's scripted name-arm tool calls do "
-        "not provide. Rebuilding a map-arm CLI fixture is a pending "
-        "follow-up, not done in #853 itself -- flagged in that PR."
-    )
-)
 def test_sweep_scores_gates_and_quorum_per_brief_never_pooled(fixture_root: Path, monkeypatch):
     from axial.llm import StubLLMClient
 
@@ -364,7 +336,7 @@ def test_sweep_scores_gates_and_quorum_per_brief_never_pooled(fixture_root: Path
         # Issue #368 amendment: per-brief cost carries both token counts and
         # dollar cost, broken down per pass -- not just a flattened total.
         assert result.cost["total_tokens"] > 0
-        assert set(result.cost["by_pass"]) == {"interrogate", "retrieve", "synthesize"}
+        assert set(result.cost["by_pass"]) == {"interrogate", "brief_decompose", "synthesize"}
         for entry in result.cost["by_pass"].values():
             assert entry["total_tokens"] > 0
             assert entry["usd"] is None  # "stub" is never in the real price table
