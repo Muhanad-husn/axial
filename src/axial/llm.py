@@ -2323,6 +2323,16 @@ class OpenRouterClient:
         `"<brief_stem>:draw<n>"`) -- see `self._run_id`'s docstring above."""
         self._run_id = run_id
 
+    def override_model_for_pass(self, pass_name: str, model: str) -> None:
+        """Point one pass at a raw model name for this client's lifetime
+        (issue #859: an experiment model needs no secrets.toml tier)."""
+        self._model_by_pass = {**self._model_by_pass, pass_name: model}
+        self._unresolved_model_passes = {
+            name: reason
+            for name, reason in self._unresolved_model_passes.items()
+            if name != pass_name
+        }
+
     def model_for_pass(self, pass_name: str | None = None) -> str:
         """The model this client targets for `pass_name` (issue #270 slice
         02): `self._model_by_pass`'s per-pass override (DEC-26) when
