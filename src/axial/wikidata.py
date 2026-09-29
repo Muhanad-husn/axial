@@ -77,8 +77,12 @@ def band_nodes(
 
 def post_to_service(batch: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """One HTTP call to the reconciliation service for a batch of queries,
-    retried with backoff on a transient failure."""
-    for attempt in range(5):
+    retried with backoff on a transient failure.
+
+    The backoff is long on purpose: the hosted service throttled the first
+    live pass with a 403 after 40 surfaces and then stopped answering for
+    minutes. Waiting it out costs nothing, since every answer is cached."""
+    for attempt in range(8):
         try:
             response = httpx.post(
                 SERVICE_URL,
@@ -92,9 +96,9 @@ def post_to_service(batch: dict[str, dict[str, Any]]) -> dict[str, Any]:
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, json.JSONDecodeError):
-            if attempt == 4:
+            if attempt == 7:
                 raise
-            time.sleep(2**attempt)
+            time.sleep(min(30 * 2**attempt, 1200))
     raise AssertionError("unreachable")
 
 
