@@ -395,15 +395,14 @@ def test_cli_examines_the_relation_column(tmp_path, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_the_committed_relation_seed_is_aifs_three_genera_marked_draft():
+def test_the_committed_relation_scheme_is_flat_dated_and_keeps_conflict():
+    """The corridor reads `conflict` by id, and `vocabulary build` assigns
+    depth 1 only, so the committed scheme is one level holding that id."""
     scheme = load_vocabulary_scheme(RELATION_COLUMN, DEFAULT_VOCABULARY_SCHEME_PATH)
 
-    assert [category.id for category in scheme.at_level(ROOT_LEVEL)] == [
-        "inference",
-        "conflict",
-        "preference",
-    ]
-    assert "draft" in scheme.version.lower()
+    assert "conflict" in [category.id for category in scheme.at_level(ROOT_LEVEL)]
+    assert scheme.max_level == ROOT_LEVEL
+    assert "draft" not in scheme.version.lower()
 
 
 def test_the_map_build_is_offered_only_kinds_below_the_genera(tmp_path):
