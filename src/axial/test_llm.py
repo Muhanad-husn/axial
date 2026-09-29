@@ -2638,3 +2638,30 @@ def test_the_http_pool_keeps_every_connection_it_opens_warm(monkeypatch):
         "connection cap is the httpx default this test exists to override"
     )
     assert limits.max_connections >= 96, "must clear the name-merge worker ceiling"
+
+
+def test_stub_client_answers_the_map_door_with_usable_arguments(monkeypatch):
+    """Issue #863: an unscripted stub/record run reaches the argument map's
+    door (`decompose_brief`) and must get back something it can land, not
+    the envelope-shaped default that makes the door raise."""
+    from axial.argmap.ask import decompose_brief
+    from axial.brief.intake import Brief
+    from axial.llm import StubLLMClient
+
+    monkeypatch.delenv("AXIAL_STUB_DECOMPOSE_RESPONSE", raising=False)
+    brief = Brief(brief_id="door_001", case="A case.", request="A question?")
+
+    assert decompose_brief(brief, StubLLMClient())
+
+
+def test_stub_client_door_response_is_scriptable(monkeypatch):
+    from axial.argmap.ask import decompose_brief
+    from axial.brief.intake import Brief
+    from axial.llm import StubLLMClient
+
+    monkeypatch.setenv(
+        "AXIAL_STUB_DECOMPOSE_RESPONSE", json.dumps({"arguments": ["Scripted argument."]})
+    )
+    brief = Brief(brief_id="door_002", case="A case.", request="A question?")
+
+    assert decompose_brief(brief, StubLLMClient()) == ["Scripted argument."]
