@@ -34,17 +34,17 @@ SERVICE_URL = "https://wikidata.reconci.link/en/api"
 BAND_MIN_SOURCES = 5
 BATCH_SIZE = 10
 
-# The issue's own mapping, except places: typed Q56061 (administrative
-# territorial entity) the service matched `Europe` to the European Union;
-# Q2221906 (geographic location) put the right item first on every probe.
-# `concept` and `movement/religion` have no useful single type and go
-# unconstrained.
+# The issue's own mapping, with two measured exceptions. Places: typed
+# Q56061 (administrative territorial entity) the service matched `Europe` to
+# the European Union; Q2221906 (geographic location) put the right item
+# first on every probe. Events: typed Q1190554 (occurrence) the service
+# answers 403 to every query, and untyped puts the right item first.
+# `concept` and `movement/religion` have no useful single type either.
 _TYPE_BY_KIND = {
     "person": "Q5",
     "country/state/place": "Q2221906",
     "work": "Q47461344",
     "institution/group": "Q43229",
-    "event": "Q1190554",
     "period": "Q186081",
 }
 
