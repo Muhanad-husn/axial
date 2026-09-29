@@ -859,6 +859,18 @@ def build_parser() -> argparse.ArgumentParser:
             "configured model. The baseline build must exist"
         ),
     )
+    map_build_parser.add_argument(
+        "--grouping",
+        choices=("bag", "opposition"),
+        default="bag",
+        help=(
+            "issue #860: 'opposition' forms bags from what passages argue "
+            "against (resolved arguing_against targets and foil citations, "
+            "read from the vault's notes.db); passages with no such key keep "
+            "wording bags. Writes to data/map/<pin>-opposition/, never the "
+            "pin's own directory (default: bag, the wording bags)"
+        ),
+    )
     map_ask_parser = map_subparsers.add_parser(
         "ask",
         help=(
@@ -3491,6 +3503,7 @@ def _map_build(
     workers: int = MAP_BUILD_DEFAULT_WORKERS,
     force: bool = False,
     extract_model: str | None = None,
+    grouping: str = "bag",
     root: Path | None = None,
     clock: Callable[[], str] | None = None,
 ) -> int:
@@ -3522,7 +3535,12 @@ def _map_build(
 
         try:
             manifest = run_map_build(
-                client=client, log=_tee, workers=workers, force=force, variant=variant
+                client=client,
+                log=_tee,
+                workers=workers,
+                force=force,
+                variant=variant,
+                grouping=grouping,
             )
         except (MapError, AlreadyRunningError, LLMError, CorpusPinError) as exc:
             run.record(
@@ -4017,7 +4035,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "build":
         return _map_build(
-            workers=args.workers, force=args.force, extract_model=args.extract_model
+            workers=args.workers,
+            force=args.force,
+            extract_model=args.extract_model,
+            grouping=args.grouping,
         )
 
     if args.command == "map" and args.map_command == "ask":

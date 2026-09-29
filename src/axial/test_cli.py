@@ -1737,7 +1737,7 @@ def test_main_eval_layers_reports_a_refusal_on_stderr_and_exits_nonzero(monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_map_build_offers_no_grouping_option(capsys):
+def test_map_build_refuses_the_deleted_category_grouping(capsys):
     from axial.cli import build_parser
 
     parser = build_parser()
@@ -1746,7 +1746,14 @@ def test_map_build_offers_no_grouping_option(capsys):
 
     assert exc_info.value.code != 0
     captured = capsys.readouterr()
-    assert "unrecognized arguments" in captured.err
+    assert "invalid choice: 'category'" in captured.err
+
+
+def test_map_build_offers_opposition_grouping():
+    from axial.cli import build_parser
+
+    args = build_parser().parse_args(["map", "build", "--grouping", "opposition"])
+    assert args.grouping == "opposition"
 
 
 @pytest.mark.parametrize("subcommand", ["purity", "grouping-report"])
