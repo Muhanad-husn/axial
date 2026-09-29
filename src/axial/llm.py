@@ -642,6 +642,9 @@ PRICE_TABLE_USD_PER_1K: dict[str, dict[str, float]] = {
     # its money column.
     "openai/gpt-5.6-luna": {"input": 0.0001, "output": 0.0006},
     "moonshotai/kimi-k3": {"input": 0.003, "output": 0.015},
+    # Added 2026-09-29 (#855): the vocabulary tier moves here on the
+    # proposing-model experiment in data/logs/2026-09-29-855-relation-examine-glm53/.
+    "deepseek/deepseek-v4.1-flash": {"input": 0.0003, "output": 0.0012},
     "nvidia/nemotron-3-ultra-550b-a55b:free": {"input": 0.0, "output": 0.0},
 }
 

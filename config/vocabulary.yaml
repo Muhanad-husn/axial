@@ -334,49 +334,76 @@ columns:
           the passage.
 
   relation:
-    # DRAFT SEED, NOT A FOUNDER-COMMITTED SCHEME (issue #855, DEC-75 (3)).
-    # The founder owns this scheme: edit it after reading
-    # `axial vocabulary examine --column relation`, then replace the DRAFT
-    # version below with a dated one. A build run under the draft version
-    # has to be re-run with `--force` once the version changes.
+    # PROPOSED 2026-09-29 from `axial vocabulary examine --column relation`
+    # (data/logs/2026-09-29-855-relation-examine/), awaiting the founder's
+    # edit and commit (issue #855, DEC-75 (3)).
     #
-    # Unlike the answer columns above, this column is the argument map's
-    # relations (`data/map/<pin>/relations.jsonl`): one free-text label and
-    # one `says` sentence per relation between two positions. An assignment
-    # is keyed by (from_position_id, to_position_id, relation) and written
-    # beside the free label, never over it.
+    # This column is the argument map's relations
+    # (`data/map/<pin>/relations.jsonl`): one free-text label and one `says`
+    # sentence per relation between two positions. An assignment is keyed by
+    # (from_position_id, to_position_id, relation) and written beside the
+    # free label, never over it.
     #
-    # The top level is the Argument Interchange Format's three scheme-node
-    # genera (RA inference, CA conflict, PA preference), so the top of the
-    # tree is a standard rather than a corpus draw. `axial map ask` reads the
-    # `conflict` id by name to put conflicting positions first in the
-    # corridor, so keep that id.
+    # Flat, one level: `axial vocabulary build` assigns depth 1 only (#806).
+    # The examine pass proposed 17 kinds; the 14 that drew members are folded
+    # into the 9 below (held-out counts of 391 assigned, 9 refused, of 400).
+    # The AIF genus each kind belongs to is named in its gloss. AIF's third
+    # genus, preference, drew nothing and is left out.
     #
-    # The children are the corpus's own recurring shapes, and are the
-    # founder's to name from the examine report. The issue names three as
-    # examples; where each sits is a judgement, so they are left commented:
-    #   - redirects explanation  (conflict? a rival cause for the same fact)
-    #   - qualifies scope        (conflict, as an undercut? or inference?)
-    #   - borrows mechanism      (inference)
-    # Two things to know before adding children. `axial vocabulary build`
-    # assigns depth 1 only today and refuses a deeper scheme (#806), so
-    # children need depth-2 assignment first. And only the children, never
-    # the three genera, are offered to the map build's relate prompt as
-    # example labels (D8).
-    version: "DRAFT-2026-09-28-relation-seed"
+    # `axial map ask` reads the `conflict` id by name to put conflicting
+    # positions first in the corridor, so keep that id. A flat scheme offers
+    # no example labels to the relate prompt: `relation_kind_examples` offers
+    # only kinds below the top level, so the map build's prompt is unchanged.
+    version: "2026-09-29-relation-v1"
     categories:
-      - id: inference
-        name: "inference or support"
-        gloss: >-
-          One argument gives a reason to accept the other, so that holding
-          the first makes the second more credible (AIF rule application).
       - id: conflict
         name: "conflict"
         gloss: >-
-          One argument is incompatible with the other or attacks it, so
-          that both cannot be held as stated (AIF conflict application).
-      - id: preference
-        name: "preference"
+          One argument cannot be held together with the other: it denies its
+          claim, shows by a counterexample that it cannot hold as stated, or
+          offers a rival primary cause for the same outcome. AIF conflict.
+          (contradiction 38, counterexample 6, competing explanation 4)
+      - id: qualification
+        name: "qualification"
         gloss: >-
-          One argument is ranked above the other on some criterion without
-          either supporting or attacking it (AIF preference application).
+          One argument keeps the other but limits it: narrows where it holds,
+          adds a condition, or names a gap or oversimplification in it without
+          rejecting it. Sits between AIF conflict and inference; it attacks
+          scope, not the claim. (qualification 55, critique of limitation 4)
+      - id: support
+        name: "support"
+        gloss: >-
+          One argument gives evidence for, confirms, or agrees with the
+          other's claim. AIF inference. (support 73)
+      - id: illustration
+        name: "illustration"
+        gloss: >-
+          One argument supplies a concrete case or instance of the other's
+          general claim or definition. AIF inference. (74)
+      - id: specification
+        name: "specification"
+        gloss: >-
+          One argument makes the other's general claim more precise by naming
+          its concrete factors, types, or details. AIF inference. (29)
+      - id: mechanism
+        name: "mechanism"
+        gloss: >-
+          One argument describes the causal process or pathway that produces
+          the pattern or outcome the other reports. AIF inference. (40)
+      - id: additional-cause
+        name: "additional cause"
+        gloss: >-
+          One argument adds a cause, condition, or earlier event that the
+          other's causal account needs or leaves out, without replacing it.
+          AIF inference. (causal supplementation 36, antecedent 2)
+      - id: grounding
+        name: "grounding"
+        gloss: >-
+          One argument supplies the general principle or conceptual groundwork
+          the other's specific claim rests on. AIF inference. (16)
+      - id: extension
+        name: "extension or context"
+        gloss: >-
+          One argument carries the other's claim to new cases, periods, or
+          levels, or sets it in a wider historical or analytical frame.
+          AIF inference. (scope extension 6, contextualization 8)
