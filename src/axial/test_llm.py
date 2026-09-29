@@ -2665,3 +2665,13 @@ def test_stub_client_door_response_is_scriptable(monkeypatch):
     brief = Brief(brief_id="door_002", case="A case.", request="A question?")
 
     assert decompose_brief(brief, StubLLMClient()) == ["Scripted argument."]
+
+
+def test_override_model_for_pass_changes_only_that_pass():
+    from axial.llm import OpenRouterClient
+
+    client = OpenRouterClient(api_key="k", model="flash", model_by_pass={"envelope": "pro"})
+    client.override_model_for_pass("position_extract", "vendor/frontier")
+    assert client.model_for_pass("position_extract") == "vendor/frontier"
+    assert client.model_for_pass("envelope") == "pro"
+    assert client.model_for_pass("position_relate") == "flash"
