@@ -156,7 +156,7 @@ from axial.envelope import _default_envelopes_dir
 from axial.eval.corpus_pin import _build_sources
 from axial.extract import TREES_DIR
 from axial.interrogate import _default_answers_dir, is_abstention
-from axial.llm import LLMClient, LLMError, estimate_cost, get_client
+from axial.llm import LLMClient, LLMError, configured_reasoning, estimate_cost, get_client
 from axial.model_json import ModelJsonError, parse_model_json
 from axial.names import load_answer_records, load_back_matter_sections
 from axial.paths import (
@@ -210,13 +210,6 @@ WORKERS = 40
 # with for run-logging and cost accounting.
 PASS_NAME = "position_extract"
 
-# Mirrors `config/pipeline.yaml`'s `llm.reasoning_by_pass.position_extract`
-# entry -- recorded in `map.json` for the manifest's own sake (the LLMClient
-# protocol exposes no getter for a pass's resolved reasoning setting); this
-# constant does not itself control the call, config does, and the two must
-# be kept in sync by hand.
-POSITION_EXTRACT_REASONING = "high"
-
 # Neighbourhood sizing for the relate pass (stage 2, issue #572): a flat
 # clustering at real-corpus scale gave wildly uneven groups -- measured
 # sizes 2, 2, 3, 3, 3, 4, 4, 12, 13, 15, 15, **53** on the scratchpad run
@@ -232,13 +225,6 @@ MAX_NEIGHBOURHOOD = 12
 # The pass name `config/pipeline.yaml`'s `llm.reasoning_by_pass` keys off of
 # for the relate call, mirroring `PASS_NAME` above.
 RELATE_PASS_NAME = "position_relate"
-
-# Mirrors `config/pipeline.yaml`'s `llm.reasoning_by_pass.position_relate`
-# entry, recorded in `map.json` the same way `POSITION_EXTRACT_REASONING`
-# is -- deciding how two positions actually stand to one another, with no
-# menu to pick from, is the same underdetermined judgment call extraction
-# makes.
-POSITION_RELATE_REASONING = "high"
 
 ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -1785,7 +1771,7 @@ def run_map_build(
             "dropped_relations": dropped_relations,
         },
         "model": relation_model,
-        "reasoning": POSITION_RELATE_REASONING,
+        "reasoning": configured_reasoning(RELATE_PASS_NAME, config_path),
         # Accumulated under the pin, not overwritten (issue #830): a
         # resumed relate stage makes no call and would otherwise report
         # the paid stage as free, exactly as the position stage did.
@@ -1850,12 +1836,12 @@ def run_map_build(
         # so every manifest on disk reads identically.
         "grouping": grouping_block,
         "model": model,
-        "reasoning": POSITION_EXTRACT_REASONING,
+        "reasoning": configured_reasoning(PASS_NAME, config_path),
         # `ENCODER_MODEL` (issue #572, PR 3 of 4): the position-argument
         # sentences below are only comparable to a question's own vectors if
         # both were embedded by the same model. Recorded as the constant
-        # itself, not introspected from `encode` -- like `reasoning` above,
-        # an injected callable (a test's fake encoder, or any future
+        # itself, not introspected from `encode`: an injected callable
+        # (a test's fake encoder, or any future
         # override) exposes no identity to read back, so this names the
         # encoder the DEFAULT build path carries; a caller who injects a
         # different one is responsible for knowing it no longer matches what
