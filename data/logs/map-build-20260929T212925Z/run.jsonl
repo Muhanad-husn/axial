@@ -1,0 +1,1 @@
+{"source_id": "", "pass": "position_extract", "model": null, "status": "error", "duration_sec": 29.331092699998408, "error": "refusing to start: pid 59660 is already running this pass (data\\map\\9b796b3a6312b329-variant-z-ai-glm-5.3\\RUNNING.pid); kill it first", "prompt_tokens": null, "completion_tokens": null, "total_tokens": null, "usd": null}
