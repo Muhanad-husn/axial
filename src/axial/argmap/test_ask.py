@@ -343,3 +343,28 @@ def test_stub_encoder_env_lands_a_map_with_no_sentence_transformer(tmp_path: Pat
 
     assert first.assembled_chunk_ids == ("n1", "n2")
     assert [p.score for p in first.landed] == [p.score for p in second.landed]
+
+
+def test_load_map_relations_adds_profile_relations_once_per_pair(tmp_path: Path) -> None:
+    """Issue #878: the corridor reads `profile_relations.jsonl` beside
+    `relations.jsonl`, one row per unordered pair, `relations.jsonl` first."""
+    from axial.argmap.ask import load_map_relations
+
+    base = {"from_position_id": "pos-1", "to_position_id": "pos-2", "relation": "contests"}
+    duplicate = {"from_position_id": "pos-2", "to_position_id": "pos-1", "relation": "answers"}
+    new = {"from_position_id": "pos-3", "to_position_id": "pos-1", "relation": "extends"}
+    (tmp_path / "relations.jsonl").write_text(json.dumps(base) + "\n", encoding="utf-8")
+    (tmp_path / "profile_relations.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in (duplicate, new, new)), encoding="utf-8"
+    )
+
+    assert load_map_relations(tmp_path) == [base, new]
+
+
+def test_load_map_relations_without_a_profile_file_is_relations_jsonl(tmp_path: Path) -> None:
+    from axial.argmap.ask import load_map_relations
+
+    base = {"from_position_id": "pos-1", "to_position_id": "pos-2", "relation": "contests"}
+    (tmp_path / "relations.jsonl").write_text(json.dumps(base) + "\n", encoding="utf-8")
+
+    assert load_map_relations(tmp_path) == [base]
