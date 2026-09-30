@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from axial.argmap.ask import _load_relations, load_relation_kinds
+from axial.argmap.ask import load_map_relations, load_relation_kinds
 from axial.paths import chunk_note_path
 from axial.query.reader import source_id_from_chunk_id
 from axial.vocabulary import ASSIGNMENTS_FILENAME, ROOT_LEVEL
@@ -111,7 +111,7 @@ def write_position_pages(*, map_dir: Path, vocabulary_dir: Path, vault_dir: Path
     positions no relation touches (the isolated nodes Graph View shows)."""
     map_dir, vocabulary_dir, vault_dir = Path(map_dir), Path(vocabulary_dir), Path(vault_dir)
     positions = _read_jsonl(map_dir / "positions.jsonl")
-    relations = _load_relations(map_dir)
+    relations = load_map_relations(map_dir)
     kinds = load_relation_kinds(vocabulary_dir)
     by_chunk = {column: _chunk_categories(vocabulary_dir, column) for column in CATEGORY_COLUMNS}
 

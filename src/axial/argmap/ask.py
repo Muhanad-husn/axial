@@ -94,6 +94,7 @@ from axial.query.relations import Resolution, chunk_ids_for_name
 from axial.vocabulary import (
     ASSIGNMENTS_FILENAME,
     MANIFEST_FILENAME,
+    PROFILE_RELATIONS_FILENAME,
     RELATION_COLUMN,
     VOCABULARY_DIR,
 )
@@ -746,6 +747,28 @@ def _load_relations(outdir: Path) -> list[dict[str, Any]]:
     ]
 
 
+def load_map_relations(outdir: Path) -> list[dict[str, Any]]:
+    """`relations.jsonl` plus `profile_relations.jsonl` (issue #878), one
+    row per unordered position pair. A pair `relations.jsonl` holds keeps
+    that row; the profile file only adds pairs the neighbourhood pass never
+    related. `relate-profile` itself reads `_load_relations`, so its own
+    output never counts as already known."""
+    relations = _load_relations(outdir)
+    profile_path = outdir / PROFILE_RELATIONS_FILENAME
+    if not profile_path.is_file():
+        return relations
+    seen = {frozenset((r["from_position_id"], r["to_position_id"])) for r in relations}
+    for line in profile_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        relation = json.loads(line)
+        pair = frozenset((relation["from_position_id"], relation["to_position_id"]))
+        if pair not in seen:
+            seen.add(pair)
+            relations.append(relation)
+    return relations
+
+
 def _check_encoder(manifest: dict[str, Any], outdir: Path, encoder_model: str) -> None:
     built_with = manifest.get("encoder")
     if built_with != encoder_model:
@@ -821,7 +844,7 @@ def run_map_ask_for_brief(
     outdir = Path(map_dir) / pin
     positions, manifest = _load_map(outdir)
     _check_encoder(manifest, outdir, encoder_model)
-    relations = _load_relations(outdir)
+    relations = load_map_relations(outdir)
 
     if client is None:
         client = get_client(config_path=config_path)
