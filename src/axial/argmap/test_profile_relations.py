@@ -18,6 +18,7 @@ import pytest
 from axial.argmap.ask import MapNotBuiltError
 from axial.argmap.build import MAX_NEIGHBOURHOOD
 from axial.argmap.profile_relations import (
+    CONTEXT_GENERATOR,
     GENERATOR,
     PROFILE_MANIFEST_FILENAME,
     PROFILE_RELATIONS_FILENAME,
@@ -336,21 +337,51 @@ def test_a_shared_category_is_never_recorded_as_a_relation(tmp_path):
     assert "m1" not in row["says"]
 
 
-def test_a_relation_between_positions_that_were_not_proposed_is_dropped_and_counted(tmp_path):
+def _rows(outdir: Path) -> list[dict]:
+    text = (outdir / PROFILE_RELATIONS_FILENAME).read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines()]
+
+
+def test_a_new_cross_author_relation_between_unproposed_positions_is_kept_as_context(tmp_path):
     """a1 and a2 hold the same position category, so they are never a
-    proposed pair, but both are read with b1 in one call. If the model
-    relates them anyway, that relation is not this generator's to record."""
+    proposed pair, but both are read with b1 in one call. A relation the
+    model asserts between them anyway is kept under its own generator, so a
+    reader can weigh it apart from the proposed pairs."""
     client = _ScriptedClient([("a1", "b1", "contradicts"), ("a1", "a2", "restates")])
     encode = _encode_from({"arg a1": (1, 0), "arg a2": (0.9, 0.2), "arg b1": (1, 0.1)})
 
     outdir, manifest = _run(tmp_path, client, positions=FOUR[:3], encode=encode)
 
-    labels = [
-        json.loads(line)["relation"]
-        for line in (outdir / PROFILE_RELATIONS_FILENAME).read_text(encoding="utf-8").splitlines()
-    ]
-    assert labels == ["contradicts"]
+    by_label = {r["relation"]: r["generator"] for r in _rows(outdir)}
+    assert by_label == {"contradicts": GENERATOR, "restates": CONTEXT_GENERATOR}
+    assert manifest["counts"]["relations_asserted"] == 1
     assert manifest["counts"]["off_proposal_relations"] == 1
+    assert manifest["counts"]["context_relations"] == 1
+
+
+def test_an_unproposed_relation_within_one_author_is_dropped(tmp_path):
+    same_author = [FOUR[0], _position("a2", "ca2", "S1"), FOUR[2]]
+    client = _ScriptedClient([("a1", "b1", "contradicts"), ("a1", "a2", "restates")])
+    encode = _encode_from({"arg a1": (1, 0), "arg a2": (0.9, 0.2), "arg b1": (1, 0.1)})
+
+    outdir, manifest = _run(tmp_path, client, positions=same_author, encode=encode)
+
+    assert [r["relation"] for r in _rows(outdir)] == ["contradicts"]
+    assert manifest["counts"]["off_proposal_relations"] == 1
+    assert manifest["counts"]["context_relations"] == 0
+
+
+def test_an_unproposed_relation_the_map_already_has_is_dropped(tmp_path):
+    known = [{"from_position_id": "a2", "to_position_id": "a1", "relation": "old", "says": "s"}]
+    client = _ScriptedClient([("a1", "b1", "contradicts"), ("a1", "a2", "restates")])
+    encode = _encode_from({"arg a1": (1, 0), "arg a2": (0.9, 0.2), "arg b1": (1, 0.1)})
+
+    outdir, manifest = _run(
+        tmp_path, client, positions=FOUR[:3], encode=encode, relations=known
+    )
+
+    assert [r["relation"] for r in _rows(outdir)] == ["contradicts"]
+    assert manifest["counts"]["context_relations"] == 0
 
 
 def test_the_default_builds_files_are_not_touched(tmp_path):

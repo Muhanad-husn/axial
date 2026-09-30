@@ -75,6 +75,10 @@ from axial.vocabulary import (
 Encoder = Callable[[Sequence[str]], np.ndarray]
 
 GENERATOR = "profile"
+# A relation the model asserts between two positions read in one call but
+# never proposed as a pair: kept only when it crosses authors and is new to
+# the map, and tagged apart so a reader can weigh it separately (#858).
+CONTEXT_GENERATOR = "profile-context"
 MECHANISM_COLUMN = "mechanism"
 STANCE_COLUMN = "position"
 
