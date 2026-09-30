@@ -45,7 +45,6 @@ import numpy as np
 from axial.argmap.ask import _load_map, _load_relations
 from axial.argmap.build import (
     MAX_NEIGHBOURHOOD,
-    POSITION_RELATE_REASONING,
     RELATE_PASS_NAME,
     WORKERS,
     Neighbourhood,
@@ -61,7 +60,7 @@ from axial.argmap.vocabulary_join import (
     _read_assignment_records,
 )
 from axial.envelope import _default_envelopes_dir
-from axial.llm import LLMClient, estimate_cost, get_client
+from axial.llm import LLMClient, configured_reasoning, estimate_cost, get_client
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.pidguard import claim_single_instance
 from axial.vocabulary import (
@@ -329,7 +328,7 @@ def run_profile_relations(
                 ),
             },
             "model": model,
-            "reasoning": POSITION_RELATE_REASONING,
+            "reasoning": configured_reasoning(RELATE_PASS_NAME, config_path),
             **_accumulated_totals(prior, usage, cost, time.monotonic() - started),
         }
         (outdir / PROFILE_MANIFEST_FILENAME).write_text(
