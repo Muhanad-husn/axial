@@ -3063,6 +3063,16 @@ def _resolve_reasoning_by_pass(llm_config: dict[str, Any]) -> dict[str, bool | s
     return merged
 
 
+def configured_reasoning(
+    pass_name: str, config_path: Path = DEFAULT_PIPELINE_CONFIG_PATH
+) -> bool | str:
+    """The reasoning setting a pass is sent with, as `get_client` resolves
+    it from `config_path`. For manifests, which must record what the call
+    used rather than a copy that drifts (#875)."""
+    llm_config = _load_pipeline_llm_config(config_path)
+    return _resolve_reasoning_by_pass(llm_config).get(pass_name, False)
+
+
 def _resolve_temperature_by_pass(llm_config: dict[str, Any]) -> dict[str, float]:
     """Per-pass sampling temperature (§7.9, issue #416): mirrors
     `_resolve_reasoning_by_pass` exactly -- `config/pipeline.yaml`'s
