@@ -1,0 +1,10 @@
+config/briefs/cross/X-01.yaml
+config/briefs/cross/X-02.yaml
+config/briefs/cross/X-03.yaml
+config/briefs/cross/X-04.yaml
+config/briefs/cross/X-05.yaml
+config/briefs/cross/X-06.yaml
+config/briefs/cross/X-09.yaml
+config/briefs/cross/X-10.yaml
+config/briefs/cross/X-11.yaml
+config/briefs/cross/X-13.yaml

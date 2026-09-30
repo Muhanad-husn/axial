@@ -1,0 +1,37 @@
+== smoke: composed prefix vs books cited, mean over all OK draws of four arms
+brief  n   books_composed  top_share  effective_books  books_cited
+S-01  12    15.7    0.22     8.3    4.6 [3-6]
+S-02  11    10.5    0.32     6.2    6.7 [5-8]
+S-03  12    13.8    0.30     5.6    3.8 [3-5]
+S-04  10    18.9    0.25     9.5    1.1 [1-2]
+S-05  12    16.6    0.30     7.1    1.5 [1-3]
+mean composed count 60
+
+== candidates, offline assembly cut at the mean composed count
+id    door     books_composed  top_share  effective_books
+X-01  proxy        13    0.20     7.8
+X-01  request      13    0.20     7.6
+X-02  proxy        17    0.30     6.4
+X-02  request       9    0.57     2.7
+X-03  proxy        12    0.27     5.9
+X-03  request      11    0.20     7.1
+X-04  proxy        14    0.33     4.9
+X-04  request      12    0.48     3.5
+X-05  proxy        14    0.28     5.7
+X-05  request       9    0.45     3.8
+X-06  proxy        13    0.23     7.4
+X-06  request      10    0.22     7.3
+X-07  proxy        17    0.27     7.1
+X-07  request      17    0.23     7.2
+X-08  proxy        15    0.35     4.9
+X-08  request      20    0.27     8.1
+X-09  proxy        16    0.20     8.7
+X-09  request      13    0.32     5.2
+X-10  proxy        19    0.18    10.9
+X-10  request      16    0.18     9.8
+X-11  proxy        17    0.20     9.5
+X-11  request      12    0.32     5.1
+X-12  proxy        20    0.12    12.6
+X-12  request      18    0.15    12.6
+X-13  proxy        20    0.27     8.3
+X-13  request      13    0.37     4.4

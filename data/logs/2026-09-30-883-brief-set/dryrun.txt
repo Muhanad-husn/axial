@@ -1,0 +1,35 @@
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 2750.71it/s]
+== smoke briefs, real door asks from #879 arm C (first draw on disk)
+S-01  real     landed  24 (10 books)  corridor  36 (17 books,  9 new)  conflict  3  profile-only 10
+S-02  real     landed  12 ( 7 books)  corridor  22 (11 books,  5 new)  conflict  2  profile-only  4
+S-03  real     landed  13 ( 8 books)  corridor  25 (12 books,  5 new)  conflict  3  profile-only  2
+S-04  real     landed  27 (13 books)  corridor  45 (24 books, 11 new)  conflict  8  profile-only  8
+S-05  real     landed  20 ( 9 books)  corridor  35 (17 books,  9 new)  conflict  5  profile-only  4
+
+== candidates
+X-01  proxy    landed  14 ( 7 books)  corridor  24 (14 books,  8 new)  conflict  2  profile-only  6
+X-01  request  landed  24 (10 books)  corridor  30 (16 books,  7 new)  conflict  2  profile-only  3 PASS
+X-02  proxy    landed  18 (14 books)  corridor  30 (14 books,  6 new)  conflict  5  profile-only  5
+X-02  request  landed  24 ( 7 books)  corridor  29 (11 books,  6 new)  conflict  6  profile-only  2 PASS
+X-03  proxy    landed  23 (11 books)  corridor  32 (11 books,  2 new)  conflict  7  profile-only  4
+X-03  request  landed  24 (10 books)  corridor  32 (10 books,  1 new)  conflict  5  profile-only  4 PASS
+X-04  proxy    landed  19 ( 8 books)  corridor  37 (17 books, 10 new)  conflict  2  profile-only  7
+X-04  request  landed  24 ( 6 books)  corridor  30 (15 books,  9 new)  conflict  4  profile-only  7 PASS
+X-05  proxy    landed  20 ( 8 books)  corridor  39 (14 books,  8 new)  conflict  7  profile-only  1
+X-05  request  landed  24 ( 7 books)  corridor  38 ( 9 books,  3 new)  conflict  8  profile-only  3 PASS
+X-06  proxy    landed  22 (13 books)  corridor  54 (13 books,  2 new)  conflict  4  profile-only  9
+X-06  request  landed  24 (10 books)  corridor  44 (12 books,  3 new)  conflict  6  profile-only  6 PASS
+X-07  proxy    landed  17 ( 7 books)  corridor  40 (19 books, 12 new)  conflict  8  profile-only  4
+X-07  request  landed  24 (14 books)  corridor  42 (18 books,  7 new)  conflict  5  profile-only  7 PASS
+X-08  proxy    landed  17 ( 7 books)  corridor  35 (16 books, 10 new)  conflict  3  profile-only  3
+X-08  request  landed  24 ( 9 books)  corridor  40 (21 books, 13 new)  conflict  5  profile-only  6 PASS
+X-09  proxy    landed  17 ( 9 books)  corridor  34 (17 books,  8 new)  conflict  5  profile-only 10
+X-09  request  landed  24 ( 9 books)  corridor  33 (11 books,  4 new)  conflict  4  profile-only  8 PASS
+X-10  proxy    landed  21 (12 books)  corridor  41 (19 books,  8 new)  conflict  4  profile-only 10
+X-10  request  landed  24 (11 books)  corridor  71 (24 books, 14 new)  conflict  2  profile-only 14 PASS
+X-11  proxy    landed  20 (12 books)  corridor  41 (23 books, 13 new)  conflict  5  profile-only  9
+X-11  request  landed  24 ( 9 books)  corridor  45 (14 books,  8 new)  conflict  3  profile-only  6 PASS
+X-12  proxy    landed  24 (11 books)  corridor  46 (23 books, 13 new)  conflict  8  profile-only  6
+X-12  request  landed  24 (12 books)  corridor  43 (21 books,  9 new)  conflict  4  profile-only  9 PASS
+X-13  proxy    landed  20 (12 books)  corridor  57 (21 books, 12 new)  conflict  6  profile-only 12
+X-13  request  landed  24 ( 5 books)  corridor  19 (14 books, 11 new)  conflict  3  profile-only  6 PASS

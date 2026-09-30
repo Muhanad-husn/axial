@@ -1,0 +1,181 @@
+[
+  {
+    "id": "X-01",
+    "region": "elcheroth, mann, hall, malesevic: genocide",
+    "case": "Comparative: genocide and mass killing in the twentieth century",
+    "request": "Was the Holocaust the work of ideologically committed perpetrators, or the product of modern bureaucratic organisation and state infrastructural power, and what does the answer imply for explaining genocide as a modern phenomenon?",
+    "asks": [
+      "The Holocaust was driven by active, ideologically committed perpetrators rather than by passive obedience or bureaucratic routine.",
+      "Genocide is a distinctively modern phenomenon made possible by the bureaucratic organisation and infrastructural power of the modern state.",
+      "Genocide does not follow directly from radical nationalist ideology but emerges contingently from failed policies and shifting geopolitical conditions.",
+      "Mass killing arises when democracy is perverted by organic nationalism that equates the people with one ethnic group.",
+      "Ordinary people take part in mass killing because they conform to authority and social pressure, not because they hold the ideology."
+    ]
+  },
+  {
+    "id": "X-02",
+    "region": "kalyvas, malesevic, elcheroth, wimmer: civil-war violence",
+    "case": "Comparative: violence in civil wars",
+    "request": "Is violence against civilians in civil war a strategic response to the problems of territorial control, or is it driven by ideology and by elites who mobilise existing narratives and pre-war cleavages?",
+    "asks": [
+      "Indiscriminate and selective violence in civil war is instrumental, shaped by information scarcity and the structure of territorial control rather than by ideology.",
+      "Organised violence is a product of ideology and the organisational power of states and movements rather than of innate aggression or local strategy.",
+      "Elites incite and orchestrate violence by invoking existing narratives and historical legacies, and accounts of spontaneous violence are political devices.",
+      "Polarisation and cleavages in civil war are produced by the conflict itself rather than being fixed pre-war conditions.",
+      "War-generated solidarity depends on long-term pre-war structural processes such as ideologisation and bureaucratisation.",
+      "Wars are caused by domestic struggles over exclusion from state power rather than by economic motives."
+    ]
+  },
+  {
+    "id": "X-03",
+    "region": "hall, mann, malesevic: the European miracle",
+    "case": "Comparative: Europe and China before industrialisation",
+    "request": "Did Europe overtake China and India because of deep-rooted internal dynamics, such as multipolar competition and political liberties, or because of contingent advantages such as coal and colonies?",
+    "asks": [
+      "Europe overtook China only because of contingent advantages such as accessible coal and New World colonies, not a deep-rooted European dynamic.",
+      "The European breakthrough was driven by deep-rooted internal dynamics that predate the industrial revolution.",
+      "European dynamism came from competition among many states regulated by the shared normative solidarity of Christendom.",
+      "Political and ideological liberties in Europe enabled a shift from predation to production.",
+      "In the eighteenth century the core regions of China and India matched leading European regions in consumption, production and trade.",
+      "The comparative method cannot isolate the causes of European dynamism because there are too few comparable civilisations."
+    ]
+  },
+  {
+    "id": "X-04",
+    "region": "ayubi, mann, batatu, wittfogel: oriental despotism",
+    "case": "Comparative: the state in the Middle East from ancient empires to the modern era",
+    "request": "Does the theory of oriental despotism, a centralised state born of irrigation, explain the strength of states in the Middle East, or did early Mesopotamian civilisation rest on decentralised, overlapping power networks?",
+    "asks": [
+      "The centralised despotic state in the Orient arose from the need to manage large-scale irrigation works.",
+      "In the Asiatic mode of production the state dominates the economy and extracts surplus through ideological legitimation.",
+      "Early Mesopotamian civilisation was a federal unity of autonomous city-states coordinated by shared culture rather than political centralisation.",
+      "Irrigation agriculture produced overlapping power networks and multi-power-actor civilisations rather than a single despotic centre.",
+      "Functionalist theories of the state that derive it from economic needs are inadequate.",
+      "The modern Arab state is fierce but not strong: it relies on coercion yet lacks infrastructural capacity."
+    ]
+  },
+  {
+    "id": "X-05",
+    "region": "gelvin, beshara, white, wedeen, ayubi: Syrian and Arab nationalism",
+    "case": "Syria, 1880-1946: nationalism before and under the French Mandate",
+    "request": "Was Syrian and Arab nationalism before 1946 the creation of an intellectual elite, or a contested popular field in which rival groups, including minorities, built competing national visions?",
+    "asks": [
+      "Historians of Arab nationalism have imposed an elite intellectual history on the movement and ignored its popular and divided character.",
+      "Nahda intellectuals recoded religious and confessional identities into a secular national identity.",
+      "Post-Ottoman Syrian nationalism was a plural and contested field in which rival organisations constructed competing national visions.",
+      "Syrian nationalism defined Syria as a distinct non-Arab nation grounded in geography and history, opposing Arab nationalism.",
+      "Minority autonomist movements under the Mandate combined identity claims with concrete political demands against both Syrian nationalism and French policy.",
+      "The supra-state Arab nation is a political myth, while territorial identities are historical realities."
+    ]
+  },
+  {
+    "id": "X-06",
+    "region": "ayubi, hinnebusch, heydemann, batatu: the Ba'th political economy",
+    "case": "Syria under the Ba'th, 1963-2010",
+    "request": "Was the Ba'thist regime in Syria a genuinely socialist project, or a populist-corporatist state that used socialist rhetoric and later controlled liberalisation to keep political control and reward its clients?",
+    "asks": [
+      "Radical Arab regimes were not genuinely socialist but populist-corporatist regimes that used socialist rhetoric for mobilisation and control.",
+      "The Ba'th party's ideology evolved into a radical socialist, Leninist state-building doctrine after 1963.",
+      "Syria's economic liberalisation under the Ba'th was a state-controlled strategy to maintain political leverage rather than genuine reform.",
+      "Post-independence Syria showed a viable national-capitalist road to development before the Ba'th.",
+      "Clientelism, patronage and corruption have been integral to Syrian governance to secure loyalty and co-opt elites.",
+      "Land reform and state-led development broke the power of the landed notables and incorporated the peasantry into the regime."
+    ]
+  },
+  {
+    "id": "X-07",
+    "region": "jackson, zaum, caspersen, kandiah: sovereignty and statebuilding",
+    "case": "International statebuilding and sovereignty after decolonisation",
+    "request": "Is international statebuilding a return of the standard of civilisation, or a response to the failure of quasi-states that sovereignty granted without capacity, and how far do the interests of the intervening powers explain its outcomes?",
+    "asks": [
+      "Decolonisation created quasi-states that hold juridical sovereignty without the empirical capacity to govern.",
+      "The standard of civilisation that legitimises international statebuilding is Western and reflects liberal values.",
+      "The international community reflects a solidarist society with morally substantive shared values.",
+      "External statebuilding is driven by the intervening parties' own interests rather than by the sovereignty norms they profess.",
+      "Sovereignty is socially constructed and contested rather than absolute and exclusive.",
+      "Successful statebuilding depends on including local actors and their norms rather than applying a technocratic template."
+    ]
+  },
+  {
+    "id": "X-08",
+    "region": "caspersen, jackson, white, malesevic: unrecognised states and peripheries",
+    "case": "Comparative: unrecognised states and separatist peripheries",
+    "request": "Are unrecognised states and separatist peripheries a security threat and a sign of state failure, or can they build real internal sovereignty, and how do parent states and the international system respond to them?",
+    "asks": [
+      "Unrecognised states can build genuine internal sovereignty and legitimacy without external recognition.",
+      "The security threats attributed to unrecognised states are overstated; the main danger is renewed conflict with the parent state.",
+      "States treat separatist challenges in the periphery as threats to central authority and respond unsympathetically.",
+      "The international system accommodates quasi-states that are recognised but lack empirical statehood.",
+      "Sovereignty is a relational and contested condition rather than an absolute one."
+    ]
+  },
+  {
+    "id": "X-09",
+    "region": "mann, malesevic, hall: war and popular nationalism",
+    "case": "Europe, 1870-1945: war, citizenship and nationalism",
+    "request": "Did the First World War turn latent national sentiment into aggressive popular nationalism, or were European societies already nationalist and militarist before 1914, and what did the wars do to citizenship and the welfare state?",
+    "asks": [
+      "The mass mobilisation of the First World War transformed nationalism from a latent sentiment into aggressive popular nationalism.",
+      "Before 1914 aggressive nationalism and the glorification of war were dominant values among the middle classes and elites while workers and peasants stayed indifferent.",
+      "Advanced countries achieved popular citizenship through reform rather than revolution before 1914.",
+      "The level of wartime sacrifice determined the post-war welfare state.",
+      "After 1945 decolonisation, prosperity and ethnic homogeneity made European nationalism banal and peaceful.",
+      "Nationalism is the principal ideological glue of organised violence in modernity."
+    ]
+  },
+  {
+    "id": "X-10",
+    "region": "hall, mann, malesevic: sources of social power",
+    "case": "Theory: the sources of social power",
+    "request": "Is military power a separate source of social power, or a component of political power, and is social order sustained mainly by coercion or by shared meanings and ideology?",
+    "asks": [
+      "Military power should not be a separate source of social power because it is part of political power grounded in organised coercion.",
+      "The four sources of social power are distinct and cannot be reduced to one another.",
+      "No single power source is ultimately decisive in history.",
+      "Social order is sustained mainly by shared meanings that make the social world seem natural, not by coercion.",
+      "Weak rulers use ideology to legitimise their rule when they lack material power.",
+      "Coercive organisational power has increased cumulatively over the last twelve thousand years."
+    ]
+  },
+  {
+    "id": "X-11",
+    "region": "batatu, gellner, hinnebusch, ayubi: tribes and clans",
+    "case": "The Arab Middle East: tribes, clans and the modern state",
+    "request": "Has the modern state dissolved tribal and clan loyalties in the Arab Middle East, or have tribes survived in transformed form as patronage networks and as part of the regime's own power structure?",
+    "asks": [
+      "Traditional clan structures are weakening because of economic change, migrant earnings and education.",
+      "Tribal-government relations persisted in transformed form after independence despite the formal abolition of tribal institutions.",
+      "State expansion replaced the symmetrical segmentary kinship system with an asymmetrical patronage system.",
+      "Kinship and sectarian solidarity shaped the regime's power structure.",
+      "Rural risings and tribal conflicts are modern phenomena integrated into national politics rather than atavistic revivals.",
+      "Capitalism dissolved tribal and kinship ties into class and clientelist relations."
+    ]
+  },
+  {
+    "id": "X-12",
+    "region": "malesevic, mann, smith, white: nation-state homogenisation",
+    "case": "Theory: the nation-state, homogenisation and transnationalism",
+    "request": "Are modern nation-states built by state-led homogenisation of populations, or do nations have older ethnic roots, and is transnational mobility now undermining the territorial nation-state?",
+    "asks": [
+      "Between the 1870s and 1960s states organised family, community and identity into a bonded national community.",
+      "Nations formed along two routes: bureaucratic incorporation by state elites or vernacular mobilisation by an intelligentsia.",
+      "Modernist theories fail because they treat the pre-modern world as a blank slate.",
+      "The concepts of minority and majority only became meaningful with the modern nation-state.",
+      "Transnational connections enable non-territorial identities and undermine state-led homogenisation.",
+      "National identities are not agents; only individuals and organisations act."
+    ]
+  },
+  {
+    "id": "X-13",
+    "region": "wedeen, batatu, gelvin, mann: authoritarian rule in Syria",
+    "case": "Syria under the Asads, 1970-2011",
+    "request": "How did the Asad regime hold power: through coercion, through patronage and communal loyalty, or through ideological and affective means such as the cult of personality and the consumer comforts of neoliberal autocracy?",
+    "asks": [
+      "The Syrian regime's power is sustained through ideological manipulation and interpellation, not just coercion.",
+      "Neoliberal autocracy is sustained through consumerist fantasies and affective investments in security rather than coercion alone.",
+      "Clientelism and patronage secure loyalty and co-opt elites.",
+      "Communal and kin loyalties among the Alawis left their imprint on Asad's power structure.",
+      "Authoritarian rulers maintain legitimacy through institutional control, elite co-optation, coercive policing and nationalist rhetoric."
+    ]
+  }
+]

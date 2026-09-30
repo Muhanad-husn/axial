@@ -1,0 +1,2249 @@
+{
+  "arm": "map",
+  "briefs": [
+    {
+      "brief_id": "0fe6704e15a008b0",
+      "brief_path": "config/briefs/cross/X-01.yaml",
+      "brief_stem": "X-01",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 8950,
+            "prompt_tokens": 831,
+            "total_tokens": 9781,
+            "usd": 0.010763508
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3116,
+            "prompt_tokens": 29288,
+            "total_tokens": 32404,
+            "usd": 0.042849003999999996
+          },
+          "interrogate": {
+            "completion_tokens": 6319,
+            "prompt_tokens": 1737,
+            "total_tokens": 8056,
+            "usd": 0.010302453
+          },
+          "synthesize": {
+            "completion_tokens": 12390,
+            "prompt_tokens": 306029,
+            "total_tokens": 318419,
+            "usd": 0.0913748
+          }
+        },
+        "total_tokens": 368660,
+        "total_usd": 0.155289765
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "0fe6704e15a008b0",
+          "brief_path": "config/briefs/cross/X-01.yaml",
+          "brief_stem": "X-01",
+          "distinct_sources_cited": 4,
+          "draw_index": 0,
+          "latency_seconds": 125.11124490000657,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw0\\0fe6704e15a008b0.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw0\\runs\\0fe6704e15a008b0.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "0fe6704e15a008b0",
+          "brief_path": "config/briefs/cross/X-01.yaml",
+          "brief_stem": "X-01",
+          "distinct_sources_cited": 4,
+          "draw_index": 1,
+          "latency_seconds": 154.5527737000084,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw1\\0fe6704e15a008b0.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw1\\runs\\0fe6704e15a008b0.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "0fe6704e15a008b0",
+          "brief_path": "config/briefs/cross/X-01.yaml",
+          "brief_stem": "X-01",
+          "distinct_sources_cited": 4,
+          "draw_index": 2,
+          "latency_seconds": 131.87670769999386,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw2\\0fe6704e15a008b0.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-01\\draw2\\runs\\0fe6704e15a008b0.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 31,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 9,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 30,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 1,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 31,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 16,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 9,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 5,
+            "b": 3,
+            "c": 2
+          },
+          {
+            "a": 5,
+            "b": 4,
+            "c": 2
+          },
+          {
+            "a": 6,
+            "b": 2,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "abfb75c79ca3d4ec",
+      "brief_path": "config/briefs/cross/X-02.yaml",
+      "brief_stem": "X-02",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 5871,
+            "prompt_tokens": 819,
+            "total_tokens": 6690,
+            "usd": 0.0070651080000000005
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3700,
+            "prompt_tokens": 59135,
+            "total_tokens": 62835,
+            "usd": 0.071614869912
+          },
+          "interrogate": {
+            "completion_tokens": 4429,
+            "prompt_tokens": 1725,
+            "total_tokens": 6154,
+            "usd": 0.00647707838
+          },
+          "synthesize": {
+            "completion_tokens": 9384,
+            "prompt_tokens": 302548,
+            "total_tokens": 311932,
+            "usd": 0.08689735
+          }
+        },
+        "total_tokens": 387611,
+        "total_usd": 0.172054406292
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "abfb75c79ca3d4ec",
+          "brief_path": "config/briefs/cross/X-02.yaml",
+          "brief_stem": "X-02",
+          "distinct_sources_cited": 4,
+          "draw_index": 0,
+          "latency_seconds": 74.54311899997992,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw0\\abfb75c79ca3d4ec.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw0\\runs\\abfb75c79ca3d4ec.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "abfb75c79ca3d4ec",
+          "brief_path": "config/briefs/cross/X-02.yaml",
+          "brief_stem": "X-02",
+          "distinct_sources_cited": 1,
+          "draw_index": 1,
+          "latency_seconds": 138.654827499995,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw1\\abfb75c79ca3d4ec.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw1\\runs\\abfb75c79ca3d4ec.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "abfb75c79ca3d4ec",
+          "brief_path": "config/briefs/cross/X-02.yaml",
+          "brief_stem": "X-02",
+          "distinct_sources_cited": 2,
+          "draw_index": 2,
+          "latency_seconds": 94.65514320001239,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw2\\abfb75c79ca3d4ec.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-02\\draw2\\runs\\abfb75c79ca3d4ec.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 25,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 16,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 24,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 1,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 25,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 16,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 2,
+            "b": 4,
+            "c": 2
+          },
+          {
+            "a": 0,
+            "b": 6,
+            "c": 2
+          },
+          {
+            "a": 1,
+            "b": 6,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "77a98af50e80d795",
+      "brief_path": "config/briefs/cross/X-03.yaml",
+      "brief_stem": "X-03",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 6756,
+            "prompt_tokens": 816,
+            "total_tokens": 7572,
+            "usd": 0.008126208
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3428,
+            "prompt_tokens": 56702,
+            "total_tokens": 60130,
+            "usd": 0.09066263
+          },
+          "interrogate": {
+            "completion_tokens": 6292,
+            "prompt_tokens": 1722,
+            "total_tokens": 8014,
+            "usd": 0.00790649085
+          },
+          "synthesize": {
+            "completion_tokens": 12948,
+            "prompt_tokens": 307553,
+            "total_tokens": 320501,
+            "usd": 0.0924254
+          }
+        },
+        "total_tokens": 396217,
+        "total_usd": 0.19912072884999998
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "77a98af50e80d795",
+          "brief_path": "config/briefs/cross/X-03.yaml",
+          "brief_stem": "X-03",
+          "distinct_sources_cited": 8,
+          "draw_index": 0,
+          "latency_seconds": 118.77082639999571,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw0\\77a98af50e80d795.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw0\\runs\\77a98af50e80d795.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "77a98af50e80d795",
+          "brief_path": "config/briefs/cross/X-03.yaml",
+          "brief_stem": "X-03",
+          "distinct_sources_cited": 6,
+          "draw_index": 1,
+          "latency_seconds": 130.3123978000076,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw1\\77a98af50e80d795.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw1\\runs\\77a98af50e80d795.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "77a98af50e80d795",
+          "brief_path": "config/briefs/cross/X-03.yaml",
+          "brief_stem": "X-03",
+          "distinct_sources_cited": 7,
+          "draw_index": 2,
+          "latency_seconds": 138.82846049999353,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw2\\77a98af50e80d795.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-03\\draw2\\runs\\77a98af50e80d795.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 28,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 16,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 8,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 22,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 6,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 28,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": false,
+              "strictly_ordered": false,
+              "threshold": 0.15,
+              "value": 0.275
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 4,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 16,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": false,
+              "threshold": 0.9,
+              "value": 0.6666666666666666
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 0,
+            "b": 7,
+            "c": 2
+          },
+          {
+            "a": 4,
+            "b": 3,
+            "c": 3
+          },
+          {
+            "a": 0,
+            "b": 6,
+            "c": 3
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "d405d2abbc0395aa",
+      "brief_path": "config/briefs/cross/X-04.yaml",
+      "brief_stem": "X-04",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 6239,
+            "prompt_tokens": 858,
+            "total_tokens": 7097,
+            "usd": 0.007518408
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3565,
+            "prompt_tokens": 46288,
+            "total_tokens": 49853,
+            "usd": 0.08032792
+          },
+          "interrogate": {
+            "completion_tokens": 8015,
+            "prompt_tokens": 1843,
+            "total_tokens": 9858,
+            "usd": 0.019676155799999998
+          },
+          "synthesize": {
+            "completion_tokens": 10508,
+            "prompt_tokens": 306810,
+            "total_tokens": 317318,
+            "usd": 0.08931164999999999
+          }
+        },
+        "total_tokens": 384126,
+        "total_usd": 0.19683413379999998
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "d405d2abbc0395aa",
+          "brief_path": "config/briefs/cross/X-04.yaml",
+          "brief_stem": "X-04",
+          "distinct_sources_cited": 4,
+          "draw_index": 0,
+          "latency_seconds": 127.04360050000832,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw0\\d405d2abbc0395aa.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw0\\runs\\d405d2abbc0395aa.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "d405d2abbc0395aa",
+          "brief_path": "config/briefs/cross/X-04.yaml",
+          "brief_stem": "X-04",
+          "distinct_sources_cited": 3,
+          "draw_index": 1,
+          "latency_seconds": 92.18566049999208,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw1\\d405d2abbc0395aa.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw1\\runs\\d405d2abbc0395aa.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "d405d2abbc0395aa",
+          "brief_path": "config/briefs/cross/X-04.yaml",
+          "brief_stem": "X-04",
+          "distinct_sources_cited": 3,
+          "draw_index": 2,
+          "latency_seconds": 127.4115657999937,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw2\\d405d2abbc0395aa.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-04\\draw2\\runs\\d405d2abbc0395aa.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 40,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 7,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 7,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 38,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 2,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 40,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 26,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 7,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 11,
+            "b": 2,
+            "c": 2
+          },
+          {
+            "a": 7,
+            "b": 2,
+            "c": 2
+          },
+          {
+            "a": 8,
+            "b": 3,
+            "c": 3
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "63bb6e587de2e35b",
+      "brief_path": "config/briefs/cross/X-05.yaml",
+      "brief_stem": "X-05",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 8256,
+            "prompt_tokens": 840,
+            "total_tokens": 9096,
+            "usd": 0.009933408
+          },
+          "counter_position_generate": {
+            "completion_tokens": 6549,
+            "prompt_tokens": 40450,
+            "total_tokens": 46999,
+            "usd": 0.08512304
+          },
+          "interrogate": {
+            "completion_tokens": 5850,
+            "prompt_tokens": 1749,
+            "total_tokens": 7599,
+            "usd": 0.0040229993700000004
+          },
+          "synthesize": {
+            "completion_tokens": 12730,
+            "prompt_tokens": 300956,
+            "total_tokens": 313686,
+            "usd": 0.09051455
+          }
+        },
+        "total_tokens": 377380,
+        "total_usd": 0.18959399737
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "63bb6e587de2e35b",
+          "brief_path": "config/briefs/cross/X-05.yaml",
+          "brief_stem": "X-05",
+          "distinct_sources_cited": 3,
+          "draw_index": 0,
+          "latency_seconds": 121.02111030000378,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw0\\63bb6e587de2e35b.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw0\\runs\\63bb6e587de2e35b.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "63bb6e587de2e35b",
+          "brief_path": "config/briefs/cross/X-05.yaml",
+          "brief_stem": "X-05",
+          "distinct_sources_cited": 3,
+          "draw_index": 1,
+          "latency_seconds": 112.95656029999373,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw1\\63bb6e587de2e35b.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw1\\runs\\63bb6e587de2e35b.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "63bb6e587de2e35b",
+          "brief_path": "config/briefs/cross/X-05.yaml",
+          "brief_stem": "X-05",
+          "distinct_sources_cited": 3,
+          "draw_index": 2,
+          "latency_seconds": 103.06691720001982,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw2\\63bb6e587de2e35b.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-05\\draw2\\runs\\63bb6e587de2e35b.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 39,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 9,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 38,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 1,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 39,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 24,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 9,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 1,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 9,
+            "b": 2,
+            "c": 2
+          },
+          {
+            "a": 7,
+            "b": 3,
+            "c": 2
+          },
+          {
+            "a": 8,
+            "b": 4,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "d4f687872d176b87",
+      "brief_path": "config/briefs/cross/X-06.yaml",
+      "brief_stem": "X-06",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 8853,
+            "prompt_tokens": 843,
+            "total_tokens": 9696,
+            "usd": 0.010650708
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3936,
+            "prompt_tokens": 42733,
+            "total_tokens": 46669,
+            "usd": 0.050812720000000006
+          },
+          "interrogate": {
+            "completion_tokens": 6871,
+            "prompt_tokens": 1752,
+            "total_tokens": 8623,
+            "usd": 0.00449425302
+          },
+          "synthesize": {
+            "completion_tokens": 13064,
+            "prompt_tokens": 315167,
+            "total_tokens": 328231,
+            "usd": 0.0944681
+          }
+        },
+        "total_tokens": 393219,
+        "total_usd": 0.16042578102
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "d4f687872d176b87",
+          "brief_path": "config/briefs/cross/X-06.yaml",
+          "brief_stem": "X-06",
+          "distinct_sources_cited": 5,
+          "draw_index": 0,
+          "latency_seconds": 118.67029239999829,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw0\\d4f687872d176b87.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw0\\runs\\d4f687872d176b87.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "d4f687872d176b87",
+          "brief_path": "config/briefs/cross/X-06.yaml",
+          "brief_stem": "X-06",
+          "distinct_sources_cited": 4,
+          "draw_index": 1,
+          "latency_seconds": 135.58183320000535,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw1\\d4f687872d176b87.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw1\\runs\\d4f687872d176b87.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "d4f687872d176b87",
+          "brief_path": "config/briefs/cross/X-06.yaml",
+          "brief_stem": "X-06",
+          "distinct_sources_cited": 5,
+          "draw_index": 2,
+          "latency_seconds": 128.8713604999939,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw2\\d4f687872d176b87.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-06\\draw2\\runs\\d4f687872d176b87.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 36,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 11,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 34,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 2,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 36,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 19,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 11,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "failing_brief_ids": [
+                "d4f687872d176b87"
+              ],
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": false,
+              "threshold": 0.95,
+              "value": 0.6666666666666666
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 2,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 6,
+            "b": 4,
+            "c": 2
+          },
+          {
+            "a": 9,
+            "b": 2,
+            "c": 2
+          },
+          {
+            "a": 4,
+            "b": 5,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "9b677262d2d119f4",
+      "brief_path": "config/briefs/cross/X-09.yaml",
+      "brief_stem": "X-09",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 6250,
+            "prompt_tokens": 852,
+            "total_tokens": 7102,
+            "usd": 0.007529808
+          },
+          "counter_position_generate": {
+            "completion_tokens": 4217,
+            "prompt_tokens": 48598,
+            "total_tokens": 52815,
+            "usd": 0.086592
+          },
+          "interrogate": {
+            "completion_tokens": 8400,
+            "prompt_tokens": 1837,
+            "total_tokens": 10237,
+            "usd": 0.018673611399999998
+          },
+          "synthesize": {
+            "completion_tokens": 12272,
+            "prompt_tokens": 305601,
+            "total_tokens": 317873,
+            "usd": 0.0911262
+          }
+        },
+        "total_tokens": 388027,
+        "total_usd": 0.2039216194
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "9b677262d2d119f4",
+          "brief_path": "config/briefs/cross/X-09.yaml",
+          "brief_stem": "X-09",
+          "distinct_sources_cited": 4,
+          "draw_index": 0,
+          "latency_seconds": 107.9458583999949,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw0\\9b677262d2d119f4.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw0\\runs\\9b677262d2d119f4.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "9b677262d2d119f4",
+          "brief_path": "config/briefs/cross/X-09.yaml",
+          "brief_stem": "X-09",
+          "distinct_sources_cited": 5,
+          "draw_index": 1,
+          "latency_seconds": 85.24416410000413,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw1\\9b677262d2d119f4.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw1\\runs\\9b677262d2d119f4.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "9b677262d2d119f4",
+          "brief_path": "config/briefs/cross/X-09.yaml",
+          "brief_stem": "X-09",
+          "distinct_sources_cited": 4,
+          "draw_index": 2,
+          "latency_seconds": 199.20649300000514,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw2\\9b677262d2d119f4.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-09\\draw2\\runs\\9b677262d2d119f4.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 41,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 12,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 40,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 1,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 41,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 23,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 0.9565217391304348
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 12,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 2,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 9,
+            "b": 3,
+            "c": 2
+          },
+          {
+            "a": 6,
+            "b": 6,
+            "c": 2
+          },
+          {
+            "a": 8,
+            "b": 3,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "72241bdb2c7edb72",
+      "brief_path": "config/briefs/cross/X-10.yaml",
+      "brief_stem": "X-10",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 6559,
+            "prompt_tokens": 804,
+            "total_tokens": 7363,
+            "usd": 0.0061125220000000004
+          },
+          "counter_position_generate": {
+            "completion_tokens": 3216,
+            "prompt_tokens": 56571,
+            "total_tokens": 59787,
+            "usd": 0.09334980000000001
+          },
+          "interrogate": {
+            "completion_tokens": 7771,
+            "prompt_tokens": 1753,
+            "total_tokens": 9524,
+            "usd": 0.020545447249999998
+          },
+          "synthesize": {
+            "completion_tokens": 8837,
+            "prompt_tokens": 293525,
+            "total_tokens": 302362,
+            "usd": 0.08398520000000001
+          }
+        },
+        "total_tokens": 379036,
+        "total_usd": 0.20399296925000002
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "72241bdb2c7edb72",
+          "brief_path": "config/briefs/cross/X-10.yaml",
+          "brief_stem": "X-10",
+          "distinct_sources_cited": 10,
+          "draw_index": 0,
+          "latency_seconds": 134.55848550001974,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw0\\72241bdb2c7edb72.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw0\\runs\\72241bdb2c7edb72.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "72241bdb2c7edb72",
+          "brief_path": "config/briefs/cross/X-10.yaml",
+          "brief_stem": "X-10",
+          "distinct_sources_cited": 7,
+          "draw_index": 1,
+          "latency_seconds": 121.00830519999727,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw1\\72241bdb2c7edb72.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw1\\runs\\72241bdb2c7edb72.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "72241bdb2c7edb72",
+          "brief_path": "config/briefs/cross/X-10.yaml",
+          "brief_stem": "X-10",
+          "distinct_sources_cited": 5,
+          "draw_index": 2,
+          "latency_seconds": 93.0946438999963,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw2\\72241bdb2c7edb72.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-10\\draw2\\runs\\72241bdb2c7edb72.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 30,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "flagged_claim_ids": [
+                "fb85a02e8c11b529"
+              ],
+              "metric": "b_seam_mislabel_rate",
+              "n": 12,
+              "passed": false,
+              "threshold": 0.05,
+              "value": 0.08333333333333333
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 10,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 30,
+                  "observed": 1.0,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 30,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.15000000000000002
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 8,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 12,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "failing_brief_ids": [
+                "72241bdb2c7edb72"
+              ],
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": false,
+              "threshold": 0.95,
+              "value": 0.6666666666666666
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 2,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 3,
+            "b": 3,
+            "c": 4
+          },
+          {
+            "a": 1,
+            "b": 5,
+            "c": 4
+          },
+          {
+            "a": 4,
+            "b": 4,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "90166d7231facdf7",
+      "brief_path": "config/briefs/cross/X-11.yaml",
+      "brief_stem": "X-11",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 8990,
+            "prompt_tokens": 834,
+            "total_tokens": 9824,
+            "usd": 0.0041157191999999995
+          },
+          "counter_position_generate": {
+            "completion_tokens": 8635,
+            "prompt_tokens": 24602,
+            "total_tokens": 33237,
+            "usd": 0.05396577856
+          },
+          "interrogate": {
+            "completion_tokens": 4700,
+            "prompt_tokens": 1740,
+            "total_tokens": 6440,
+            "usd": 0.007151400700000001
+          },
+          "synthesize": {
+            "completion_tokens": 9038,
+            "prompt_tokens": 311777,
+            "total_tokens": 320815,
+            "usd": 0.0887894
+          }
+        },
+        "total_tokens": 370316,
+        "total_usd": 0.15402229846
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "90166d7231facdf7",
+          "brief_path": "config/briefs/cross/X-11.yaml",
+          "brief_stem": "X-11",
+          "distinct_sources_cited": 4,
+          "draw_index": 0,
+          "latency_seconds": 154.04096909999498,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw0\\90166d7231facdf7.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw0\\runs\\90166d7231facdf7.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "90166d7231facdf7",
+          "brief_path": "config/briefs/cross/X-11.yaml",
+          "brief_stem": "X-11",
+          "distinct_sources_cited": 4,
+          "draw_index": 1,
+          "latency_seconds": 155.39260829999694,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw1\\90166d7231facdf7.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw1\\runs\\90166d7231facdf7.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "90166d7231facdf7",
+          "brief_path": "config/briefs/cross/X-11.yaml",
+          "brief_stem": "X-11",
+          "distinct_sources_cited": 6,
+          "draw_index": 2,
+          "latency_seconds": 125.86929360000067,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw2\\90166d7231facdf7.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-11\\draw2\\runs\\90166d7231facdf7.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 27,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 8,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 26,
+                  "observed": 0.9615384615384616,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 1,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 27,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.11153846153846159
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 13,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 8,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": false,
+              "threshold": 0.9,
+              "value": 0.3333333333333333
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 2,
+            "b": 4,
+            "c": 2
+          },
+          {
+            "a": 6,
+            "b": 2,
+            "c": 2
+          },
+          {
+            "a": 5,
+            "b": 2,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    },
+    {
+      "brief_id": "ad9ae83b71383d12",
+      "brief_path": "config/briefs/cross/X-13.yaml",
+      "brief_stem": "X-13",
+      "cost": {
+        "by_pass": {
+          "brief_decompose": {
+            "completion_tokens": 6946,
+            "prompt_tokens": 840,
+            "total_tokens": 7786,
+            "usd": 0.008361408
+          },
+          "counter_position_generate": {
+            "completion_tokens": 4226,
+            "prompt_tokens": 34667,
+            "total_tokens": 38893,
+            "usd": 0.05394704
+          },
+          "interrogate": {
+            "completion_tokens": 8047,
+            "prompt_tokens": 1749,
+            "total_tokens": 9796,
+            "usd": 0.012899468249999999
+          },
+          "synthesize": {
+            "completion_tokens": 10643,
+            "prompt_tokens": 306171,
+            "total_tokens": 316814,
+            "usd": 0.0893139
+          }
+        },
+        "total_tokens": 373289,
+        "total_usd": 0.16452181625
+      },
+      "draws": [
+        {
+          "arm": "map",
+          "brief_id": "ad9ae83b71383d12",
+          "brief_path": "config/briefs/cross/X-13.yaml",
+          "brief_stem": "X-13",
+          "distinct_sources_cited": 5,
+          "draw_index": 0,
+          "latency_seconds": 129.5354837999912,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw0\\ad9ae83b71383d12.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw0\\runs\\ad9ae83b71383d12.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "ad9ae83b71383d12",
+          "brief_path": "config/briefs/cross/X-13.yaml",
+          "brief_stem": "X-13",
+          "distinct_sources_cited": 4,
+          "draw_index": 1,
+          "latency_seconds": 156.84085829998367,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw1\\ad9ae83b71383d12.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw1\\runs\\ad9ae83b71383d12.json",
+          "status": "OK"
+        },
+        {
+          "arm": "map",
+          "brief_id": "ad9ae83b71383d12",
+          "brief_path": "config/briefs/cross/X-13.yaml",
+          "brief_stem": "X-13",
+          "distinct_sources_cited": 4,
+          "draw_index": 2,
+          "latency_seconds": 128.12459409999428,
+          "reason": "",
+          "record_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw2\\ad9ae83b71383d12.json",
+          "report_path": "data\\runs\\883-arm-C\\analyses\\X-13\\draw2\\runs\\ad9ae83b71383d12.json",
+          "status": "OK"
+        }
+      ],
+      "gate_reports": {
+        "attribution-fidelity": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "attribution-fidelity",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "attribution_completeness",
+              "n": 32,
+              "passed": true,
+              "threshold": 1.0,
+              "value": 1.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "b_seam_mislabel_rate",
+              "n": 15,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            },
+            {
+              "comparison": "lte",
+              "metric": "c_seam_mislabel_rate",
+              "n": 6,
+              "passed": true,
+              "threshold": 0.05,
+              "value": 0.0
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "calibration": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "calibration",
+          "metrics": [
+            {
+              "bands": {
+                "high": {
+                  "n": 29,
+                  "observed": 0.9655172413793104,
+                  "scoreable": true,
+                  "target": 0.85
+                },
+                "low": {
+                  "n": 0,
+                  "observed": null,
+                  "scoreable": false,
+                  "target": 0.6
+                },
+                "medium": {
+                  "n": 3,
+                  "observed": 1.0,
+                  "scoreable": false,
+                  "target": 0.725
+                }
+              },
+              "comparison": "lte",
+              "metric": "band_reliability",
+              "n": 32,
+              "note": "band targets and the minimum sample size per band are TENTATIVE starting hypotheses (specs/PHASE-B.md §7.4), tuned on the first judged runs. The band-wise metric CHOICE itself is already settled (specs/PHASE-B.md §10 v1.1): ECE/Brier are inapplicable, not merely unchosen, because the three-band vocabulary carries no numeric confidence to score them against.",
+              "passed": true,
+              "strictly_ordered": true,
+              "threshold": 0.15,
+              "value": 0.11551724137931041
+            }
+          ],
+          "passed": true,
+          "trusted": true
+        },
+        "grounding": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "grounding",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "grounding_support_rate",
+              "n": 11,
+              "passed": true,
+              "threshold": 0.9,
+              "value": 1.0
+            }
+          ],
+          "passed": true,
+          "reported": {
+            "b_claim_contradiction_rate": {
+              "contradicted_claim_ids": [],
+              "denominator": 15,
+              "numerator": 0,
+              "value": 0.0
+            }
+          },
+          "trusted": true
+        },
+        "synthesis-quality": {
+          "corpus_pin": "sim-2026-07-30",
+          "gate": "synthesis-quality",
+          "metrics": [
+            {
+              "comparison": "gte",
+              "metric": "counter_position_presence_rate",
+              "n": 3,
+              "passed": true,
+              "threshold": 0.95,
+              "value": 1.0
+            },
+            {
+              "comparison": "gte",
+              "metric": "steelman_quality",
+              "n": 3,
+              "passed": false,
+              "threshold": 0.9,
+              "value": 0.6666666666666666
+            }
+          ],
+          "passed": false,
+          "trusted": true
+        }
+      },
+      "quorum": {
+        "claim_kind_agreement_rate": 0.3333333333333333,
+        "claim_kind_counts": [
+          {
+            "a": 2,
+            "b": 6,
+            "c": 2
+          },
+          {
+            "a": 6,
+            "b": 3,
+            "c": 2
+          },
+          {
+            "a": 3,
+            "b": 6,
+            "c": 2
+          }
+        ],
+        "disposition_agreement_rate": 1.0,
+        "dispositions": [
+          "proceed_bounded",
+          "proceed_bounded",
+          "proceed_bounded"
+        ],
+        "n_draws": 3
+      }
+    }
+  ],
+  "commit": "f40f5ed897b548a2de4753f9fa86e597c00bca96",
+  "fail_count": 0,
+  "ok_count": 30,
+  "skip_count": 0,
+  "total_draws": 30
+}
