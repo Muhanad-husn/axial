@@ -98,7 +98,10 @@ def _four_vocab(root: Path) -> None:
     _write_vocab(
         root,
         STANCE,
-        [_assign(p["chunk_ids"][0], p["sources"][0], STANCE, stances[p["position_id"]]) for p in FOUR],
+        [
+            _assign(p["chunk_ids"][0], p["sources"][0], STANCE, stances[p["position_id"]])
+            for p in FOUR
+        ],
     )
 
 
@@ -168,7 +171,10 @@ def _run(tmp_path: Path, client, positions=FOUR, encode=FOUR_ENCODE, relations=N
 
 def test_a_position_takes_the_category_most_of_its_notes_were_filed_under():
     position = {
-        "position_id": "p", "argument": "x", "sources": ["S"], "chunk_ids": ["c1", "c2", "c3"],
+        "position_id": "p",
+        "argument": "x",
+        "sources": ["S"],
+        "chunk_ids": ["c1", "c2", "c3"],
     }
     mech = {"c1": "m1", "c2": "m2", "c3": "m2"}
     stance = {"c1": "x", "c2": "x", "c3": "x"}
@@ -245,9 +251,7 @@ def test_a_position_sharing_any_book_with_the_other_is_excluded():
         {**_position("p1", "c-p1", "S1"), "sources": ["S1", "S2"]},
         _position("p2", "c-p2", "S2"),
     ]
-    profiles = position_profiles(
-        positions, {"c-p1": "m", "c-p2": "m"}, {"c-p1": "x", "c-p2": "y"}
-    )
+    profiles = position_profiles(positions, {"c-p1": "m", "c-p2": "m"}, {"c-p1": "x", "c-p2": "y"})
     encode = _encode_from({"arg p1": (1, 0), "arg p2": (0, 1)})
 
     assert propose_pairs(positions, profiles, encode) == ([], 0)
@@ -376,18 +380,14 @@ def test_an_unproposed_relation_the_map_already_has_is_dropped(tmp_path):
     client = _ScriptedClient([("a1", "b1", "contradicts"), ("a1", "a2", "restates")])
     encode = _encode_from({"arg a1": (1, 0), "arg a2": (0.9, 0.2), "arg b1": (1, 0.1)})
 
-    outdir, manifest = _run(
-        tmp_path, client, positions=FOUR[:3], encode=encode, relations=known
-    )
+    outdir, manifest = _run(tmp_path, client, positions=FOUR[:3], encode=encode, relations=known)
 
     assert [r["relation"] for r in _rows(outdir)] == ["contradicts"]
     assert manifest["counts"]["context_relations"] == 0
 
 
 def test_the_default_builds_files_are_not_touched(tmp_path):
-    relations = [
-        {"from_position_id": "a1", "to_position_id": "b2", "relation": "old", "says": "s"}
-    ]
+    relations = [{"from_position_id": "a1", "to_position_id": "b2", "relation": "old", "says": "s"}]
     map_root = tmp_path / "maps"
     outdir = _write_map(map_root, FOUR, relations)
     before = {p.name: p.read_bytes() for p in outdir.iterdir()}

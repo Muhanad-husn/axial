@@ -278,14 +278,20 @@ def run_profile_relations(
         )
 
         proposed = set(pairs_shown)
+        existing_pairs = {_pair(r) for r in existing_relations}
         recorded: list[dict[str, Any]] = []
+        context: list[dict[str, Any]] = []
         off_proposal = 0
         for read in reads:
             for relation in read["relations"]:
+                source, target = relation["from_position_id"], relation["to_position_id"]
                 if _pair(relation) not in proposed:
                     off_proposal += 1
+                    if _pair(relation) not in existing_pairs and set(
+                        by_id[source]["authors"]
+                    ) != set(by_id[target]["authors"]):
+                        context.append({**relation, "generator": CONTEXT_GENERATOR})
                     continue
-                source, target = relation["from_position_id"], relation["to_position_id"]
                 recorded.append(
                     {
                         **relation,
@@ -296,14 +302,17 @@ def run_profile_relations(
                 )
 
         with (outdir / PROFILE_RELATIONS_FILENAME).open("w", encoding="utf-8") as handle:
-            for relation in recorded:
+            for relation in recorded + context:
                 handle.write(json.dumps(relation, ensure_ascii=False) + "\n")
 
-        existing_pairs = {_pair(r) for r in existing_relations}
         failed = [read for read in reads if "error" in read]
         usage = client.usage_for_pass(RELATE_PASS_NAME)
         model = client.model_for_pass(RELATE_PASS_NAME)
-        cost = estimate_cost(model, usage["prompt_tokens"], usage["completion_tokens"]) if usage else None
+        cost = (
+            estimate_cost(model, usage["prompt_tokens"], usage["completion_tokens"])
+            if usage
+            else None
+        )
         prior = _load_json_or_none(outdir / PROFILE_MANIFEST_FILENAME)
         manifest = {
             "corpus_pin": pin,
@@ -318,6 +327,7 @@ def run_profile_relations(
                 "failed_reads": len(failed),
                 "relations_asserted": len(recorded),
                 "off_proposal_relations": off_proposal,
+                "context_relations": len(context),
                 "dropped_relations": sum(read.get("dropped", 0) for read in reads),
                 "distinct_labels": len({r["relation"] for r in recorded}),
                 "cross_author_relations": sum(
