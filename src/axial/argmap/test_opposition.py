@@ -192,3 +192,18 @@ def test_an_opposition_directory_is_never_the_prior_pin_of_a_later_build(tmp_pat
         (tmp_path / name).mkdir()
         (tmp_path / name / "map.json").write_text("{}", encoding="utf-8")
     assert _prior_pin_dir(tmp_path, "bbbb") == tmp_path / "aaaa"
+
+
+def test_map_json_records_the_configured_reasoning_not_a_mirror(
+    tmp_path: Path, corpus: Path
+) -> None:
+    # #875 moved both passes to medium in config; map.json kept saying high.
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(
+        "llm:\n  reasoning_by_pass:\n    position_extract: low\n    position_relate: low\n",
+        encoding="utf-8",
+    )
+    _build(tmp_path, corpus, config_path=config)
+    written = json.loads((tmp_path / "map" / "pin1" / "map.json").read_text(encoding="utf-8"))
+    assert written["reasoning"] == "low"
+    assert written["relations"]["reasoning"] == "low"
