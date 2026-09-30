@@ -212,3 +212,40 @@ def test_without_a_vocabulary_the_pages_still_render(tmp_path: Path) -> None:
     frontmatter, body = _page(vault_dir, "pos-0001")
     assert frontmatter["claim"] == []
     assert "[[pos-0002]]" in body
+
+
+PROFILE_RELATIONS = [
+    {
+        "from_position_id": "pos-0003",
+        "to_position_id": "pos-0001",
+        "relation": "extends",
+        "says": "a2 carries the deniability argument into a second case.",
+        "generator": "profile",
+    },
+    {
+        "from_position_id": "pos-0001",
+        "to_position_id": "pos-0002",
+        "relation": "answers",
+        "says": "a duplicate of a pair relations.jsonl already holds.",
+        "generator": "profile-context",
+    },
+]
+
+
+def test_profile_relations_are_links_too_and_relations_jsonl_wins_a_pair(
+    tmp_path: Path,
+) -> None:
+    map_dir, vocabulary_dir, vault_dir = _fixture(tmp_path)
+    _write_jsonl(map_dir / "profile_relations.jsonl", PROFILE_RELATIONS)
+
+    result = write_position_pages(
+        map_dir=map_dir, vocabulary_dir=vocabulary_dir, vault_dir=vault_dir
+    )
+
+    assert result["position_pages_isolated"] == 0
+    _, isolated_before = _page(vault_dir, "pos-0003")
+    assert "[[pos-0001]]" in isolated_before
+    _, body = _page(vault_dir, "pos-0001")
+    assert "[[pos-0003]]" in body
+    assert "extends" in body
+    assert "answers" not in body
