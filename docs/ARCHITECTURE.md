@@ -1,6 +1,6 @@
 # Architecture
 
-Nine drawings of one pipeline. The first shows the whole of it; the rest open each place
+Eight drawings of one pipeline (a ninth, Gather, was retired with DEC-75). The first shows the whole of it; the rest open each place
 a model is handed a judgment, and show the deterministic code standing on both sides of
 it.
 
@@ -21,7 +21,7 @@ behaviour product-wide, [`specs/PRODUCT.md`](../specs/PRODUCT.md) is Phase A,
 | II | [The Phase A ingestion ledger](diagrams/02-phase-a-pipeline.md) | Ten stages, what each costs in model calls, what it writes — and the source router's three-way fork |
 | III | [Interrogate](diagrams/03-interrogate.md) | One reading per note, fourteen open questions, free-answer-first, and the right to abstain |
 | IV | [Reconcile](diagrams/04-reconcile.md) | The fold that needs no model, clustering as a hint, the merge call, and "cannot tell" as a real third outcome |
-| V | [Gather](diagrams/05-gather.md) | Two member gates, a code-side packet budget, batching, null-dropping, the merge |
+| V | ~~Gather~~ | Retired with the name pages (DEC-75, #853); the plate is gone |
 | VI | [The argument map, built](diagrams/06-argument-map-build.md) | Select, bag, blind extract, merge — then neighbourhoods and a blind relate call |
 | VII | [The agentic query loop](diagrams/07-agentic-query-loop.md) | The one real agent: model turn → validating dispatcher → LLM-free query API → feedback, then deterministic assembly and three validators |
 | VIII | [Retrieval over the argument map](diagrams/08-map-retrieval-arm.md) | Door, landing, corridor, assembly — the opt-in arm that replaces stage 3 and nothing else |
@@ -38,7 +38,7 @@ One visual grammar throughout:
 | **Gate** (dashed brass) | A blocking check the model cannot reach. |
 | **Artifact** (grey) | Persisted on disk. Resumable, inspectable. |
 
-## The shape all nine share
+## The shape all eight share
 
 Every model call in this system is surrounded the same way. Code assembles what the model
 sees, so a packet cannot overflow and a prompt cannot be talked into fetching more. Code

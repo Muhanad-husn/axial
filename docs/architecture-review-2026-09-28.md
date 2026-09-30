@@ -321,3 +321,9 @@ relation pairs), #859 (frontier extraction model, same bags), #860
 Still open: whether a public export (AIF, SKOS, CiTO) is wanted at all, or
 whether the vocabularies are adopted purely as internal naming discipline. The
 programme is the same either way; only step 4's export is optional.
+
+**Complete, 2026-10-01.** All eight issues and four follow-ups (#878, #879,
+#881, #883) are closed. The outcome is in
+[`docs/reports/dec-75-outcome.md`](reports/dec-75-outcome.md); the decisions
+the last one closed on are DEC-76. The export question above is the only item
+still open.

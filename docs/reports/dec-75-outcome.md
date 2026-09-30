@@ -1,13 +1,17 @@
-# DEC-75: what the plan did (#853–#860, #878, #879)
+# DEC-75: what the plan did (#853–#860, #878–#883)
 
-2026-09-30. DEC-75 ruled on 2026-09-28 that the name pages go, the argument
-map becomes the vault, and each layer gets the schema it needs. The plan ran as
-eight issues and two follow-ups, 17 merged pull requests, over three days.
+**Status: complete, 2026-10-01.** #883 closed the last open question; the
+decisions it closed on are DEC-76.
+
+DEC-75 ruled on 2026-09-28 that the name pages go, the argument map becomes
+the vault, and each layer gets the schema it needs. The plan ran as eight
+issues and four follow-ups, 17 merged pull requests, over four days.
 
 **Reading: the system is much smaller and better structured, and answers are
 as good as before, not better.** Nothing regressed. The map now carries twice
-the cross-author relations, and answers use them on two briefs of five. They
-cite no more sources, and they still leave conflicting positions uncited.
+the cross-author relations, and answers use them on nine briefs of ten built
+to need several books. They cite no more sources: how many books an answer
+cites is set by the question, not by retrieval.
 
 ## The system
 
@@ -25,7 +29,7 @@ cite no more sources, and they still leave conflicting positions uncited.
 
 Across the 17 pull requests: +12,318 / −15,897 lines. The additions include
 tests and #873's restore of `map compare`, which #851 had deleted before the plan began.
-Paid runs came to about $15 in all.
+Paid runs came to about $20 in all, including #881's $0.79 and #883's $4.26.
 
 ## The answers (#879)
 
@@ -48,10 +52,35 @@ clear of the other's.
 - **Conflicts:** every conflict-joined corridor position reaches the synthesis prompt (42/42 and 48/48), and the model cites 4 and 0 of them, against about 20% for other corridor positions. Counted over all composed passages, though, answers cite both sides of a conflict in about half of them (8–12% of conflict pairs). #881 then listed the conflicts in the prompt, and the rate did not move (8%).
 - **Reliability:** 2 of 45 draws failed. One cited a non-id the fail-closed check caught; one hit the 600s deadline three times.
 
-## What stays open
+## The cross-book briefs (#883)
 
-- Whether synthesis should engage conflicts more than it does. Telling it which passages contest which (#881) changed nothing measurable.
-- Five briefs are a small instrument: two of them cannot show breadth at all. A brief set built for cross-book questions would resolve smaller effects.
+Ten briefs written to need several books (`config/briefs/cross/`), each built
+on a cluster of cross-author conflicts, 3 draws each, before and with #858.
 
-Run logs: `data/logs/2026-09-30-879-answer-arms/` and the per-issue logs
-under `data/logs/2026-09-2{9,30}-85*`.
+| measure, mean per answer | count order, 1,472 | kind order + #858, 2,020 |
+|---|---:|---:|
+| sources cited | 4.67 | 4.50 |
+| corridor positions cited | 5.33 | 6.87 |
+| positions cited only via #858 | 0 | 2.27 |
+| conflict pairs with both ends cited | 56/181 (31%) | 64/221 (29%) |
+| cost per answer | $0.054 | $0.060 |
+
+- **Breadth:** sources cited rise from 3.5 on the smoke set to 4.6 here, in both arms alike. The briefs moved it; #858 did not. No retrieval-side check could have predicted this: S-04 puts 19 books in front of synthesis and cites one, because it asks about one case.
+- **#858:** cited on 9 of 10 briefs, 2.3 positions per answer that only the new relations reach.
+- **Conflicts:** answers cite both sides about three times as often as on the smoke set, in both arms. X-06 (Ba'th socialism) shows conflict pairs in every answer and never cites both ends of one.
+- **S-04's door stalls** (7 of 17 calls, 0 of 48 on other briefs) belong to that brief with the current door model, not to the deadline or the provider.
+
+## Closed (DEC-76)
+
+- Retrieval is not tuned further for breadth.
+- The #858 relations stay.
+- The ten cross-book briefs measure answers from here; the smoke briefs stay as pass/fail gates only.
+- Conflicts stay parked. Before any reopening, a free read of X-06's six answers.
+- No action on the S-04 door stalls.
+
+Still open from the review: whether a public AIF/SKOS/CiTO export is wanted at all.
+
+Run logs: `data/logs/2026-09-30-879-answer-arms/`,
+`data/logs/2026-09-30-881-conflicts-arm-C/`,
+`data/logs/2026-09-30-883-brief-set/`, and the per-issue logs under
+`data/logs/2026-09-2{9,30}-85*`.
