@@ -1085,3 +1085,50 @@ def test_synthesize_pass_name_is_the_stable_dispatch_key():
     # Pins the pass_name literal itself -- model_by_pass/reasoning_by_pass
     # config routing depends on this string never drifting silently.
     assert SYNTHESIZE_PASS_NAME == "synthesize"
+
+
+# ---------------------------------------------------------------------------
+# issue #881: the map's conflicts are named in the prompt
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_names_a_conflict_between_two_composed_passages(
+    evidence_set: EvidenceSet, vault_dir: Path
+):
+    from axial.analyze.assembly import ContestedPair
+
+    brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
+    conflicts = [
+        ContestedPair(
+            from_chunk_ids=("synfix_002_iraq_a",),
+            to_chunk_ids=("synfix_001_syria_a",),
+            relation="contradicts",
+        ),
+        ContestedPair(
+            from_chunk_ids=("never_composed",),
+            to_chunk_ids=("synfix_001_syria_a",),
+            relation="denies",
+        ),
+    ]
+
+    composed = compose_prompt(
+        brief, "political-economy", evidence_set, vault_dir=vault_dir, conflicts=conflicts
+    )
+
+    assert "[c2] contradicts [c1]" in composed.text
+    assert "denies" not in composed.text
+    assert "never_composed" not in composed.text
+
+
+def test_prompt_without_conflicts_carries_no_conflict_block(
+    evidence_set: EvidenceSet, vault_dir: Path
+):
+    brief = Brief(brief_id="synfix-brief", case="Syria", request="How?", lens="political-economy")
+
+    plain = compose_prompt(brief, "political-economy", evidence_set, vault_dir=vault_dir)
+    empty = compose_prompt(
+        brief, "political-economy", evidence_set, vault_dir=vault_dir, conflicts=()
+    )
+
+    assert plain.text == empty.text
+    assert "contests" not in plain.text

@@ -169,3 +169,33 @@ def test_the_run_report_prints_the_corridor_kinds():
     text = format_run_report(report)
     assert "corridor: order=kind" in text
     assert "conflict=1" in text
+
+
+def test_the_ask_hands_synthesis_each_conflict_between_assembled_positions(tmp_path):
+    """Issue #881: a conflict relation whose two positions both reached
+    assembly comes back as a contested pair of their assembled chunks."""
+    from axial.analyze.assembly import ContestedPair
+
+    result = _ask(tmp_path, _write_kinds(tmp_path / "vocab", KIND_RECORDS))
+
+    assert result.conflicts == (
+        ContestedPair(
+            from_chunk_ids=("n-pos-conflict",),
+            to_chunk_ids=("n-pos-landed",),
+            relation="contradicts",
+        ),
+    )
+    payload = _map_retrieval_to_dict(result)
+    assert payload["conflicts"] == [
+        {
+            "from_chunk_ids": ["n-pos-conflict"],
+            "to_chunk_ids": ["n-pos-landed"],
+            "relation": "contradicts",
+        }
+    ]
+
+
+def test_without_kinds_the_ask_names_no_conflicts(tmp_path):
+    result = _ask(tmp_path, tmp_path / "empty-vocab")
+
+    assert result.conflicts == ()
