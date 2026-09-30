@@ -110,7 +110,13 @@ llm:
     # holding two opposed accounts of violence came back as one argument,
     # "violence is shaped by social, strategic and political processes";
     # with it on, the same bag correctly split into the two accounts.
-    position_extract: high
+    # Lowered to "medium" (founder, 2026-09-30): on deepseek-v4.1-flash,
+    # "high" averaged ~6,700 completion tokens a read and made #860 cost
+    # $6.52 against a $1.20 estimate. A probe showed v4.1-flash honours the
+    # level (reasoning 153 / 278 / 584 tokens at low / medium / high).
+    # Reasoning stays on because of the measurement above; "medium" is
+    # unmeasured against "high" on map quality.
+    position_extract: medium
     # Argument-map consolidation pass (issue #830): ON at an explicit
     # "high", the same setting and the same reason as `position_extract`
     # above. It is that call one level up -- reading a category's per-group
@@ -121,12 +127,13 @@ llm:
     # 200-passage bag holding two opposed accounts of violence came back as
     # one argument with reasoning off) is a measurement of exactly this
     # judgment, so this pass inherits it rather than being tuned separately.
-    position_consolidate: high
+    position_consolidate: medium
     # Argument-map relate pass (issue #572, PR 2 of 4): ON, same profile as
     # `position_extract` above -- deciding how two positions actually
     # stand to one another, with no menu of relation types to pick from,
-    # is the same underdetermined judgment call.
-    position_relate: high
+    # is the same underdetermined judgment call. "medium" for the same
+    # cost reason as `position_extract`.
+    position_relate: medium
     # The door onto the argument map (issue #572, PR 3 of 4): ON at an
     # explicit "high" effort, same profile as `position_extract` above. One
     # call, no corpus in view, deciding what a question is actually about --
