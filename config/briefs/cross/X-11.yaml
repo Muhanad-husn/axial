@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, batatu, gellner, hinnebusch, ayubi: tribes and clans
+case: "The Arab Middle East: tribes, clans and the modern state"
+request: "Has the modern state dissolved tribal and clan loyalties in the Arab Middle East, or have tribes survived in transformed form as patronage networks and as part of the regime's own power structure?"

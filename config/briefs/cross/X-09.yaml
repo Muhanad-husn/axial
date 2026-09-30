@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, mann, malesevic, hall: war and popular nationalism
+case: "Europe, 1870-1945: war, citizenship and nationalism"
+request: "Did the First World War turn latent national sentiment into aggressive popular nationalism, or were European societies already nationalist and militarist before 1914, and what did the wars do to citizenship and the welfare state?"

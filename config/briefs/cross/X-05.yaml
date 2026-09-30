@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, gelvin, beshara, white, wedeen, ayubi: Syrian and Arab nationalism
+case: "Syria, 1880-1946: nationalism before and under the French Mandate"
+request: "Was Syrian and Arab nationalism before 1946 the creation of an intellectual elite, or a contested popular field in which rival groups, including minorities, built competing national visions?"

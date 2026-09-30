@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, ayubi, hinnebusch, heydemann, batatu: the Ba'th political economy
+case: "Syria under the Ba'th, 1963-2010"
+request: "Was the Ba'thist regime in Syria a genuinely socialist project, or a populist-corporatist state that used socialist rhetoric and later controlled liberalisation to keep political control and reward its clients?"

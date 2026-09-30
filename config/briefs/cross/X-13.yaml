@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, wedeen, batatu, gelvin, mann: authoritarian rule in Syria
+case: "Syria under the Asads, 1970-2011"
+request: "How did the Asad regime hold power: through coercion, through patronage and communal loyalty, or through ideological and affective means such as the cult of personality and the consumer comforts of neoliberal autocracy?"

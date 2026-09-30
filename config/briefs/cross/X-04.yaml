@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, ayubi, mann, batatu, wittfogel: oriental despotism
+case: "Comparative: the state in the Middle East from ancient empires to the modern era"
+request: "Does the theory of oriental despotism, a centralised state born of irrigation, explain the strength of states in the Middle East, or did early Mesopotamian civilisation rest on decentralised, overlapping power networks?"

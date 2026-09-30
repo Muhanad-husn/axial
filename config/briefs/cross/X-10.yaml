@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, hall, mann, malesevic: sources of social power
+case: "Theory: the sources of social power"
+request: "Is military power a separate source of social power, or a component of political power, and is social order sustained mainly by coercion or by shared meanings and ideology?"

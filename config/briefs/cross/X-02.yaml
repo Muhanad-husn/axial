@@ -1,0 +1,6 @@
+# origin: drafted for #883 from the map's cross-author conflict regions
+# model: claude-opus-5-5
+# date: 2026-09-30
+# shape: cross-book, kalyvas, malesevic, elcheroth, wimmer: civil-war violence
+case: "Comparative: violence in civil wars"
+request: "Is violence against civilians in civil war a strategic response to the problems of territorial control, or is it driven by ideology and by elites who mobilise existing narratives and pre-war cleavages?"
