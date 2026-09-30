@@ -30,6 +30,7 @@ from axial.argmap.compare import (
     compute_comparison,
     format_comparison_report,
 )
+from axial.argmap.profile_relations import run_profile_relations
 from axial.argmap.residue import WORKERS as MAP_RESIDUE_DEFAULT_WORKERS
 from axial.argmap.residue import run_residue_pass
 from axial.pidguard import AlreadyRunningError
@@ -966,6 +967,25 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=MAP_COMPARE_DEFAULT_TRIALS,
         help=f"permutation trials per null (default: {MAP_COMPARE_DEFAULT_TRIALS})",
+    )
+
+    map_relate_profile_parser = map_subparsers.add_parser(
+        "relate-profile",
+        help=(
+            "a second relation-candidate generator (issue #858): propose "
+            "position pairs from the vocabulary profile (same mechanism, "
+            "different books, different position category) and relate them "
+            "with the build's own blind call. Runs over the map already built "
+            "at this pin and never re-runs the neighbourhood pass; writes "
+            "profile_relations.jsonl and profile_relations.json beside it. "
+            "Not part of 'map build'"
+        ),
+    )
+    map_relate_profile_parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAP_BUILD_DEFAULT_WORKERS,
+        help=f"bounded concurrent relate calls (default: {MAP_BUILD_DEFAULT_WORKERS})",
     )
 
     eval_parser = subparsers.add_parser(
@@ -3639,6 +3659,53 @@ def _map_compare(
     return 0
 
 
+def _map_relate_profile(*, workers: int = MAP_BUILD_DEFAULT_WORKERS) -> int:
+    """`axial map relate-profile` (issue #858): the vocabulary-profile
+    relation pass over the map already built at this pin. Errors are plain
+    non-zero exits, never a traceback."""
+    with run_context("map-relate-profile") as run:
+        start = time.monotonic()
+
+        def _tee(message: str) -> None:
+            print(message, flush=True)
+            run.logger.info(message)
+
+        try:
+            manifest = run_profile_relations(workers=workers, log=_tee)
+        except (
+            AskError,
+            AlreadyRunningError,
+            CorpusPinError,
+            LLMError,
+            NoVocabularyError,
+        ) as exc:
+            run.record(
+                source_id="",
+                pass_name="position_relate",
+                model=None,
+                status="error",
+                duration_sec=time.monotonic() - start,
+                error=str(exc),
+            )
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        run.record(
+            source_id=manifest["corpus_pin"],
+            pass_name="position_relate",
+            model=manifest["model"],
+            status="ok",
+            duration_sec=time.monotonic() - start,
+            error=None,
+        )
+
+    print(f"corpus_pin: {manifest['corpus_pin']}")
+    print(f"model: {manifest['model']} (reasoning={manifest['reasoning']})")
+    print(f"cost_usd: {manifest['cost_usd']}")
+    for key, value in manifest["counts"].items():
+        print(f"{key}: {value}")
+    return 0
+
 
 def _map_residue(*, workers: int = MAP_RESIDUE_DEFAULT_WORKERS) -> int:
     """`axial map residue` (issue #651): run the semantic residue resolver's
@@ -4043,6 +4110,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "map" and args.map_command == "ask":
         return _map_ask(args.brief_path)
+
+    if args.command == "map" and args.map_command == "relate-profile":
+        return _map_relate_profile(workers=args.workers)
 
     if args.command == "map" and args.map_command == "residue":
         return _map_residue(workers=args.workers)
