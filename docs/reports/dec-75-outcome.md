@@ -45,12 +45,12 @@ clear of the other's.
 - **Breadth:** unchanged on every brief. Two of the five briefs draw on one book in every arm and have no room to broaden.
 - **#858:** used where a brief has cross-book structure. S-01 and S-02 cite 3 and 5.5 positions per answer that only the new relations reach. On S-01 the cited corridor positions rise from 1.7 to 5.0, clear of the draw spread.
 - **Kind order (#855):** no measurable effect.
-- **Conflicts:** every conflict-joined position reaches assembly (42/42 and 48/48), and answers cite almost none. They drop after assembly, in composition or in synthesis. The record does not yet say which.
+- **Conflicts:** every conflict-joined position reaches the synthesis prompt (42/42 and 48/48), and the model cites 4 and 0 of them, against about 20% for other corridor positions. The counter-position pass skips them too. The prompt never says which passages contest which.
 - **Reliability:** 2 of 45 draws failed. One cited a non-id the fail-closed check caught; one hit the 600s deadline three times.
 
 ## What stays open
 
-- Where conflicts drop between assembly and answer. The record needs the composed chunk ids (a small change), then the same three arms.
+- Making synthesis engage the conflicts the map found. That is a design call, filed as its own issue.
 - Five briefs are a small instrument: two of them cannot show breadth at all. A brief set built for cross-book questions would resolve smaller effects.
 
 Run logs: `data/logs/2026-09-30-879-answer-arms/` and the per-issue logs

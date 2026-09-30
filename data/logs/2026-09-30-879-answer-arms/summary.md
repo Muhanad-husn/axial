@@ -64,10 +64,29 @@ range). "Separated" counts briefs where the arm's draw range sits wholly above
 - **Conflicts reach the evidence but not the answer.** Every conflict-joined corridor position puts a passage into assembly in both kind-order arms: 42 of 42 in B, 48 of 48 in C. Answers then cite almost none of them (0.27 and 0.00 per answer). The loss is after assembly: either in composition, which cuts the 90 assembled chunks to about 57 and whose ids the record does not keep, or in synthesis.
 - **Gates:** they flip across arms without a pattern: S-02 A FPPF then PPPP, S-04 B FFPP, S-03 C now passes synthesis. Grounding passes on every brief in every arm. There is no regression.
 
+## Follow-up: where conflicts drop (`composed.py`, zero calls)
+
+`compose_prompt` keeps a deterministic prefix of the assembled order, and
+`assemble_evidence` keeps that order, so the composed chunks are
+`assembled_chunk_ids[:composed_count]` (assembled counts match in every record).
+
+| arm | group | positions | assembled | composed | cited | cited share |
+|---|---|---:|---:|---:|---:|---:|
+| B | landed | 306 | 306 | 306 | 102 | 33% |
+| B | conflict-joined corridor | 42 | 42 | 42 | 4 | 10% |
+| B | other corridor | 295 | 295 | 289 | 61 | 21% |
+| C | landed | 254 | 254 | 254 | 100 | 39% |
+| C | conflict-joined corridor | 48 | 48 | 48 | 0 | 0% |
+| C | other corridor | 388 | 388 | 348 | 65 | 17% |
+
+**Every conflict-joined position is in the prompt the synthesis model reads,
+and the model cites 4 of 42 and 0 of 48.** The counter-position pass does not
+pick them up either: 2 of 42 and 0 of 48 are among its grounds, though 12
+answers in each arm state a counter-position. The loss is in synthesis. The
+prompt gives each passage its own reading but never says that one passage
+contests another, so the model has no way to see the conflicts the map found.
+
 ## Next
 
-Recorded on #879 with the plan report at `docs/reports/dec-75-outcome.md`.
-Open question for the founder: conflicting positions reach assembly and go
-uncited. Finding where they drop, composition or synthesis, needs the composed
-chunk ids in the record, which is a small change. What to do about it is a
-design call.
+Recorded on #879 with the plan report at `docs/reports/dec-75-outcome.md`. The
+fix is a design call and is filed separately.
