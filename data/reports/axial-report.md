@@ -6,6 +6,8 @@
 
 Version 2.3 · 7 August 2026 · Muhanad Abulhusn
 
+> **Superseded in part, 1 October 2026.** The name pages, the Gather pass and the `name` retrieval arm described below were retired in September, and the argument map is now the wiki. Everything else stands. Read [the September rebuild](axial-september-2026.md) for what changed and what it did to the answers.
+
 *Version 2.3 corrects §7.6's two reproducibility figures against the run logs behind them: Gather's byte-identical self-disagreement is 19.3% per name, not the 53% flip rate that belongs to a changed packet, and name merging moves 0.43% of the material. Version 2.2 adds Appendix F, an index of the six further papers drafted since — five of them deliberately off the Syrian case the library is built around — and records what that exercise exposed about the shelf. Nothing in the system or its evaluation has changed; the panel figures in section 7.4 still cover the two papers in Appendices D and E and nothing else. Version 2.1 (6 August 2026) restructured the dossier as a research paper: an executive summary at the front, the full question inventory moved to an appendix, and the closing section recast as a final word. Version 1.0 (1 August 2026) remains superseded: it described a retrieval layer and a final deliverable that have both since been replaced.*
 
 ---

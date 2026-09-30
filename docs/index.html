@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Axial — reports</title>
-<meta name="description" content="Axial: architecture plates, the research report, and the engineering report.">
+<meta name="description" content="Axial: the September rebuild, architecture plates, the research report, and the engineering report.">
 <link rel="icon" href="axial-logo.png">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
@@ -213,7 +213,8 @@
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light/dark theme">theme</button>
     </div>
     <nav class="tabs" id="tabs">
-      <button data-tab="plates" class="active">Architecture plates</button>
+      <button data-tab="september" class="active">September rebuild</button>
+      <button data-tab="plates">Architecture plates</button>
       <button data-tab="research">Research report</button>
       <button data-tab="technical">Technical report</button>
     </nav>
@@ -223,13 +224,18 @@
 <main>
   <div class="wrap-wide">
 
-    <section id="panel-plates" class="panel active">
-      <p class="panel-intro">Nine drawings of one pipeline: what the corpus produces, and the nine places a model call sits between deterministic code on both sides. Rendered from the architecture-plates artifact, unchanged.</p>
+    <section id="panel-september" class="panel active">
+      <p class="panel-intro">1 October 2026. The name pages are gone and the argument map is the wiki: what changed, what it did to the answers, and what was decided. Read this before the two August reports.</p>
+      <div class="report" id="report-september"><p class="loading">Loading…</p></div>
+    </section>
+
+    <section id="panel-plates" class="panel">
+      <p class="panel-intro">Nine drawings of one pipeline as it stood on 7 August 2026. Plate V (Gather) and the name pages it draws were retired in September; see the September rebuild.</p>
       <iframe id="plates-frame" src="plates.html" title="Axial architecture plates" loading="lazy" height="800"></iframe>
     </section>
 
     <section id="panel-research" class="panel">
-      <p class="panel-intro">Version 2.3, 7 August 2026. What Axial is, how it was tested, and what the tests showed — for readers who do not build software.</p>
+      <p class="panel-intro">Version 2.3, 7 August 2026. What Axial is, how it was tested, and what the tests showed — for readers who do not build software. Its name pages and Gather were retired in September.</p>
       <div class="report" id="report-research"><p class="loading">Loading…</p></div>
     </section>
 
@@ -279,6 +285,7 @@
   function activate(name) {
     tabs.forEach(function(b){ b.classList.toggle('active', b.dataset.tab === name); });
     panels.forEach(function(p){ p.classList.toggle('active', p.id === 'panel-' + name); });
+    if (name === 'september') loadReport('september', 'reports/axial-september-2026.md');
     if (name === 'research') loadReport('research', 'reports/axial-report.md');
     if (name === 'technical') loadReport('technical', 'reports/axial-technical-report.md');
   }
@@ -350,7 +357,7 @@
   }
 
   // ---------- init ----------
-  activate('plates');
+  activate('september');
   window.addEventListener('message', function(e){
     if (e.data && typeof e.data.axialPlatesHeight === 'number') {
       var f = document.getElementById('plates-frame');

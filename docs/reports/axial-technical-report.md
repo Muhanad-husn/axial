@@ -6,6 +6,8 @@
 
 Version 1.2 · 7 August 2026 · Muhanad Abulhusn
 
+> **Superseded in part, 1 October 2026.** The name pages, the Gather pass and the `name` retrieval arm described below were retired in September (DEC-75), the argument map is now the vault, and its relations carry a committed kind. Everything else stands. Read [the September rebuild](axial-september-2026.md), and [dec-75-outcome.md](dec-75-outcome.md) for the engineering record.
+
 *Version 1.2 reconciles the three reproducibility figures in §8.1 with the companion report and with the run logs behind them: the merge floor at 3+ members is 13.3% (n=150), not the 18.8% from the earlier n=64 control arm; the 19.3% batch flip rate is labelled with the population it was measured on; and Gather's two figures now travel with their frames. Version 1.1 adds §8.4, the cost and latency of a paper measured across eight of them, and the limit that exercise exposed.*
 
 *This is the technical companion to [Axial — a research report](axial-report.md). That document explains what the system does and what the evaluation showed, for readers who do not build software. This one is for engineers. It covers the architecture, the measurement discipline that shaped it, the caching and incremental-computation design, the evaluation machinery, and the one-operator agentic process that built all of it in 31 days. Nothing here is repeated from the other report except where a number needs its context restated.*
