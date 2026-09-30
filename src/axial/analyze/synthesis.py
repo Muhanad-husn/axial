@@ -89,12 +89,12 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import httpx
 import yaml
 
-from axial.analyze.assembly import EvidenceSet, name_surfaces
+from axial.analyze.assembly import ContestedPair, EvidenceSet, name_surfaces
 from axial.brief.intake import Brief
 from axial.llm import COUNTER_POSITION_GENERATE_PASS_NAME, SYNTHESIZE_PASS_NAME, LLMClient, LLMError
 from axial.model_json import ModelJsonError, complete_json, parse_model_json
@@ -598,6 +598,7 @@ def compose_prompt(
     config_path: Path | None = None,
     evidence_char_budget: int | None = None,
     question_scope: dict[str, Any] | None = None,
+    conflicts: Sequence[ContestedPair] = (),
 ) -> SynthesisPrompt:
     """Assemble the synthesis prompt (§7.4/P0-4): the brief's `request` as
     the operative task, the applied lens, and every evidence chunk's real
@@ -697,6 +698,7 @@ def compose_prompt(
         lines.append(_render_evidence_chunk(handle, chunk, note.chunk_text))
     evidence_lines = "\n".join(lines) or "(no evidence chunks were retrieved for this brief)"
     scope_block = _render_question_scope_block(question_scope)
+    conflict_block = _render_conflict_block(conflicts, handle_map)
 
     text = f"""You are the stage-4 synthesis pass of an analysis engine (specs/PHASE-B.md §7.4). Your task is to answer the request below: apply the lens named below and perform axial coding across ONLY the evidence chunks supplied below as your method for building that answer -- reason only over the grounds supplied here, never from your own parametric memory or the open web.
 
@@ -711,7 +713,7 @@ Each evidence chunk below carries its source's author and title, then what a fir
 
 Evidence chunks -- cite ONLY the bracketed handle shown for each (e.g. "[cN]") as your grounds ref_id for a chunk, or an artifact_id as your grounds ref_id for an artifact. Reproduce a handle EXACTLY as shown; never invent one and never write out any other id:
 {evidence_lines}
-
+{conflict_block}
 Retrieval may have reached this evidence by following a disagreement another pass of this system wrote about a name. Such a finding is that pass's own reading of the corpus, never a source and never scored: it is not quotable, not citable, and no claim may rest on one. Your grounds are the chunk handles and artifact_ids listed above, and nothing else.
 
 For every claim you emit, mark its kind:
@@ -727,6 +729,30 @@ Return ONLY this JSON object, no prose and no code fence:
 {{"claims": [{{"text": "<claim text>", "kind": "a|b|c", "grounds": [{{"ref_type": "chunk|artifact", "ref_id": "<handle for a chunk, e.g. [cN]; a real artifact_id for an artifact>"}}], "confidence": "high|medium|low"}}]}}"""
 
     return SynthesisPrompt(text=text, handle_map=handle_map)
+
+
+def _render_conflict_block(conflicts: Sequence[ContestedPair], handle_map: dict[str, str]) -> str:
+    """The map's conflicts between composed passages (issue #881), one line
+    each as `[cX] <relation> [cY]`, or "" when none has both ends composed --
+    so a prompt without conflicts is byte-identical to one never given any.
+    #879 measured every conflict-joined passage in the prompt and almost
+    none cited: the prompt showed each passage alone and never said which
+    contest which. The relation's `says` is left out: it names the relate
+    call's blind handles (a1, a2), which mean nothing here."""
+    handle_of = {chunk_id: handle for handle, chunk_id in handle_map.items()}
+    lines: list[str] = []
+    for pair in conflicts:
+        left = [handle_of[c] for c in pair.from_chunk_ids if c in handle_of]
+        right = [handle_of[c] for c in pair.to_chunk_ids if c in handle_of]
+        if left and right:
+            lines.append(f"- {', '.join(left)} {pair.relation} {', '.join(right)}")
+    if not lines:
+        return ""
+    body = "\n".join(_dedupe_preserving_order(lines))
+    return f"""
+The argument map this evidence was retrieved through recorded that some of these passages take positions that contest one another. Each line reads: the passage(s) on the left stand in that relation to the passage(s) on the right. This is the map's own reading, not a source: cite the passages, never this list.
+{body}
+"""
 
 
 def _dedupe_preserving_order(values: list[str]) -> list[str]:
@@ -1050,6 +1076,7 @@ def synthesize(
     config_path: Path | None = None,
     names_dir: Path | None = None,
     question_scope: dict[str, Any] | None = None,
+    conflicts: Sequence[ContestedPair] = (),
 ) -> ClaimGraph:
     """Run the §7.4 synthesis pass over `evidence`: resolve the lens
     (`resolve_lens`), compose the grounded-by-construction prompt
@@ -1086,6 +1113,7 @@ def synthesize(
         vault_dir=vault_dir,
         config_path=config_path,
         question_scope=question_scope,
+        conflicts=conflicts,
     )
     print(
         f"synthesize: starting, lens={lens_name!r}, {len(evidence.chunk_ids)} evidence item(s) "

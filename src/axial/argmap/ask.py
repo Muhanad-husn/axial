@@ -71,7 +71,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import httpx
 import numpy as np
@@ -91,6 +91,11 @@ from axial.model_json import ModelJsonError, parse_model_json
 from axial.paths import DEFAULT_PIPELINE_CONFIG_PATH, default_map_dir, default_sources_dir
 from axial.query.reader import MalformedChunkIdError, source_id_from_chunk_id
 from axial.query.relations import Resolution, chunk_ids_for_name
+if TYPE_CHECKING:
+    # `axial.analyze`'s package init imports this module (examine), so the
+    # runtime import lives inside `contested_pairs`.
+    from axial.analyze.assembly import ContestedPair
+
 from axial.vocabulary import (
     ASSIGNMENTS_FILENAME,
     MANIFEST_FILENAME,
@@ -330,6 +335,9 @@ class AskResult:
     # relation scheme version the kinds were filed under.
     corridor_order: str = CORRIDOR_ORDER_COUNT
     relation_scheme_version: str | None = None
+    # Issue #881: every conflict relation whose two positions both reached
+    # assembly, for synthesis to be told of. Empty without relation kinds.
+    conflicts: tuple[ContestedPair, ...] = ()
 
 
 def render_decompose_prompt(brief: Brief) -> str:
@@ -769,6 +777,34 @@ def load_map_relations(outdir: Path) -> list[dict[str, Any]]:
     return relations
 
 
+def contested_pairs(
+    relations: Sequence[dict[str, Any]],
+    kinds: RelationKinds | None,
+    positions_by_id: Mapping[str, dict[str, Any]],
+    assembled: Sequence[str],
+) -> tuple[ContestedPair, ...]:
+    """Each relation filed under the conflict kind whose two positions both
+    have a passage in `assembled`, as a `ContestedPair` of those passages in
+    assembly order (issue #881). `()` when no relation kinds are on disk."""
+    from axial.analyze.assembly import ContestedPair
+
+    if kinds is None:
+        return ()
+    rank = {chunk_id: index for index, chunk_id in enumerate(assembled)}
+    pairs: list[ContestedPair] = []
+    for relation in relations:
+        if kinds.kind_of(relation) != CONFLICT_KIND:
+            continue
+        ends = []
+        for key in ("from_position_id", "to_position_id"):
+            position = positions_by_id.get(relation[key]) or {}
+            chunks = [c for c in position.get("chunk_ids", ()) if c in rank]
+            ends.append(tuple(sorted(chunks, key=rank.__getitem__)))
+        if ends[0] and ends[1]:
+            pairs.append(ContestedPair(ends[0], ends[1], str(relation.get("relation", ""))))
+    return tuple(pairs)
+
+
 def _check_encoder(manifest: dict[str, Any], outdir: Path, encoder_model: str) -> None:
     built_with = manifest.get("encoder")
     if built_with != encoder_model:
@@ -915,6 +951,7 @@ def run_map_ask_for_brief(
         relation_scheme_version=(
             relation_kinds.scheme_version if relation_kinds is not None else None
         ),
+        conflicts=contested_pairs(relations, relation_kinds, positions_by_id, assembled),
     )
 
 

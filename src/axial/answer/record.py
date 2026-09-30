@@ -339,6 +339,17 @@ def _map_retrieval_to_dict(ask_result: AskResult) -> dict[str, Any]:
             "kind_counts": dict(sorted(kind_counts.items())),
             "unassigned": unassigned,
         }
+    if ask_result.conflicts:
+        # Issue #881: the conflicts synthesis was told of (before its own
+        # composition cut), present only when there were any.
+        payload["conflicts"] = [
+            {
+                "from_chunk_ids": list(pair.from_chunk_ids),
+                "to_chunk_ids": list(pair.to_chunk_ids),
+                "relation": pair.relation,
+            }
+            for pair in ask_result.conflicts
+        ]
     return payload
 
 
@@ -815,6 +826,7 @@ def run_brief(
                 lenses_dir=lenses_dir,
                 config_path=config_path,
                 question_scope=interrogation_result.question_scope,
+                conflicts=ask_result.conflicts,
             )
             emit_event(
                 on_event,

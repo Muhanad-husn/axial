@@ -101,6 +101,19 @@ class EvidenceChunk:
 
 
 @dataclass(frozen=True)
+class ContestedPair:
+    """A conflict the argument map recorded between two positions whose
+    passages both reached assembly (issue #881): the `from` position's
+    assembled chunk ids, the `to` position's, and the relation's own label.
+    `compose_prompt` names it to synthesis only where both ends were
+    composed, so the model sees which passages contest which."""
+
+    from_chunk_ids: tuple[str, ...]
+    to_chunk_ids: tuple[str, ...]
+    relation: str
+
+
+@dataclass(frozen=True)
 class EvidenceSet:
     """The assembled evidence set: deduplicated `chunk_ids` in first-seen
     retrieval order, each surviving chunk's answers (`chunks`, index-aligned
